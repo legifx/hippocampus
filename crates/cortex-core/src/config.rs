@@ -57,6 +57,15 @@ pub struct IndexConfig {
 
     /// Respect `.gitignore` inside git repositories, in addition to `.brainignore`.
     pub respect_gitignore: bool,
+
+    /// Maximum directories watched at once.
+    ///
+    /// The kernel has its own limit (`fs.inotify.max_user_watches`, commonly 65 536 and shared
+    /// across every application on the machine). Staying well below it is deliberate: a file
+    /// manager that consumes the whole system's watch budget breaks the user's editor and
+    /// their sync client, and they will rightly blame us. Exceeding this degrades visibly in
+    /// `cortex status` and falls back to reconciliation for the unwatched part.
+    pub watch_budget: usize,
 }
 
 impl Default for IndexConfig {
@@ -68,6 +77,7 @@ impl Default for IndexConfig {
             debounce_ms: 500,
             reconcile_interval_secs: 3600,
             respect_gitignore: true,
+            watch_budget: 20_000,
         }
     }
 }
@@ -263,6 +273,20 @@ impl Config {
             return bad(
                 "index.debounce_ms must be greater than zero — without coalescing, one save \
                  produces several ingest passes"
+                    .into(),
+            );
+        }
+        if self.index.watch_budget == 0 && !self.index.metadata_roots.is_empty() {
+            return bad(
+                "index.watch_budget must be greater than zero when metadata_roots are \
+                 configured, otherwise nothing is ever watched"
+                    .into(),
+            );
+        }
+        if self.index.reconcile_interval_secs == 0 {
+            return bad(
+                "index.reconcile_interval_secs must be greater than zero — reconciliation is \
+                 the correctness backstop for lost watcher events, not an optional extra"
                     .into(),
             );
         }

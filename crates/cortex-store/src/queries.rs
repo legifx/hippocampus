@@ -7,7 +7,7 @@
 use crate::error::{Result, StoreError};
 use crate::Store;
 use cortex_core::ids::{EpisodeId, NodeId, SessionId};
-use cortex_core::model::{Action, Actor, Episode, Node, NodeKind, ScoreBreakdown, SearchHit, Tier};
+use cortex_core::model::{Action, Actor, Episode, Node, NodeKind, Tier};
 use rusqlite::{params, OptionalExtension, Row};
 use std::path::{Path, PathBuf};
 
@@ -25,6 +25,18 @@ pub struct NodeUpsert {
     pub dev: i64,
 }
 
+/// What the index believes about one path. The comparison unit for reconciliation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexedNode {
+    pub id: NodeId,
+    pub path: PathBuf,
+    pub kind: NodeKind,
+    pub size: i64,
+    pub mtime: i64,
+    pub inode: i64,
+    pub dev: i64,
+}
+
 /// Aggregate counts, for `cortex status`.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Stats {
@@ -36,48 +48,66 @@ pub struct Stats {
     pub outbox_pending: i64,
 }
 
+/// A batch of writes sharing one transaction.
+///
+/// SQLite commits every statement separately unless told otherwise, and each commit is a
+/// durability barrier. Indexing a hundred thousand files one autocommitted statement at a time
+/// is dominated entirely by that barrier — it was the difference between four minutes and a few
+/// seconds on the reference corpus. Anything that writes more than a handful of rows should go
+/// through here.
+pub struct Batch<'a> {
+    tx: &'a rusqlite::Transaction<'a>,
+}
+
+impl Batch<'_> {
+    pub fn upsert_node(&self, node: &NodeUpsert, now: i64) -> Result<NodeId> {
+        upsert_node_on(self.tx, node, now)
+    }
+
+    pub fn append_episode(
+        &self,
+        ts: i64,
+        actor: &Actor,
+        action: Action,
+        node_id: Option<NodeId>,
+        session_id: Option<&SessionId>,
+        metadata: &serde_json::Value,
+    ) -> Result<EpisodeId> {
+        append_episode_on(self.tx, ts, actor, action, node_id, session_id, metadata)
+    }
+
+    pub fn remove_path(&self, path: &Path) -> Result<usize> {
+        remove_path_on(self.tx, path)
+    }
+
+    pub fn rename_node(&self, from: &Path, to: &Path) -> Result<usize> {
+        rename_node_on(self.tx, from, to)
+    }
+}
+
 impl Store {
+    /// Run many writes inside one transaction.
+    ///
+    /// The closure sees a [`Batch`]; returning `Err` rolls everything back, which is the
+    /// behaviour a partially-applied index repair should have.
+    pub fn batch<T>(&self, f: impl FnOnce(&Batch<'_>) -> Result<T>) -> Result<T> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let result = {
+            let batch = Batch { tx: &tx };
+            f(&batch)?
+        };
+        tx.commit()?;
+        Ok(result)
+    }
+
     /// Insert or refresh a node, returning its id.
     ///
     /// Identity is the path. Move detection by `(dev, inode)` belongs to the watcher in M1 and
     /// is deliberately not attempted here — a manual index pass has no way to distinguish a
     /// move from a copy-then-delete.
     pub fn upsert_node(&self, node: &NodeUpsert, now: i64) -> Result<NodeId> {
-        let conn = self.conn();
-        let path = path_to_str(&node.path)?;
-
-        conn.execute(
-            "INSERT INTO nodes
-                 (kind, path, parent_id, mime, size, mtime, ctime, inode, dev, first_seen, last_seen)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)
-             -- The unique index on `path` is partial (it excludes pathless concept and
-             -- annotation nodes), so the conflict target has to repeat its WHERE clause.
-             ON CONFLICT(path) WHERE path IS NOT NULL DO UPDATE SET
-                 kind      = excluded.kind,
-                 parent_id = excluded.parent_id,
-                 mime      = excluded.mime,
-                 size      = excluded.size,
-                 mtime     = excluded.mtime,
-                 ctime     = excluded.ctime,
-                 inode     = excluded.inode,
-                 dev       = excluded.dev,
-                 last_seen = excluded.last_seen",
-            params![
-                node.kind.as_str(),
-                path,
-                node.parent_id.map(i64::from),
-                node.mime,
-                node.size,
-                node.mtime,
-                node.ctime,
-                node.inode,
-                node.dev,
-                now,
-            ],
-        )?;
-
-        let id: i64 = conn.query_row("SELECT id FROM nodes WHERE path = ?1", [path], |r| r.get(0))?;
-        Ok(NodeId(id))
+        upsert_node_on(&self.conn(), node, now)
     }
 
     pub fn node_by_id(&self, id: NodeId) -> Result<Option<Node>> {
@@ -147,60 +177,100 @@ impl Store {
             .collect()
     }
 
-    /// M0 path search: a case-insensitive substring match over indexed paths.
-    ///
-    /// This is intentionally the naive implementation. M1 replaces it with an in-memory trigram
-    /// index that meets the 10 ms budget; this version exists so that the end-to-end path from
-    /// CLI through RPC to storage is exercised and tested before the fast path is written.
-    pub fn search_paths(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
-        if query.trim().is_empty() {
-            return Ok(Vec::new());
-        }
-
+    /// A node's identity as the index currently records it. Used by reconciliation.
+    pub fn nodes_under(&self, prefix: &Path) -> Result<Vec<IndexedNode>> {
         let conn = self.conn();
+        let prefix = path_to_str(prefix)?;
         let mut stmt = conn.prepare(
-            "SELECT id, kind, path, tier, zone_id, salience
+            "SELECT id, path, kind, size, mtime, inode, dev
              FROM nodes
-             WHERE path IS NOT NULL AND path LIKE '%' || ?1 || '%' ESCAPE '\\'
-             ORDER BY salience DESC, mtime DESC
-             LIMIT ?2",
+             WHERE path IS NOT NULL AND (path = ?1 OR path LIKE ?1 || '/%')
+             ORDER BY path",
         )?;
-
-        let rows = stmt.query_map(params![escape_like(query), limit as i64], |row| {
+        let rows = stmt.query_map([prefix], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, Option<i64>>(4)?,
-                row.get::<_, f64>(5)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
             ))
         })?;
 
-        let mut hits = Vec::new();
-        for (rank, row) in rows.enumerate() {
-            let (id, kind, path, tier, zone_id, salience) = row?;
-            hits.push(SearchHit {
-                node_id: NodeId(id),
+        let mut out = Vec::new();
+        for row in rows {
+            let (id, path, kind, size, mtime, inode, dev) = row?;
+            out.push(IndexedNode {
+                id: NodeId(id),
                 path: PathBuf::from(path),
                 kind: NodeKind::parse(&kind)
                     .ok_or_else(|| StoreError::corrupt(format!("unknown node kind: {kind}")))?,
-                tier: Tier::parse(&tier)
-                    .ok_or_else(|| StoreError::corrupt(format!("unknown tier: {tier}")))?,
-                zone_id: zone_id.map(cortex_core::ids::ZoneId),
-                snippet: None,
-                score: ScoreBreakdown {
-                    path_rank: Some(rank as u32 + 1),
-                    lexical_rank: None,
-                    vector_rank: None,
-                    fused: 1.0 / (rank as f64 + 1.0),
-                    salience_boost: 1.0,
-                    rerank: None,
-                    final_score: 1.0 / (rank as f64 + 1.0) + salience,
-                },
+                size,
+                mtime,
+                inode,
+                dev,
             });
         }
-        Ok(hits)
+        Ok(out)
+    }
+
+    /// Find a node by the identity the kernel gives it.
+    ///
+    /// This is how a move is recognised when only the reconcile scan sees it: the path changed
+    /// but `(dev, inode)` did not, so it is the same file and its history should follow it.
+    pub fn node_by_identity(&self, dev: i64, inode: i64) -> Result<Option<NodeId>> {
+        if inode == 0 {
+            return Ok(None);
+        }
+        let conn = self.conn();
+        conn.query_row(
+            "SELECT id FROM nodes WHERE dev = ?1 AND inode = ?2 LIMIT 1",
+            [dev, inode],
+            |r| r.get::<_, i64>(0).map(NodeId),
+        )
+        .optional()
+        .map_err(StoreError::from)
+    }
+
+    /// Move a node to a new path, keeping its identity.
+    ///
+    /// Not a delete plus an insert: the node id is what edges, chunks, embeddings and episodes
+    /// point at. Re-creating it would sever every one of those and force a re-embed, which is
+    /// exactly the cost move detection exists to avoid.
+    ///
+    /// Descendants follow, because renaming a directory renames everything beneath it.
+    pub fn rename_node(&self, from: &Path, to: &Path) -> Result<usize> {
+        rename_node_on(&self.conn(), from, to)
+    }
+
+    /// Remove a node and everything beneath it.
+    ///
+    /// Episodes deliberately survive — they are the ground truth the index is rebuilt from,
+    /// and an episode about a file that no longer exists is the entire point of an episodic
+    /// memory.
+    pub fn remove_path(&self, path: &Path) -> Result<usize> {
+        remove_path_on(&self.conn(), path)
+    }
+
+    /// Set a node's parent, linking it into the directory graph.
+    pub fn set_parent(&self, child: NodeId, parent: Option<NodeId>) -> Result<()> {
+        let conn = self.conn();
+        conn.execute(
+            "UPDATE nodes SET parent_id = ?2 WHERE id = ?1",
+            params![child.0, parent.map(i64::from)],
+        )?;
+        Ok(())
+    }
+
+    /// Every indexed path with its node id, for building the in-memory path index at startup.
+    pub fn all_paths_with_ids(&self) -> Result<Vec<(NodeId, String)>> {
+        let conn = self.conn();
+        let mut stmt =
+            conn.prepare("SELECT id, path FROM nodes WHERE path IS NOT NULL ORDER BY id")?;
+        let rows = stmt.query_map([], |r| Ok((NodeId(r.get(0)?), r.get::<_, String>(1)?)))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     /// Every indexed path, sorted.
@@ -234,6 +304,115 @@ impl Store {
         conn.execute_batch("VACUUM; ANALYZE;")?;
         Ok(())
     }
+}
+
+
+// ---------------------------------------------------------------------------
+// Operations expressed against a bare connection.
+//
+// `Transaction` derefs to `Connection`, so each of these works identically inside a batch and
+// on its own. Having one implementation rather than two is the point: a batched path that
+// slowly drifts from the unbatched one is a bug waiting for a busy day.
+// ---------------------------------------------------------------------------
+
+fn upsert_node_on(conn: &rusqlite::Connection, node: &NodeUpsert, now: i64) -> Result<NodeId> {
+    let path = path_to_str(&node.path)?;
+
+    conn.execute(
+        "INSERT INTO nodes
+             (kind, path, parent_id, mime, size, mtime, ctime, inode, dev, first_seen, last_seen)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)
+         -- The unique index on `path` is partial (it excludes pathless concept and
+         -- annotation nodes), so the conflict target has to repeat its WHERE clause.
+         ON CONFLICT(path) WHERE path IS NOT NULL DO UPDATE SET
+             kind      = excluded.kind,
+             parent_id = excluded.parent_id,
+             mime      = excluded.mime,
+             size      = excluded.size,
+             mtime     = excluded.mtime,
+             ctime     = excluded.ctime,
+             inode     = excluded.inode,
+             dev       = excluded.dev,
+             last_seen = excluded.last_seen",
+        params![
+            node.kind.as_str(),
+            path,
+            node.parent_id.map(i64::from),
+            node.mime,
+            node.size,
+            node.mtime,
+            node.ctime,
+            node.inode,
+            node.dev,
+            now,
+        ],
+    )?;
+
+    let id: i64 = conn.query_row("SELECT id FROM nodes WHERE path = ?1", [path], |r| r.get(0))?;
+    Ok(NodeId(id))
+}
+
+fn append_episode_on(
+    conn: &rusqlite::Connection,
+    ts: i64,
+    actor: &Actor,
+    action: Action,
+    node_id: Option<NodeId>,
+    session_id: Option<&SessionId>,
+    metadata: &serde_json::Value,
+) -> Result<EpisodeId> {
+    conn.execute(
+        "INSERT INTO episodes (ts, actor, action, node_id, session_id, metadata_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            ts,
+            actor.as_str(),
+            action.as_str(),
+            node_id.map(i64::from),
+            session_id.map(|s| s.0.as_str()),
+            serde_json::to_string(metadata)?,
+        ],
+    )?;
+    Ok(EpisodeId(conn.last_insert_rowid()))
+}
+
+fn remove_path_on(conn: &rusqlite::Connection, path: &Path) -> Result<usize> {
+    let path = path_to_str(path)?;
+    Ok(conn.execute(
+        "DELETE FROM nodes WHERE path = ?1 OR path LIKE ?1 || '/%'",
+        [path],
+    )?)
+}
+
+fn rename_node_on(conn: &rusqlite::Connection, from: &Path, to: &Path) -> Result<usize> {
+    let from = path_to_str(from)?;
+    let to = path_to_str(to)?;
+
+    // Refuse to do anything if the source is not there. Without this guard the destination
+    // clean-up below would delete a perfectly good row on behalf of a source that does not
+    // exist — which is exactly what a stale caller does after an earlier rename already
+    // moved the subtree.
+    let source_exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM nodes WHERE path = ?1)",
+        [from],
+        |r| r.get::<_, i64>(0),
+    )? == 1;
+    if !source_exists {
+        return Ok(0);
+    }
+
+    // The destination may already exist if the move overwrote something. Its row has to go
+    // first, or the unique index on `path` rejects the rename.
+    conn.execute("DELETE FROM nodes WHERE path = ?1", [to])?;
+
+    let moved = conn.execute("UPDATE nodes SET path = ?2 WHERE path = ?1", [from, to])?;
+    let descendants = conn.execute(
+        "UPDATE nodes SET path = ?2 || substr(path, length(?1) + 1)
+         WHERE path LIKE ?1 || '/%'",
+        [from, to],
+    )?;
+
+    Ok(moved + descendants)
 }
 
 fn row_to_node(row: &Row<'_>) -> rusqlite::Result<Result<Node>> {
@@ -294,17 +473,6 @@ fn path_to_str(path: &Path) -> Result<&str> {
     path.to_str().ok_or_else(|| {
         StoreError::corrupt(format!("path is not valid UTF-8: {}", path.display()))
     })
-}
-
-/// Escape the wildcards `LIKE` would otherwise interpret.
-///
-/// Without this, searching for `_` or `%` silently matches everything, which reads as a bug in
-/// the search rather than as a quirk of SQL.
-fn escape_like(query: &str) -> String {
-    query
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_")
 }
 
 #[cfg(test)]
@@ -383,52 +551,10 @@ mod tests {
         assert!(store.node_by_path(Path::new("/nope")).unwrap().is_none());
     }
 
-    #[test]
-    fn search_finds_a_substring_of_the_path() {
-        let store = store_with(&["/home/user/report-foo.pdf", "/home/user/other.txt"]);
-        let hits = store.search_paths("foo", 10).unwrap();
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].path, PathBuf::from("/home/user/report-foo.pdf"));
-    }
 
-    #[test]
-    fn search_respects_the_limit() {
-        let paths: Vec<String> = (0..20).map(|i| format!("/x/foo{i}.txt")).collect();
-        let refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
-        let store = store_with(&refs);
-        assert_eq!(store.search_paths("foo", 5).unwrap().len(), 5);
-    }
 
-    #[test]
-    fn an_empty_query_returns_nothing_rather_than_everything() {
-        let store = store_with(&["/a", "/b"]);
-        assert!(store.search_paths("", 10).unwrap().is_empty());
-        assert!(store.search_paths("   ", 10).unwrap().is_empty());
-    }
 
-    #[test]
-    fn like_wildcards_in_a_query_are_treated_as_literal_characters() {
-        // Typing `%` must not match every file in the index.
-        let store = store_with(&["/a/100%done.txt", "/a/other.txt", "/a/b_c.txt", "/a/bxc.txt"]);
 
-        let percent = store.search_paths("%", 10).unwrap();
-        assert_eq!(percent.len(), 1, "`%` must match only the literal percent sign");
-        assert_eq!(percent[0].path, PathBuf::from("/a/100%done.txt"));
-
-        let underscore = store.search_paths("b_c", 10).unwrap();
-        assert_eq!(underscore.len(), 1, "`_` must not act as a single-character wildcard");
-        assert_eq!(underscore[0].path, PathBuf::from("/a/b_c.txt"));
-    }
-
-    #[test]
-    fn search_results_carry_an_explainable_score() {
-        // Every result must be able to say where it came from — rule from the build prompt.
-        let store = store_with(&["/x/foo.txt"]);
-        let hit = &store.search_paths("foo", 10).unwrap()[0];
-        assert_eq!(hit.score.path_rank, Some(1));
-        assert!(hit.score.fused > 0.0);
-        assert!(hit.score.rerank.is_none(), "nothing has reranked yet at M0");
-    }
 
     #[test]
     fn episodes_append_and_read_back_in_reverse_order() {
@@ -488,6 +614,113 @@ mod tests {
         assert_eq!(stats.dirs, 1);
         assert_eq!(stats.episodes, 1);
         assert_eq!(stats.chunks, 0);
+    }
+
+    #[test]
+    fn nodes_under_returns_a_subtree_and_nothing_else() {
+        let store = store_with(&[
+            "/home/user/proj",
+            "/home/user/proj/src/main.rs",
+            "/home/user/project-other/file.rs",
+            "/home/user/elsewhere.txt",
+        ]);
+        let under: Vec<String> = store
+            .nodes_under(Path::new("/home/user/proj"))
+            .unwrap()
+            .into_iter()
+            .map(|n| n.path.display().to_string())
+            .collect();
+
+        assert_eq!(under, vec!["/home/user/proj", "/home/user/proj/src/main.rs"]);
+        assert!(
+            !under.iter().any(|p| p.contains("project-other")),
+            "a sibling sharing a name prefix must not be swept in"
+        );
+    }
+
+    #[test]
+    fn renaming_a_file_keeps_its_node_id() {
+        // The node id is what edges, chunks and embeddings point at. Losing it on a rename
+        // would sever all of them and force a re-embed.
+        let store = store_with(&["/a/old.txt"]);
+        let before = store.node_by_path(Path::new("/a/old.txt")).unwrap().unwrap();
+
+        assert_eq!(store.rename_node(Path::new("/a/old.txt"), Path::new("/a/new.txt")).unwrap(), 1);
+
+        let after = store.node_by_path(Path::new("/a/new.txt")).unwrap().unwrap();
+        assert_eq!(before.id, after.id, "a rename must preserve identity");
+        assert!(store.node_by_path(Path::new("/a/old.txt")).unwrap().is_none());
+    }
+
+    #[test]
+    fn renaming_a_directory_carries_its_descendants() {
+        let store = store_with(&["/a/old", "/a/old/one.txt", "/a/old/deep/two.txt"]);
+        let moved = store.rename_node(Path::new("/a/old"), Path::new("/a/new")).unwrap();
+        assert_eq!(moved, 3);
+
+        let paths = store.all_paths().unwrap();
+        assert_eq!(paths, vec!["/a/new", "/a/new/deep/two.txt", "/a/new/one.txt"]);
+    }
+
+    #[test]
+    fn renaming_over_an_existing_path_replaces_it() {
+        // `mv a b` where b exists is legal and common; without clearing the destination first,
+        // the unique index on `path` would reject the rename.
+        let store = store_with(&["/a/source.txt", "/a/target.txt"]);
+        store
+            .rename_node(Path::new("/a/source.txt"), Path::new("/a/target.txt"))
+            .unwrap();
+
+        assert_eq!(store.all_paths().unwrap(), vec!["/a/target.txt"]);
+    }
+
+    #[test]
+    fn removing_a_path_takes_its_subtree_but_leaves_history() {
+        let store = store_with(&["/a/dir", "/a/dir/file.txt", "/a/keep.txt"]);
+        let node = store.node_by_path(Path::new("/a/dir/file.txt")).unwrap().unwrap();
+        store
+            .append_episode(1, &Actor::Human, Action::Open, Some(node.id), None, &serde_json::json!({}))
+            .unwrap();
+
+        assert_eq!(store.remove_path(Path::new("/a/dir")).unwrap(), 2);
+        assert_eq!(store.all_paths().unwrap(), vec!["/a/keep.txt"]);
+        assert_eq!(
+            store.recent_episodes(10).unwrap().len(),
+            1,
+            "removing a node must not erase what happened to it"
+        );
+    }
+
+    #[test]
+    fn a_node_can_be_found_by_its_kernel_identity() {
+        let store = Store::open_in_memory().unwrap();
+        let mut u = upsert(NodeKind::File, "/a/file.txt");
+        u.dev = 42;
+        u.inode = 1234;
+        let id = store.upsert_node(&u, 0).unwrap();
+
+        assert_eq!(store.node_by_identity(42, 1234).unwrap(), Some(id));
+        assert_eq!(store.node_by_identity(42, 9999).unwrap(), None);
+    }
+
+    #[test]
+    fn identity_lookup_ignores_the_unknown_inode() {
+        // Zero is the placeholder for "we did not record one", and it would otherwise match
+        // every node that was indexed without stat information.
+        let store = store_with(&["/a/one.txt", "/a/two.txt"]);
+        assert_eq!(store.node_by_identity(0, 0).unwrap(), None);
+    }
+
+    #[test]
+    fn parents_can_be_linked() {
+        let store = store_with(&["/a", "/a/b.txt"]);
+        let parent = store.node_by_path(Path::new("/a")).unwrap().unwrap();
+        let child = store.node_by_path(Path::new("/a/b.txt")).unwrap().unwrap();
+
+        store.set_parent(child.id, Some(parent.id)).unwrap();
+
+        let reread = store.node_by_id(child.id).unwrap().unwrap();
+        assert_eq!(reread.parent_id, Some(parent.id));
     }
 
     #[test]

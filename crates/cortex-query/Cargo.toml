@@ -1,0 +1,16 @@
+[package]
+name = "cortex-query"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Retrieval for the Cortex daemon: path index, fuzzy matching, fusion and scoring."
+
+[dependencies]
+cortex-core.workspace = true
+serde.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

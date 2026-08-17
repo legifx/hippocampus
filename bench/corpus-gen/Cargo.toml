@@ -1,0 +1,16 @@
+[package]
+name = "corpus-gen"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Generates the reproducible synthetic corpus the benchmarks run against."
+publish = false
+
+[[bin]]
+name = "corpus-gen"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true

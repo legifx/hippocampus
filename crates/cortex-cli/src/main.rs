@@ -9,7 +9,8 @@ use cortex_core::paths::Paths;
 use cortex_rpc::client::Client;
 use cortex_rpc::protocol::{
     method, EpisodesRecentParams, EpisodesRecentResult, IndexPathParams, IndexPathResult,
-    NodeGetParams, NodeGetResult, PingResult, SearchParams, SearchResult, StatusResult,
+    NodeGetParams, NodeGetResult, PingResult, ReconcileParams, ReconcileResult, SearchParams,
+    SearchResult, StatusResult, WatchStatusResult,
 };
 
 #[derive(Parser, Debug)]
@@ -56,8 +57,24 @@ enum Command {
         #[arg(short, long, default_value_t = 20)]
         limit: usize,
     },
+    /// Show what the watcher is doing, and whether it is keeping up.
+    Watch {
+        #[command(subcommand)]
+        command: WatchCommand,
+    },
+    /// Compare the index against the filesystem and repair any drift.
+    Reconcile {
+        /// Reconcile only this path. Defaults to every configured root.
+        path: Option<std::path::PathBuf>,
+    },
     /// Ask the daemon to stop.
     Shutdown,
+}
+
+#[derive(Subcommand, Debug)]
+enum WatchCommand {
+    /// Watch coverage, degradation and the last reconciliation.
+    Status,
 }
 
 fn main() -> Result<()> {
@@ -108,6 +125,23 @@ async fn run(args: Args) -> Result<()> {
                     "memory     {} chunks, {} embeddings, {} episodes",
                     result.chunks, result.embeddings, result.episodes
                 );
+                println!(
+                    "path index {} paths, {:.1} MiB",
+                    result.indexed_paths,
+                    result.index_memory_bytes as f64 / (1024.0 * 1024.0)
+                );
+                if let Some(watcher) = &result.watcher {
+                    println!(
+                        "watcher    {}",
+                        if !watcher.active {
+                            "not running".to_string()
+                        } else if watcher.degraded {
+                            format!("DEGRADED, {} unwatched", watcher.unwatched)
+                        } else {
+                            format!("{} directories", watcher.watched_dirs)
+                        }
+                    );
+                }
                 println!("outbox     {} pending", result.outbox_pending);
                 println!(
                     "agents     {}",
@@ -243,6 +277,50 @@ async fn run(args: Args) -> Result<()> {
             }
         }
 
+        Command::Watch { command } => match command {
+            WatchCommand::Status => {
+                let result: WatchStatusResult =
+                    client.call(method::WATCH_STATUS, serde_json::json!({})).await?;
+                if args.json {
+                    print_json(&result)?;
+                } else {
+                    print_watch_status(&result);
+                }
+            }
+        },
+
+        Command::Reconcile { path } => {
+            let path = match path {
+                Some(p) => Some(
+                    p.canonicalize()
+                        .with_context(|| format!("no such path: {}", p.display()))?
+                        .display()
+                        .to_string(),
+                ),
+                None => None,
+            };
+
+            let result: ReconcileResult =
+                client.call(method::RECONCILE, ReconcileParams { path }).await?;
+            if args.json {
+                print_json(&result)?;
+            } else {
+                let s = &result.summary;
+                if s.added == 0 && s.updated == 0 && s.removed == 0 && s.renamed == 0 {
+                    println!(
+                        "index is in sync ({} entries checked, {} ms)",
+                        s.unchanged, result.elapsed_ms
+                    );
+                } else {
+                    println!(
+                        "repaired drift: +{} added, {} updated, -{} removed, {} renamed \
+                         ({} unchanged, {} ms)",
+                        s.added, s.updated, s.removed, s.renamed, s.unchanged, result.elapsed_ms
+                    );
+                }
+            }
+        }
+
         Command::Shutdown => {
             let _: serde_json::Value = client.call(method::SHUTDOWN, serde_json::json!({})).await?;
             println!("stopping");
@@ -250,6 +328,47 @@ async fn run(args: Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn print_watch_status(status: &WatchStatusResult) {
+    if !status.active {
+        println!("watcher   not running — the index relies on periodic reconciliation alone");
+    } else if status.degraded {
+        // Degradation must be loud. An unwatched subtree looks exactly like a subtree where
+        // nothing ever changes, and that is the failure mode users never diagnose themselves.
+        println!(
+            "watcher   DEGRADED — {} of {} watches used, {} directories unwatched",
+            status.watched_dirs, status.budget, status.unwatched
+        );
+        println!("          unwatched paths update only on reconcile");
+    } else {
+        println!(
+            "watcher   healthy — {} of {} watches used",
+            status.watched_dirs, status.budget
+        );
+    }
+
+    if status.paused {
+        println!("indexing  PAUSED");
+    }
+    if status.overflows > 0 {
+        println!(
+            "overflows {} — the kernel dropped events that many times; each triggered a reconcile",
+            status.overflows
+        );
+    }
+
+    for root in &status.roots {
+        println!("root      {root}");
+    }
+
+    match &status.last_reconcile {
+        None => println!("reconcile has not run yet"),
+        Some(r) => println!(
+            "reconcile +{} added, {} updated, -{} removed, {} renamed, {} unchanged, {} skipped",
+            r.added, r.updated, r.removed, r.renamed, r.unchanged, r.skipped
+        ),
+    }
 }
 
 fn print_json<T: serde::Serialize>(value: &T) -> Result<()> {

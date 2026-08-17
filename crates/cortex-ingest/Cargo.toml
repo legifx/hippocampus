@@ -1,0 +1,22 @@
+[package]
+name = "cortex-ingest"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Perception for the Cortex daemon: filesystem watching, coalescing and reconciliation."
+
+[dependencies]
+cortex-core.workspace = true
+cortex-store.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+inotify = "0.11"
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -1,0 +1,19 @@
+[package]
+name = "bench-latency"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Latency benchmarks. These are CI gates, not reports."
+publish = false
+
+[[bin]]
+name = "bench-latency"
+path = "src/main.rs"
+
+[dependencies]
+cortex-core.workspace = true
+cortex-query.workspace = true
+cortex-store.workspace = true
+clap.workspace = true

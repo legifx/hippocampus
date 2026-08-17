@@ -139,6 +139,8 @@ pub mod method {
     pub const EPISODE_APPEND: &str = "episode.append";
     pub const EPISODES_RECENT: &str = "episodes.recent";
     pub const INDEX_PATH: &str = "index.path";
+    pub const WATCH_STATUS: &str = "watch.status";
+    pub const RECONCILE: &str = "reconcile";
     pub const SHUTDOWN: &str = "shutdown";
 
     /// Every method this build serves. Used by `status` so a client can discover the surface.
@@ -150,8 +152,53 @@ pub mod method {
         EPISODE_APPEND,
         EPISODES_RECENT,
         INDEX_PATH,
+        WATCH_STATUS,
+        RECONCILE,
         SHUTDOWN,
     ];
+}
+
+/// How perception is doing. Degradation must be visible, per decision D20.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WatchStatusResult {
+    /// False when no watcher could be started at all; the index then relies purely on
+    /// periodic reconciliation.
+    pub active: bool,
+    pub watched_dirs: usize,
+    pub budget: usize,
+    /// True when the budget was hit, so some subtree is unwatched.
+    pub degraded: bool,
+    pub unwatched: usize,
+    /// Times the kernel queue overflowed. Any value above zero means events were lost and a
+    /// reconcile was triggered.
+    pub overflows: u64,
+    pub paused: bool,
+    /// Paths being watched.
+    pub roots: Vec<String>,
+    pub last_reconcile: Option<ReconcileSummary>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct ReconcileSummary {
+    pub added: u64,
+    pub updated: u64,
+    pub removed: u64,
+    pub renamed: u64,
+    pub unchanged: u64,
+    pub skipped: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReconcileParams {
+    /// Reconcile only this path. Defaults to every configured root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReconcileResult {
+    pub summary: ReconcileSummary,
+    pub elapsed_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,6 +221,11 @@ pub struct StatusResult {
     pub outbox_pending: i64,
     /// Whether the Agent Surface is currently accepting agent traffic (rule R7).
     pub agent_surface_enabled: bool,
+    /// Paths held in the in-memory path index.
+    pub indexed_paths: usize,
+    /// Approximate heap used by the path index, so the memory budget is observable.
+    pub index_memory_bytes: usize,
+    pub watcher: Option<WatchStatusResult>,
     pub methods: Vec<String>,
 }
 

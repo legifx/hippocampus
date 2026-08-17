@@ -3,6 +3,7 @@
 //! Owns the index and serves every client over one Unix socket. See `docs/04-ARCHITECTURE.md`.
 
 mod indexer;
+mod ingest;
 mod lock;
 mod server;
 
@@ -10,8 +11,9 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use cortex_core::config::Config;
 use cortex_core::paths::Paths;
+use cortex_query::PathIndex;
 use cortex_store::Store;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 #[derive(Parser, Debug)]
 #[command(name = "cortexd", version, about = "The Cortex memory daemon")]
@@ -67,12 +69,48 @@ fn main() -> Result<()> {
             .with_context(|| format!("could not open {}", paths.database().display()))?,
     );
 
+    // Build the in-memory path index before serving anything. A daemon that accepts queries
+    // while its index is still empty answers "no results" to questions it could answer, which
+    // is worse than making the client wait the ~150 ms this takes.
+    let started = std::time::Instant::now();
+    let index = Arc::new(RwLock::new(PathIndex::build(
+        store.all_paths_with_ids().context("could not read indexed paths")?,
+    )));
+    tracing::info!(
+        paths = index.read().unwrap().len(),
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "path index ready"
+    );
+
+    let ingest_state = Arc::new(ingest::IngestState::default());
+
+    // The ingest loop gets its own thread: its work is blocking by nature, and running it on
+    // the async runtime would let a long walk stall every query.
+    let ingest_thread = {
+        let ingest = ingest::Ingest {
+            store: store.clone(),
+            index: index.clone(),
+            state: ingest_state.clone(),
+            config: config.clone(),
+        };
+        std::thread::Builder::new()
+            .name("cortex-ingest".into())
+            .spawn(move || ingest.run())?
+    };
+
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
 
+    let ingest_for_shutdown = ingest_state.clone();
     runtime.block_on(async move {
-        let daemon = Arc::new(server::Daemon::new(store, config, paths.database()));
+        let daemon = Arc::new(server::Daemon::new(
+            store,
+            index,
+            ingest_state,
+            config,
+            paths.database(),
+        ));
         let listener = server::bind(&paths.socket())
             .with_context(|| format!("could not bind {}", paths.socket().display()))?;
 
@@ -100,9 +138,15 @@ fn main() -> Result<()> {
         // The socket is ours; leaving it behind would confuse the next start into thinking a
         // daemon is listening.
         let _ = std::fs::remove_file(paths.socket());
-        tracing::info!("cortexd stopped");
         Ok::<(), anyhow::Error>(())
     })?;
 
+    // Let the ingest loop finish its current pass rather than tearing it down mid-write.
+    ingest_for_shutdown.stop();
+    if let Err(e) = ingest_thread.join() {
+        tracing::warn!("ingest thread did not stop cleanly: {e:?}");
+    }
+
+    tracing::info!("cortexd stopped");
     Ok(())
 }

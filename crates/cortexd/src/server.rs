@@ -1,18 +1,21 @@
 //! The JSON-RPC server: accept loop and method dispatch.
 
 use crate::indexer;
+use crate::ingest::IngestState;
 use cortex_core::config::Config;
 use cortex_core::ids::{NodeId, SessionId};
-use cortex_core::model::{Action, Actor};
+use cortex_core::model::{Action, Actor, NodeKind, ScoreBreakdown, SearchHit, Tier};
+use cortex_query::PathIndex;
 use cortex_rpc::protocol::{
     method, EpisodeAppendParams, EpisodesRecentParams, EpisodesRecentResult, IndexPathParams,
-    IndexPathResult, NodeGetParams, NodeGetResult, PingResult, Request, Response, RpcError,
-    SearchParams, SearchResult, StatusResult,
+    IndexPathResult, NodeGetParams, NodeGetResult, PingResult, ReconcileParams, ReconcileResult,
+    ReconcileSummary, Request, Response, RpcError, SearchParams, SearchResult, StatusResult,
+    WatchStatusResult,
 };
 use cortex_rpc::transport;
 use cortex_store::Store;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use tokio::io::BufReader;
 use tokio::net::{UnixListener, UnixStream};
@@ -22,6 +25,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub struct Daemon {
     pub store: Arc<Store>,
+    pub index: Arc<RwLock<PathIndex>>,
+    pub ingest: Arc<IngestState>,
     pub config: Config,
     pub database_path: PathBuf,
     pub started: Instant,
@@ -30,14 +35,104 @@ pub struct Daemon {
 }
 
 impl Daemon {
-    pub fn new(store: Arc<Store>, config: Config, database_path: PathBuf) -> Self {
+    pub fn new(
+        store: Arc<Store>,
+        index: Arc<RwLock<PathIndex>>,
+        ingest: Arc<IngestState>,
+        config: Config,
+        database_path: PathBuf,
+    ) -> Self {
         Self {
             store,
+            index,
+            ingest,
             config,
             database_path,
             started: Instant::now(),
             shutdown: Arc::new(Notify::new()),
         }
+    }
+
+    fn watch_status(&self) -> WatchStatusResult {
+        let health = self.ingest.watch_health.lock().unwrap().clone();
+        let last = self.ingest.last_reconcile.lock().unwrap().map(|r| ReconcileSummary {
+            added: r.added,
+            updated: r.updated,
+            removed: r.removed,
+            renamed: r.renamed,
+            unchanged: r.unchanged,
+            skipped: r.skipped,
+        });
+
+        match health {
+            Some(health) => WatchStatusResult {
+                active: true,
+                watched_dirs: health.watched_dirs,
+                budget: health.budget,
+                degraded: health.degraded,
+                unwatched: health.unwatched,
+                overflows: health.overflows,
+                paused: self.ingest.is_paused(),
+                roots: self
+                    .config
+                    .index
+                    .metadata_roots
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect(),
+                last_reconcile: last,
+            },
+            None => WatchStatusResult {
+                active: false,
+                watched_dirs: 0,
+                budget: self.config.index.watch_budget,
+                degraded: !self.config.index.metadata_roots.is_empty(),
+                unwatched: 0,
+                overflows: 0,
+                paused: self.ingest.is_paused(),
+                roots: self
+                    .config
+                    .index
+                    .metadata_roots
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect(),
+                last_reconcile: last,
+            },
+        }
+    }
+
+    /// Build search hits from the in-memory path index.
+    ///
+    /// The database is consulted only for the handful of rows that survived ranking. Reading
+    /// tier and salience for a hundred thousand candidates in order to display fifty of them
+    /// would undo everything the index is for.
+    fn search_paths(&self, query: &str, limit: usize) -> Vec<SearchHit> {
+        let hits = self.index.read().unwrap().search(query, limit);
+
+        hits.into_iter()
+            .enumerate()
+            .map(|(rank, hit)| {
+                let node = self.store.node_by_id(hit.node_id).ok().flatten();
+                SearchHit {
+                    node_id: hit.node_id,
+                    path: PathBuf::from(&hit.path),
+                    kind: node.as_ref().map(|n| n.kind).unwrap_or(NodeKind::File),
+                    tier: node.as_ref().map(|n| n.tier).unwrap_or(Tier::Stm),
+                    zone_id: node.as_ref().and_then(|n| n.zone_id),
+                    snippet: None,
+                    score: ScoreBreakdown {
+                        path_rank: Some(rank as u32 + 1),
+                        lexical_rank: None,
+                        vector_rank: None,
+                        fused: hit.score as f64,
+                        salience_boost: 1.0,
+                        rerank: None,
+                        final_score: hit.score as f64,
+                    },
+                }
+            })
+            .collect()
     }
 }
 
@@ -187,6 +282,9 @@ async fn dispatch(
                 embeddings: stats.embeddings,
                 outbox_pending: stats.outbox_pending,
                 agent_surface_enabled: daemon.config.agent.enabled,
+                indexed_paths: daemon.index.read().unwrap().len(),
+                index_memory_bytes: daemon.index.read().unwrap().memory_bytes(),
+                watcher: Some(daemon.watch_status()),
                 methods: method::ALL.iter().map(|m| m.to_string()).collect(),
             })
         }
@@ -196,10 +294,7 @@ async fn dispatch(
             let limit = params.limit.unwrap_or(daemon.config.search.default_limit);
             let started = Instant::now();
 
-            let hits = daemon
-                .store
-                .search_paths(&params.query, limit)
-                .map_err(internal)?;
+            let hits = daemon.search_paths(&params.query, limit);
 
             // Searching is itself an episode. Without this, "what was I looking for on
             // Tuesday" has nothing to answer from.
@@ -286,6 +381,8 @@ async fn dispatch(
             .await
             .map_err(|e| RpcError::internal(format!("index task failed: {e}")))?;
 
+            rebuild_index(daemon).map_err(internal)?;
+
             json(IndexPathResult {
                 indexed: outcome.indexed,
                 skipped: outcome.skipped,
@@ -293,13 +390,87 @@ async fn dispatch(
             })
         }
 
+        method::WATCH_STATUS => json(daemon.watch_status()),
+
+        method::RECONCILE => {
+            let params: ReconcileParams = params
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(|e| RpcError::invalid_params(e.to_string()))?
+                .unwrap_or(ReconcileParams { path: None });
+
+            let roots: Vec<PathBuf> = match params.path {
+                Some(path) => vec![PathBuf::from(path)],
+                None => daemon.config.index.metadata_roots.clone(),
+            };
+            if roots.is_empty() {
+                return Err(RpcError::invalid_params(
+                    "no path given and no metadata_roots configured",
+                ));
+            }
+
+            let started = Instant::now();
+            let store = daemon.store.clone();
+            let extra_deny = daemon.config.index.extra_deny.clone();
+
+            // Reconciliation walks the whole tree, so it belongs on a blocking thread. Holding
+            // the async runtime for the duration would stall every concurrent query.
+            let summary = tokio::task::spawn_blocking(move || {
+                let mut total = cortex_ingest::reconcile::ReconcileReport::default();
+                for root in &roots {
+                    let report = cortex_ingest::reconcile::reconcile(
+                        &store,
+                        root,
+                        &extra_deny,
+                        indexer::unix_now(),
+                    );
+                    total.added += report.added;
+                    total.updated += report.updated;
+                    total.removed += report.removed;
+                    total.renamed += report.renamed;
+                    total.unchanged += report.unchanged;
+                    total.skipped += report.skipped;
+                }
+                total
+            })
+            .await
+            .map_err(|e| RpcError::internal(format!("reconcile task failed: {e}")))?;
+
+            rebuild_index(daemon).map_err(internal)?;
+            *daemon.ingest.last_reconcile.lock().unwrap() = Some(summary);
+
+            json(ReconcileResult {
+                summary: ReconcileSummary {
+                    added: summary.added,
+                    updated: summary.updated,
+                    removed: summary.removed,
+                    renamed: summary.renamed,
+                    unchanged: summary.unchanged,
+                    skipped: summary.skipped,
+                },
+                elapsed_ms: started.elapsed().as_millis() as u64,
+            })
+        }
+
         method::SHUTDOWN => {
+            daemon.ingest.stop();
             daemon.shutdown.notify_waiters();
             json(serde_json::json!({ "stopping": true }))
         }
 
         unknown => Err(RpcError::method_not_found(unknown)),
     }
+}
+
+/// Rebuild the in-memory path index from the database.
+///
+/// Used after any operation that may have changed many paths at once. Patching entry by entry
+/// would be faster but would also be a second, subtly different implementation of what the
+/// database already knows — and the two would drift.
+fn rebuild_index(daemon: &Arc<Daemon>) -> cortex_store::error::Result<()> {
+    let paths = daemon.store.all_paths_with_ids()?;
+    *daemon.index.write().unwrap() = PathIndex::build(paths);
+    Ok(())
 }
 
 fn parse<T: serde::de::DeserializeOwned>(

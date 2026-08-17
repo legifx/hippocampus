@@ -1,9 +1,13 @@
 //! The storage layer: one SQLite file holding everything authoritative.
 //!
-//! Concurrency note for M0: the store wraps a single connection behind a mutex. That is
-//! deliberate and temporary — it is correct, and it keeps the M0 surface small. M1 replaces it
-//! with a reader pool plus a single writer, which is what WAL mode is actually good at.
-//! Do not build a second concurrency model on top of this one; replace it.
+//! Concurrency: the store wraps a single connection behind a mutex. That is correct but it
+//! serialises readers against the ingest writer, which is not what WAL mode is for. Replacing
+//! it with a reader pool plus a single writer is queued for M2, where content extraction makes
+//! the writer busy enough for the contention to matter. Do not build a second concurrency model
+//! on top of this one; replace it.
+//!
+//! Bulk writes must go through [`Store::batch`]. SQLite makes every statement its own durable
+//! transaction otherwise, and that barrier — not the work — dominates a large index run.
 
 pub mod error;
 pub mod migrations;

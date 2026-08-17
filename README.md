@@ -2,7 +2,9 @@
 
 **A memory daemon for your filesystem — and the file manager that grew out of it.**
 
-> Status: early. M0 (daemon skeleton) is done and tested. See `docs/03-PROGRESS.md`.
+> Status: early. The daemon watches a filesystem, keeps a rebuildable index of it and answers
+> fuzzy path queries in about a millisecond over a hundred thousand files. Content extraction
+> and semantic search are next. See `docs/03-PROGRESS.md` for exactly where things stand.
 
 ---
 
@@ -49,7 +51,7 @@ the system is complete without it.
 | Milestone | Content | State |
 |---|---|---|
 | M0 | Daemon skeleton, schema, JSON-RPC socket, CLI | **done** |
-| M1 | fanotify watcher, metadata index, episodes, trigram path search | next |
+| M1 | Filesystem watcher, metadata index, episodes, trigram path search | **nearly done** |
 | M2 | Extraction, chunking, embeddings, hybrid search | |
 | M3 | Agent Surface: MCP, policy engine, undo journal | |
 | M4 | Search overlay (first GUI) | |
@@ -82,6 +84,12 @@ cargo build --release
 
 # Index something, metadata only
 ./target/release/cortex --root /tmp/hippocampus-demo index ~/Documents
+
+# See whether the watcher is keeping up
+./target/release/cortex --root /tmp/hippocampus-demo watch status
+
+# Compare the index against the filesystem and repair any drift
+./target/release/cortex --root /tmp/hippocampus-demo reconcile
 
 # Search it
 ./target/release/cortex --root /tmp/hippocampus-demo search report

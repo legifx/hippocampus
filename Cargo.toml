@@ -4,8 +4,12 @@ members = [
     "crates/cortex-core",
     "crates/cortex-store",
     "crates/cortex-rpc",
+    "crates/cortex-query",
+    "crates/cortex-ingest",
     "crates/cortexd",
     "crates/cortex-cli",
+    "bench/corpus-gen",
+    "bench/latency",
 ]
 
 [workspace.package]
@@ -20,6 +24,8 @@ description = "A memory daemon for your filesystem, and the file manager that gr
 cortex-core = { path = "crates/cortex-core" }
 cortex-store = { path = "crates/cortex-store" }
 cortex-rpc = { path = "crates/cortex-rpc" }
+cortex-query = { path = "crates/cortex-query" }
+cortex-ingest = { path = "crates/cortex-ingest" }
 
 anyhow = "1"
 thiserror = "2"

@@ -300,6 +300,78 @@ actively harmful, and the sender must be able to respect that without code chang
 
 ---
 
+### D21 — Path search has two tiers, and the second is only reached when the first finds nothing
+**Status:** ACCEPTED
+
+Tier one is trigram-filtered and finds every path containing the query **literally**. Tier two
+is a full scan that also accepts scattered subsequence matches, and it runs **only when tier one
+returned nothing at all**.
+
+**Why two tiers:** a trigram index cannot accelerate subsequence matching. Nothing can — that is
+why `fzf` simply scans everything. Contiguous matching is the case that indexes are good at, and
+it is also the overwhelmingly common case.
+
+**Why the condition is "nothing at all" rather than "fewer than the limit":** if thirty files
+literally contain what the user typed, showing them two hundred loosely related subsequence
+matches makes the result worse, and paying for a full scan to produce that dilution would be the
+worst of both outcomes. Searching harder is what you do when the obvious answer is empty, not
+what you do routinely.
+
+The practical effect is that abbreviations still work — `prj3` shares no trigram with
+`project3`, so tier one returns nothing and tier two finds it — while the common case never
+leaves the fast path.
+
+**Revisit if:** measurement shows the full-scan tier being entered often enough to matter. The
+fix would be to parallelise the scan across cores, not to widen the condition.
+
+---
+
+### D20 — `inotify` is the primary watcher; `fanotify` is an optional privileged upgrade
+**Status:** ACCEPTED — supersedes the source specification's watcher choice
+
+The source spec (§5.1) mandates `fanotify` with `FAN_REPORT_FID` and rejects `inotify` outright
+on the grounds that per-directory watch limits do not scale to a home directory. Both halves of
+that turned out to be wrong for this system.
+
+**Measured, not assumed:**
+
+| | |
+|---|---|
+| `fs.inotify.max_user_watches` | 65 536 |
+| Directories in the reference home directory | 5 109 |
+| Headroom | ~12× |
+
+`inotify` needs one watch per *directory*, not per file. Five thousand watches against a budget
+of sixty-five thousand is not a scaling problem, and the deny-list removes the directories that
+would actually explode the count (`node_modules`, `.git`, caches) before a watch is ever placed.
+
+**The decisive argument is privilege, not scale.** `fanotify` with `FAN_MARK_FILESYSTEM` and
+`FAN_REPORT_FID` requires `CAP_SYS_ADMIN`. Asking a user to grant `CAP_SYS_ADMIN` to a daemon
+whose entire job is to read their home directory is a far larger security concession than the
+feature is worth, and it contradicts rules R5 and R6. A tool that demands near-root to watch
+files will not be installed by the second user, and should not be.
+
+**Consequences:**
+
+1. `cortex-ingest` uses `inotify` directly, not the `notify` abstraction — the coalescing window
+   and the move-detection semantics are ours to control, and `notify` uses `inotify` underneath
+   in any case.
+2. Move detection gets *better*, not worse: `IN_MOVED_FROM` and `IN_MOVED_TO` carry a matching
+   cookie, which identifies a rename exactly. Inode comparison remains the fallback for moves
+   that only the reconcile scan sees.
+3. A watch budget is enforced with a reported degradation, so exhaustion is visible in
+   `cortex status` instead of silently producing a stale index.
+4. `fanotify` may be added later as an opt-in path for users who *choose* to grant the
+   capability. It is not required for correctness, because the reconcile scan is the backstop
+   for dropped events either way.
+
+**Revisit if:** a target system is measured with an unfavourable ratio of directories to
+available watches — for example a home directory past ~50 000 directories on a default kernel
+configuration. The escalation path is raising `max_user_watches` (a documented, unprivileged-
+to-request sysctl) before it is `fanotify`.
+
+---
+
 ### D19 — Vector spaces are not shared across the federation boundary
 **Status:** ACCEPTED
 
