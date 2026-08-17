@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+#
+# Repository hygiene gate — hard rule R9.
+#
+# This repository is public. Nothing that identifies one person's machine, network or accounts
+# may enter it, and that includes commit history: removing a secret from a later commit does
+# not remove it from the repo. This hook is the cheap moment to catch it.
+#
+# Install with scripts/setup-dev.sh, or copy to .git/hooks/pre-commit.
+#
+# Deliberately conservative: a false positive costs one `git commit --no-verify` after a human
+# has looked at it. A false negative costs a leaked credential forever.
+
+set -uo pipefail
+
+RED=$'\033[31m'; YELLOW=$'\033[33m'; RESET=$'\033[0m'
+failed=0
+
+# Only staged, non-deleted files are examined.
+mapfile -t files < <(git diff --cached --name-only --diff-filter=ACM)
+[[ ${#files[@]} -eq 0 ]] && exit 0
+
+# Files that legitimately contain example-looking values.
+is_exempt() {
+  case "$1" in
+    scripts/pre-commit) return 0 ;;
+    docs/05-HARD-RULES.md) return 0 ;;   # documents the patterns it forbids
+    *) return 1 ;;
+  esac
+}
+
+report() {
+  printf '%s%s%s\n  %s:%s\n' "$RED" "$1" "$RESET" "$2" "$3" >&2
+  failed=1
+}
+
+for f in "${files[@]}"; do
+  is_exempt "$f" && continue
+  [[ -f "$f" ]] || continue
+  # Skip anything that is not text.
+  file --mime-encoding -b "$f" | grep -q binary && continue
+
+  while IFS=: read -r line content; do
+    [[ -z "${line:-}" ]] && continue
+    report "private IPv4 address" "$f:$line" "$content"
+  done < <(grep -nE '\b(10|192\.168|172\.(1[6-9]|2[0-9]|3[01]))\.[0-9]{1,3}\.[0-9]{1,3}\b' "$f" | head -5)
+
+  while IFS=: read -r line content; do
+    [[ -z "${line:-}" ]] && continue
+    report "tailnet address" "$f:$line" "$content"
+  done < <(grep -nE '\b100\.([6-9][0-9]|1[0-2][0-9])\.[0-9]{1,3}\.[0-9]{1,3}\b' "$f" | head -5)
+
+  while IFS=: read -r line content; do
+    [[ -z "${line:-}" ]] && continue
+    report "private key material" "$f:$line" "$content"
+  done < <(grep -nE 'BEGIN (RSA|OPENSSH|EC|DSA|PGP) PRIVATE KEY' "$f" | head -5)
+
+  while IFS=: read -r line content; do
+    [[ -z "${line:-}" ]] && continue
+    report "looks like a credential" "$f:$line" "$content"
+  done < <(grep -nEi '(api[_-]?key|secret[_-]?key|access[_-]?token|bearer)[[:space:]]*[:=][[:space:]]*["'"'"'][A-Za-z0-9_\-]{16,}' "$f" | head -5)
+
+  while IFS=: read -r line content; do
+    [[ -z "${line:-}" ]] && continue
+    report "known provider token prefix" "$f:$line" "$content"
+  done < <(grep -nE '\b(sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})\b' "$f" | head -5)
+
+  # A home directory path from a real machine. Tests must build paths at runtime.
+  while IFS=: read -r line content; do
+    [[ -z "${line:-}" ]] && continue
+    report "absolute home path from a private system" "$f:$line" "$content"
+  done < <(grep -nE '/home/[a-z][a-z0-9_-]*/' "$f" | grep -vE '/home/(user|you|me|example|USERNAME|\$\{?USER)' | head -5)
+done
+
+if [[ $failed -ne 0 ]]; then
+  cat >&2 <<'EOF'
+
+Commit refused by the repository hygiene gate (hard rule R9).
+
+This repository is public. If the finding above is a false positive, use a placeholder
+(example.com, 198.51.100.1, /home/user/...) rather than bypassing the check.
+
+If you are certain, commit with --no-verify — but understand that history is forever.
+EOF
+  exit 1
+fi
+
+printf '%shygiene gate: clean%s\n' "$YELLOW" "$RESET" >&2
+exit 0
