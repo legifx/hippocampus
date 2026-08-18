@@ -851,3 +851,44 @@ like a bug in this program. "pdftoppm is not installed" is something a person ca
 **Consequence:** a missing tool is *not* recorded as a thumbnail failure. Marking the file would
 leave it unpreviewable after the tool was installed, and the marker is meant to record facts
 about files rather than about the machine.
+
+---
+
+### D41 — M4 §1 is missed, and the cold start is the toolkit's rather than ours
+**Status:** ACCEPTED (the failure is recorded; the response is open)
+
+Measured on the reference workstation, release build, warm page cache, eight runs:
+
+| part | median | what it is |
+|---|---|---|
+| toolkit init | 171 ms | process start until Tauri hands control to `setup()` |
+| webview spawn | 145 ms | until the page begins navigating |
+| the page | 102 ms | of which 43 ms is parsing the document |
+| **total** | **418 ms** | against a **300 ms** budget (min 397, max 451) |
+
+Connecting to the daemon costs **under one millisecond** — `connected_ms` is `setup_ms + 1` in
+every run.
+
+**What this says.** 316 ms of the 418 is spent before any code in this repository runs. A
+frontend that did nothing at all would still land near 360 ms. The budget cannot be met by
+making the bundle smaller: dropping Framer Motion, the largest single dependency, would buy
+tens of milliseconds against a 118 ms overrun that is not ours.
+
+**What it does not say.** This is not evidence against the *other* M4 gates. The keystroke
+budget is met with room to spare, the DOM stays bounded, and the layout holds — D37 stands on
+those, and it was about D4's virtualisation condition rather than about the cold start.
+
+**Two ways out, neither taken yet:**
+
+1. **The resident model.** The overlay is a launcher summoned by a hotkey and dismissed with
+   Escape — the design already says so, and the hotkey already toggles visibility. Under that
+   model the 418 ms is paid once at login and what a person experiences is summon-to-visible,
+   which is a compositor operation. This is the honest reading of the *product*, and it is a
+   redefinition of the *metric*, so it must not be adopted quietly.
+2. **Revisit the stack.** D4 named GTK4 + libadwaita as the fallback. It would remove the
+   webview spawn and most of the toolkit init, at the cost of reimplementing the motion system
+   the design document specifies.
+
+**Revisit at:** M9, when packaging decides whether the overlay is a resident service or a
+command. Until then §1 is recorded as red, because a milestone is not done while its benchmarks
+are red and pretending otherwise makes every other number in this file worth less.

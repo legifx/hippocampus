@@ -10,7 +10,7 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | M4 — Search Overlay |
-| **Status** | **Complete but for one number.** Seven of eight Definition-of-Done items are met and tested; §1 is instrumented and needs one run in a session where a window actually maps. 652 tests. |
+| **Status** | **Seven of eight.** Everything is built and tested; **§1 is measured and red** — 418 ms cold start against a 300 ms budget, of which 316 ms is the toolkit rather than this code (D41). 652 tests. |
 | **Last updated** | 2026-08-18 |
 | **Blocked on** | nothing |
 
@@ -18,7 +18,7 @@ If you finish work without editing this file, the next agent starts from nothing
 
 | DoD | State | Where it is proven |
 |---|---|---|
-| §1 Cold start < 300 ms | **instrumented, unmeasured** | `startup.rs` reports it every run; the window does not map in the agent's environment, so a human has to read the number once |
+| §1 Cold start < 300 ms | **RED — 418 ms** | measured, decomposed and recorded in D41: 171 ms toolkit init, 145 ms webview spawn, 102 ms page, under 1 ms for the daemon |
 | §2 Keystroke → row < 80 ms P95 | **frontend share met** | `tests/perf.spec.ts` — 2 ms median, under 16 ms p95 against a 24 ms allowance; the daemon's ~20 ms is measured in `bench/latency` |
 | §3 10 000 rows, bounded DOM, 60 fps | met | `tests/layout.spec.ts`, `useVirtual.test.ts` — under 40 rows, under 400 nodes, worst scroll update 9 ms |
 | §4 400–1400 px, no overflow | met | `tests/layout.spec.ts` — four widths plus the full-width-to-400 shrink, in a real browser |
@@ -82,13 +82,13 @@ Three things in it are worth knowing:
 
 1. **§1 has no number yet.** The instrumentation is in and reports through the command palette;
    a window that never maps cannot report it. One run on a real session settles it.
-2. **Audio shows nothing yet.** The scope says "waveform metadata only"; the previewer refuses
+1. **Audio shows nothing yet.** The scope says "waveform metadata only"; the previewer refuses
    audio with a reason rather than rendering a waveform, and the pane prints that reason.
-3. **`fs.list` has a `glob` parameter nothing implements.** It is in the wire format and the
+2. **`fs.list` has a `glob` parameter nothing implements.** It is in the wire format and the
    MCP schema; no filter is applied.
-4. **The overlay is not packaged.** It runs from `cargo build`; a desktop entry and a bundle are
+3. **The overlay is not packaged.** It runs from `cargo build`; a desktop entry and a bundle are
    M9.
-5. **Zone accents are wired but untested against real zones** — the hue comes from the daemon
+4. **Zone accents are wired but untested against real zones** — the hue comes from the daemon
    and is rendered as a 2 px left border, but no test asserts what a user sees for a zone tree.
 
 ## Where M2 stands — read this first
@@ -246,6 +246,36 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
+
+### 2026-08-18 — M4 §1 measured, and it fails
+
+The overlay's cold start is **418 ms** against a 300 ms budget. It is recorded as red (D41).
+
+Getting the number at all took finding a mistake in the instructions: `cargo build --release`
+produces a Tauri binary that starts and then shows *"Could not connect to localhost"*, because
+`tauri-build` decides dev-versus-production from whether the Tauri CLI is driving the build and
+not from the cargo profile. A plain cargo build embeds the dev server's URL. Both READMEs now
+say so; `npm run tauri build -- --no-bundle` is the command.
+
+**The decomposition is the useful part**, and it took three instrumented builds to get:
+
+| part | median |
+|---|---|
+| Tauri and GTK starting, before `setup()` runs | 171 ms |
+| the webview process, until the page navigates | 145 ms |
+| the page, of which 43 ms is parsing the document | 102 ms |
+| connecting to the daemon | **under 1 ms** |
+
+316 of the 418 milliseconds are gone before any line of this repository executes. Removing
+Framer Motion — the largest dependency in the bundle — would buy tens of milliseconds against a
+118 ms overrun that is not the frontend's. The two real options are the resident-process model
+the launcher design already implies, or D4's GTK4 fallback; both are written up in D41 and
+neither is chosen.
+
+**A note on how this was measured, because it cost the owner some patience:** the overlay was
+launched two dozen times in a row from this session. It turned out those windows were appearing
+on his desktop, not vanishing into an unmapped void as an earlier session had recorded. Anything
+that starts a GUI here is visible to whoever is sitting in front of the machine.
 
 ### 2026-08-18 — M4: the thumbnailer, in a process that is meant to die
 

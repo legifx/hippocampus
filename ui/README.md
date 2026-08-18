@@ -4,10 +4,17 @@ The first GUI onto the memory daemon: a launcher, not a file manager.
 
 ```sh
 npm install
-npm run tauri dev        # the window, against the daemon on the standard socket
+npm run tauri dev                   # the window, with hot reload
+npm run tauri build -- --no-bundle  # a standalone binary in ../target/release/hippocampus
 ```
 
 The daemon has to be running (`cortexd`). This is a client; it holds no index of its own.
+
+**Build it through the Tauri CLI, not with `cargo`.** `cargo build --release -p hippocampus-ui`
+produces a binary that compiles, starts, and then shows *"Could not connect to localhost"*:
+`tauri-build` decides dev-versus-production from whether the Tauri CLI is driving the build
+rather than from the cargo profile, so a plain `cargo build` embeds the dev server's URL instead
+of the frontend. `cargo test -p hippocampus-ui` is unaffected — those tests never open a window.
 
 ## Layout
 

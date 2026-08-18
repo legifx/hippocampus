@@ -138,6 +138,23 @@ only command that does, it says what it is about to fetch and from where, and ev
 verified against a checksum pinned in the source. Without a model the search still works — it
 just has no semantic arm, and says so when you ask it why.
 
+## The search overlay
+
+The first GUI: a launcher, summoned with `ctrl+alt+space` and dismissed with Escape.
+
+```sh
+cd ui && npm install
+npm run tauri build -- --no-bundle
+../target/release/hippocampus
+```
+
+It needs the daemon running, and it is built through the Tauri CLI rather than with
+`cargo build` — `ui/README.md` says why that distinction bites.
+
+Image, PDF and video previews come from `cortex-preview`, a separate process that shares the
+desktop's thumbnail cache. It is meant to be killable: it decodes untrusted bytes, so a
+malformed file costs a preview rather than the window.
+
 ## Letting an agent use it
 
 The brain is exposed to agents over MCP. Wire it into Claude Code with:

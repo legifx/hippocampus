@@ -16,6 +16,7 @@ use std::time::Instant;
 #[derive(Clone)]
 pub struct Startup {
     began: Instant,
+    setup_ms: Arc<AtomicU64>,
     connected_ms: Arc<AtomicU64>,
     interactive_ms: Arc<AtomicU64>,
 }
@@ -30,6 +31,9 @@ const UNSET: u64 = u64::MAX;
 /// module's tests found.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct Report {
+    /// Milliseconds from process start to Tauri handing control to this application. This is
+    /// the toolkit's own startup and nothing in this repository can shorten it.
+    pub setup_ms: Option<u64>,
     /// Milliseconds from process start to a usable connection to the daemon.
     pub connected_ms: Option<u64>,
     /// Milliseconds to the first frame a person could act on.
@@ -46,9 +50,21 @@ impl Startup {
     pub fn begin() -> Self {
         Self {
             began: Instant::now(),
+            setup_ms: Arc::new(AtomicU64::new(UNSET)),
             connected_ms: Arc::new(AtomicU64::new(UNSET)),
             interactive_ms: Arc::new(AtomicU64::new(UNSET)),
         }
+    }
+
+    /// When Tauri handed control back to this application.
+    ///
+    /// Everything before it is the toolkit starting: GTK, the webview process, the plugin
+    /// registry. Knowing where that line falls is the difference between "the cold start is too
+    /// slow" and "the cold start is too slow and there is nothing in our code to fix".
+    pub fn mark_setup(&self) -> u64 {
+        let elapsed = self.began.elapsed().as_millis() as u64;
+        self.setup_ms.store(elapsed, Ordering::Relaxed);
+        elapsed
     }
 
     pub fn mark_connected(&self) -> u64 {
@@ -73,6 +89,7 @@ impl Startup {
         };
         let interactive = read(&self.interactive_ms);
         Report {
+            setup_ms: read(&self.setup_ms),
             connected_ms: read(&self.connected_ms),
             interactive_ms: interactive,
             budget_ms: BUDGET_MS,

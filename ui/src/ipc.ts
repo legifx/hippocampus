@@ -240,7 +240,26 @@ export const ipc = {
 
   dismiss: () => transport.invoke<void>("dismiss"),
 
-  markInteractive: () => transport.invoke<number>("mark_interactive"),
+  /**
+   * Stop the cold-start timer, and hand back what only the page knows.
+   *
+   * `pageMs` is time since the webview started navigating and `domReadyMs` is when the document
+   * was parsed. Together with the process-side number they say which of the three parts —
+   * process startup, webview startup, or this bundle — is spending the budget.
+   */
+  markInteractive: () => {
+    const timing =
+      typeof performance === "undefined"
+        ? { pageMs: undefined, domReadyMs: undefined }
+        : {
+            pageMs: Math.round(performance.now()),
+            domReadyMs: Math.round(
+              (performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming)
+                ?.domContentLoadedEventEnd ?? 0,
+            ),
+          };
+    return transport.invoke<number>("mark_interactive", timing);
+  },
 
   startupReport: () => transport.invoke<StartupReport>("startup_report"),
 

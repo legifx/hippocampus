@@ -218,9 +218,30 @@ fn dismiss(window: tauri::Window) {
 /// real app", and this is that timer's other end. It is not a benchmark harness: it is the
 /// number the app reports about itself, every time it starts.
 #[tauri::command]
-fn mark_interactive(state: tauri::State<'_, AppState>) -> u64 {
+/// `page_ms` is milliseconds since the webview began navigating, as the page measured it, and
+/// `dom_ready_ms` is when the document finished parsing. The gap between `page_ms` and the
+/// process-side total is the webview's own startup — the part no amount of bundling work can
+/// shorten, and therefore the first thing worth knowing when the budget is missed.
+fn mark_interactive(
+    state: tauri::State<'_, AppState>,
+    page_ms: Option<u64>,
+    dom_ready_ms: Option<u64>,
+) -> u64 {
     let elapsed = state.startup.mark_interactive();
-    tracing::info!(ms = elapsed, "interactive");
+    let report = state.startup.report();
+    // Both halves, every run. "601 ms" says the budget was missed; "connected at 3 ms,
+    // interactive at 601" says by whom, and that is the difference between a number and a
+    // diagnosis.
+    tracing::info!(
+        interactive_ms = elapsed,
+        setup_ms = report.setup_ms.unwrap_or(0),
+        connected_ms = report.connected_ms.unwrap_or(0),
+        page_ms = page_ms.unwrap_or(0),
+        dom_ready_ms = dom_ready_ms.unwrap_or(0),
+        budget_ms = report.budget_ms,
+        within_budget = report.within_budget,
+        "cold start"
+    );
     elapsed
 }
 
@@ -283,6 +304,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(global_shortcut())
         .setup(move |app| {
+            startup.mark_setup();
             let handle = app.handle().clone();
             let paths = Paths::from_env()?;
             let socket = paths.socket();
