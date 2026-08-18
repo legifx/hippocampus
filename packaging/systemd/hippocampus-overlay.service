@@ -1,0 +1,21 @@
+[Unit]
+Description=Hippocampus search overlay (resident launcher)
+Documentation=https://github.com/hippocampus-fm/hippocampus
+
+# `PartOf` and `After`, never `Requisite`: a requisite fails the unit outright when the target
+# is not already active, which is how an earlier attempt at a session service on this machine
+# ended up permanently dead after a login from a TTY.
+PartOf=graphical-session.target
+After=graphical-session.target hippocampus-cortexd.service
+Wants=hippocampus-cortexd.service
+
+[Service]
+Type=simple
+# Resident and hidden. The window is summoned with the hotkey; starting it visible at login
+# would put a search box in front of somebody who has not asked for one.
+ExecStart=%h/.local/bin/hippocampus
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

@@ -91,14 +91,31 @@ setTransport({
         return null as T;
     }
   },
-  async listen() {
-    return () => {};
+  // The harness records listeners and exposes a way to fire them, so a test can drive the
+  // events the Rust side would send — `window:shown` in particular, which has no other way in.
+  async listen(event: string, handler: (payload: unknown) => void) {
+    const listeners = ((window as unknown as HarnessWindow).__hcListeners ??= new Map());
+    const forEvent = listeners.get(event) ?? new Set();
+    forEvent.add(handler);
+    listeners.set(event, forEvent);
+    return () => forEvent.delete(handler);
   },
   // A 1×1 transparent PNG, so an `<img>` in the harness loads rather than showing a broken
   // icon and changing the layout being measured.
   assetUrl: () =>
     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
 });
+
+type HarnessWindow = {
+  __hcListeners?: Map<string, Set<(payload: unknown) => void>>;
+  __hcEmit?: (event: string, payload?: unknown) => void;
+};
+
+(window as unknown as HarnessWindow).__hcEmit = (event, payload) => {
+  (window as unknown as HarnessWindow).__hcListeners
+    ?.get(event)
+    ?.forEach((handler) => handler(payload));
+};
 
 const root = document.getElementById("root");
 if (!root) throw new Error("the harness document has no #root");

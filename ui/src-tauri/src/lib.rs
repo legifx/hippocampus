@@ -279,10 +279,19 @@ fn global_shortcut<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
                     let _ = window.hide();
                 }
                 _ => {
+                    // The number the resident model exists for. M4 §1's 300 ms is about a cold
+                    // start and stays red (D41); this is what a person actually waits for once
+                    // the process is resident, and it is measured rather than assumed.
+                    let started = std::time::Instant::now();
                     let _ = window.show();
                     // Showing is not focusing on Wayland, and an overlay that appears without
                     // the caret in it makes the first keystroke disappear.
                     let _ = window.set_focus();
+
+                    // A launcher summoned again starts empty. Keeping the last query would mean
+                    // every summon begins by deleting somebody else's search.
+                    let _ = window.emit("window:shown", ());
+                    tracing::info!(us = started.elapsed().as_micros() as u64, "summoned");
                 }
             }
         })
@@ -290,6 +299,18 @@ fn global_shortcut<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
 }
 
 // ---------------------------------------------------------------------------
+
+/// Should the window appear at startup?
+///
+/// Resident by default: the overlay is started once, at login, and summoned with the hotkey.
+/// `--show` is for running it by hand to look at it, which is the only case where a window
+/// appearing unasked is what somebody wanted.
+///
+/// Parsed by hand rather than with `clap`: it is one flag, and a dependency for one flag in the
+/// binary whose startup time is a milestone gate would be an odd trade.
+fn show_at_startup() -> bool {
+    std::env::args().any(|arg| arg == "--show")
+}
 
 pub fn run() {
     tracing_subscriber::fmt()
@@ -347,6 +368,26 @@ pub fn run() {
                     error = %e,
                     "the hotkey is taken; start the overlay from the compositor instead"
                 ),
+            }
+
+            if show_at_startup() {
+                if let Some(window) = handle.get_webview_window("overlay") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+
+            if let Some(window) = handle.get_webview_window("overlay") {
+                let hidden = window.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        // Hide, do not close. Tauri exits with its last window, and a launcher
+                        // that quits when the compositor asks it to close has stopped being
+                        // resident without telling anybody.
+                        api.prevent_close();
+                        let _ = hidden.hide();
+                    }
+                });
             }
 
             Ok(())

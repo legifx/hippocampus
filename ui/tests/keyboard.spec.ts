@@ -204,3 +204,24 @@ test.describe("everything is reachable from the keyboard", () => {
     expect(bindings).toContain("Ctrl+D");
   });
 });
+
+test.describe("the overlay is resident", () => {
+  test("being summoned again starts from an empty query", async ({ page }) => {
+    await open(page, 50);
+    await expect(page.getByLabel("Suche")).toHaveValue("query");
+    await expect(page.locator(".hc-row").first()).toBeVisible();
+
+    // What the hotkey does after showing the window. Without it the overlay comes back holding
+    // the previous search, and the first keystroke appends to somebody else's query.
+    await page.evaluate(() => {
+      (window as unknown as { __hcEmit: (e: string) => void }).__hcEmit("window:shown");
+    });
+
+    await expect(page.getByLabel("Suche")).toHaveValue("");
+    await expect(page.locator(".hc-row")).toHaveCount(0);
+
+    // And it is ready to type into, without a click.
+    await page.keyboard.type("neu");
+    await expect(page.getByLabel("Suche")).toHaveValue("neu");
+  });
+});

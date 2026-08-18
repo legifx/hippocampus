@@ -267,6 +267,15 @@ export const ipc = {
   onSearchUpdate: (handler: (update: SearchUpdate) => void) =>
     transport.listen("search:update", (payload) => handler(payload as SearchUpdate)),
 
+  /**
+   * The window was summoned again.
+   *
+   * A launcher starts empty every time. Leaving the previous query on screen would mean every
+   * summon begins by deleting somebody else's search — and worse, the first keystroke would
+   * append to it.
+   */
+  onWindowShown: (handler: () => void) => transport.listen("window:shown", () => handler()),
+
   onDaemonUnavailable: (handler: (message: string) => void) =>
     transport.listen("daemon:unavailable", (payload) => handler(String(payload))),
 };

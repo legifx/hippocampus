@@ -9,7 +9,10 @@
     "preview": "vite preview",
     "test": "vitest run",
     "tauri": "tauri",
-    "build:release": "tsc --noEmit && HC_HARNESS=0 vite build"
+    "build:release": "tsc --noEmit && HC_HARNESS=0 vite build",
+    "test:ui": "playwright test tests/layout.spec.ts tests/keyboard.spec.ts",
+    "test:perf": "playwright test tests/perf.spec.ts --workers=1",
+    "test:e2e": "npm run test:ui && npm run test:perf"
   },
   "dependencies": {
     "framer-motion": "^11.11.17",

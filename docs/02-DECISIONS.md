@@ -855,7 +855,7 @@ about files rather than about the machine.
 ---
 
 ### D41 — M4 §1 is missed, and the cold start is the toolkit's rather than ours
-**Status:** ACCEPTED (the failure is recorded; the response is open)
+**Status:** ACCEPTED. Option 1 (the resident model) adopted; option 2 (GTK4) still open.
 
 Measured on the reference workstation, release build, warm page cache, eight runs:
 
@@ -880,11 +880,16 @@ those, and it was about D4's virtualisation condition rather than about the cold
 
 **Two ways out, neither taken yet:**
 
-1. **The resident model.** The overlay is a launcher summoned by a hotkey and dismissed with
-   Escape — the design already says so, and the hotkey already toggles visibility. Under that
-   model the 418 ms is paid once at login and what a person experiences is summon-to-visible,
-   which is a compositor operation. This is the honest reading of the *product*, and it is a
-   redefinition of the *metric*, so it must not be adopted quietly.
+1. **The resident model — adopted.** The overlay starts hidden at login and is summoned with a
+   hotkey; the window config is `visible: false`, a close request hides rather than closes, and
+   being summoned again clears the query so it never comes back holding somebody else's search.
+   `packaging/systemd/` has the user units and `scripts/install-user.sh` installs them.
+
+   Under this model the 418 ms is paid once at login and what a person experiences is
+   summon-to-visible. **§1 stays red**: the milestone measures a cold start, this changes when
+   the cold start happens rather than how long it takes, and recording it as green would be the
+   quiet redefinition this decision exists to avoid. The summon latency is logged on every
+   summon so the thing that *was* improved has a number of its own.
 2. **Revisit the stack.** D4 named GTK4 + libadwaita as the fallback. It would remove the
    webview spawn and most of the toolkit init, at the cost of reimplementing the motion system
    the design document specifies.

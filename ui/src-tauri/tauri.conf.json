@@ -23,7 +23,7 @@
         "focus": true,
         "transparent": true,
         "decorations": false,
-        "visible": true,
+        "visible": false,
         "skipTaskbar": true
       }
     ],

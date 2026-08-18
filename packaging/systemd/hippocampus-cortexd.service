@@ -1,0 +1,21 @@
+[Unit]
+Description=Hippocampus memory daemon
+Documentation=https://github.com/hippocampus-fm/hippocampus
+
+# Deliberately not tied to a graphical session. The daemon watches the filesystem and answers
+# the CLI and agents; none of that needs somebody to be logged into a desktop, and a headless
+# machine is a supported way to run this.
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/cortexd
+Restart=on-failure
+RestartSec=5
+
+# The index is a cache and the daemon is a background job. It must never be the reason a
+# foreground application stutters (D22).
+Nice=5
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=default.target

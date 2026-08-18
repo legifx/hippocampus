@@ -57,6 +57,30 @@ export function App() {
     input.current?.focus();
   }, []);
 
+  // Summoned again: empty input, no selection, caret ready. The window is resident, so without
+  // this the overlay would come back holding whatever was searched for last time.
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
+    ipc
+      .onWindowShown(() => {
+        if (disposed) return;
+        setQuery("");
+        setSelected(0);
+        setPaletteOpen(false);
+        run("");
+        input.current?.focus();
+      })
+      .then((off) => (disposed ? off() : (unlisten = off)))
+      .catch(() => {});
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [run]);
+
   useEffect(() => {
     let disposed = false;
     ipc

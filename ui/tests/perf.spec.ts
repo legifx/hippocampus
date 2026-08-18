@@ -60,6 +60,11 @@ function percentile(values: number[], p: number): number {
   return sorted[index] ?? 0;
 }
 
+// One at a time, and run on their own: a latency assertion sharing eight cores with seven other
+// browser instances measures the cores. Playwright's worker pool is per-invocation rather than
+// per-project, so `npm run test:perf` runs this file by itself with `--workers=1`.
+test.describe.configure({ mode: "serial" });
+
 test.describe("the render stays inside its share of the budget", () => {
   test("a keystroke reaches a painted row well inside 80 ms", async ({ page }) => {
     await open(page);

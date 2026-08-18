@@ -10,6 +10,16 @@ npm run tauri build -- --no-bundle  # a standalone binary in ../target/release/h
 
 The daemon has to be running (`cortexd`). This is a client; it holds no index of its own.
 
+**The overlay is resident.** It starts hidden and is summoned with `ctrl+alt+space`; Escape
+clears the query, then puts it away. `--show` presents the window at startup, which is what you
+want when running it by hand. Closing it hides it — Tauri exits with its last window, and a
+launcher that quits when the compositor asks it to close has stopped being resident without
+saying so.
+
+Why resident: the cold start is 418 ms against a 300 ms budget, and 316 ms of that is the
+toolkit rather than this code (D41). Paying it once at login is the mitigation;
+`scripts/install-user.sh` sets up the systemd user units that do it.
+
 **Build it through the Tauri CLI, not with `cargo`.** `cargo build --release -p hippocampus-ui`
 produces a binary that compiles, starts, and then shows *"Could not connect to localhost"*:
 `tauri-build` decides dev-versus-production from whether the Tauri CLI is driving the build
@@ -33,8 +43,14 @@ tests/          Playwright, against a real layout engine
 | Command | What it covers |
 |---|---|
 | `npx vitest run` | the windowing arithmetic, the rows, and the architectural rules |
-| `npx playwright test` | layout at 400–1400 px, the keyboard checklist, render latency |
-| `cargo test -p hippocampus-ui` | the bridge, against a real `cortexd` |
+| `npm run test:ui` | layout at 400–1400 px and the keyboard checklist, in parallel |
+| `npm run test:perf` | render latency, alone and with one worker |
+| `npm run test:e2e` | both of the above, in that order |
+| `cargo test -p hippocampus-ui` | the bridge and the thumbnailer supervisor, against a real `cortexd` |
+
+The latency tests run by themselves on purpose. Playwright's worker pool is per-invocation, so
+a timing assertion sharing eight cores with seven other browser instances measures the cores —
+it failed exactly that way once before being split out.
 
 The Playwright suite runs against `harness.html`, which is the app wired to a fixture instead of
 a daemon. It reuses a Chrome for Testing already on the machine rather than downloading its own.
