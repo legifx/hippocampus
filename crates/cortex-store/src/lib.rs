@@ -9,6 +9,7 @@
 //! Bulk writes must go through [`Store::batch`]. SQLite makes every statement its own durable
 //! transaction otherwise, and that barrier — not the work — dominates a large index run.
 
+pub mod agent;
 pub mod chunks;
 pub mod embeddings;
 pub mod error;

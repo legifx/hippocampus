@@ -43,6 +43,7 @@ crates/
   cortex-store     SQLite schema + migrations, FTS, vector index, episode log
   cortex-ingest    watcher, classifier, extractor, chunker, embedder
   cortex-query     search modes, RRF fusion, rerank, explainability
+  cortex-agent     policy engine, kill switch, audit log, fs tools, undo journal
   cortex-memory    salience, decay, tiering, consolidation
   cortex-rpc       JSON-RPC over Unix socket (server side) + protocol types
   cortex-sync      generic federation protocol + reference adapter (no concrete peer)

@@ -8,6 +8,7 @@ members = [
     "crates/cortex-ingest",
     "crates/cortex-extract",
     "crates/cortex-embed",
+    "crates/cortex-agent",
     "crates/cortexd",
     "crates/cortex-cli",
     "bench/corpus-gen",
@@ -31,6 +32,7 @@ cortex-query = { path = "crates/cortex-query" }
 cortex-ingest = { path = "crates/cortex-ingest" }
 cortex-extract = { path = "crates/cortex-extract" }
 cortex-embed = { path = "crates/cortex-embed" }
+cortex-agent = { path = "crates/cortex-agent" }
 
 anyhow = "1"
 thiserror = "2"

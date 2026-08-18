@@ -359,3 +359,39 @@ mod tests {
         assert!(Tier::Ltm < Tier::Cold);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Agent Surface records. Neither is derived from the filesystem: they are history about
+// callers, not about files, which is why they live beside the domain types rather than in the
+// index proper.
+// ---------------------------------------------------------------------------
+
+/// One recorded access to the Agent Surface, allowed or refused.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AuditEntry {
+    pub id: i64,
+    pub ts: i64,
+    /// `human`, `system` or `agent:<name>`.
+    pub actor: String,
+    pub tool: String,
+    /// The arguments as the caller sent them, after redaction.
+    pub args: serde_json::Value,
+    /// For an allowed call, what came back — a shape and a size, never the payload. For a
+    /// refusal, the reason.
+    pub result_summary: Option<String>,
+    pub allowed: bool,
+}
+
+/// A mutation and its inverse, written before the mutation is applied.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct UndoEntry {
+    pub id: i64,
+    pub ts: i64,
+    pub actor: String,
+    pub operation: serde_json::Value,
+    pub inverse: serde_json::Value,
+    /// False once the inverse has been applied — an undone entry is kept as history, not
+    /// deleted, so `cortex undo` cannot silently run twice over the same operation.
+    pub applied: bool,
+    pub undone_at: Option<i64>,
+}

@@ -8,7 +8,7 @@
 //! `socat` and needs no length-prefix state machine.
 
 use cortex_core::ids::NodeId;
-use cortex_core::model::{Episode, Node, QueryMode, ScoreBreakdown, SearchHit};
+use cortex_core::model::{AuditEntry, Episode, Node, QueryMode, ScoreBreakdown, SearchHit};
 use serde::{Deserialize, Serialize};
 
 /// JSON-RPC 2.0 request.
@@ -156,6 +156,28 @@ pub mod method {
     pub const RECONCILE: &str = "reconcile";
     pub const SHUTDOWN: &str = "shutdown";
 
+    // The Agent Surface's own controls (hard rules R7 and R8). These are not agent tools —
+    // they are how a human governs the agent tools, and they answer whether the surface is
+    // open regardless of whether it is.
+    pub const AGENT_STATUS: &str = "agent.status";
+    pub const AGENT_SET_ENABLED: &str = "agent.set_enabled";
+    pub const INDEX_SET_PAUSED: &str = "index.set_paused";
+    pub const AUDIT_RECENT: &str = "audit.recent";
+
+    /// Name yourself. Everything after it on this connection is attributed to that actor, in
+    /// episodes and in the audit log. Unclaimed connections are `human`.
+    pub const IDENTIFY: &str = "identify";
+
+    // The agent tools themselves. `fs.write`, `fs.move` and `fs.trash` are gated: called
+    // without a plan id they return a plan and change nothing.
+    pub const FS_LIST: &str = "fs.list";
+    pub const FS_READ: &str = "fs.read";
+    pub const FS_STAT: &str = "fs.stat";
+    pub const FS_WRITE: &str = "fs.write";
+    pub const FS_MOVE: &str = "fs.move";
+    pub const FS_TRASH: &str = "fs.trash";
+    pub const UNDO: &str = "undo";
+
     /// Every method this build serves. Used by `status` so a client can discover the surface.
     pub const ALL: &[&str] = &[
         PING,
@@ -178,6 +200,18 @@ pub mod method {
         ZONE_SET_COLOR,
         RECONCILE,
         SHUTDOWN,
+        AGENT_STATUS,
+        AGENT_SET_ENABLED,
+        INDEX_SET_PAUSED,
+        AUDIT_RECENT,
+        IDENTIFY,
+        FS_LIST,
+        FS_READ,
+        FS_STAT,
+        FS_WRITE,
+        FS_MOVE,
+        FS_TRASH,
+        UNDO,
     ];
 }
 
@@ -538,6 +572,76 @@ pub struct IndexPathResult {
     pub indexed: u64,
     pub skipped: u64,
     pub elapsed_ms: u64,
+}
+
+
+// ---------------------------------------------------------------------------
+// Agent Surface governance (R7, R8).
+// ---------------------------------------------------------------------------
+
+/// What the Agent Surface will and will not do right now.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentStatusResult {
+    /// The effective answer: are agent tools being served?
+    pub enabled: bool,
+    /// What the configuration file permits. When this is false, `enabled` cannot be turned
+    /// back on over RPC — a switch thrown in a file is not undone by a message (D32).
+    pub configured_enabled: bool,
+    pub indexing_paused: bool,
+    pub require_dry_run: bool,
+    /// The paths agents may mutate, resolved. Empty means no mutation is possible at all.
+    pub write_allowlist: Vec<String>,
+    /// How many operations could still be undone.
+    pub undo_depth: i64,
+    pub audit_entries: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentSetEnabledParams {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexSetPausedParams {
+    pub paused: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexSetPausedResult {
+    pub paused: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditRecentParams {
+    #[serde(default)]
+    pub limit: Option<usize>,
+    /// Restrict to one actor, e.g. `agent:claude`.
+    #[serde(default)]
+    pub actor: Option<String>,
+    /// Only the calls that were turned away. Usually the interesting ones.
+    #[serde(default)]
+    pub refused_only: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditRecentResult {
+    pub entries: Vec<AuditEntry>,
+    /// Total rows in the log, so a client can say "showing 20 of 4 812".
+    pub total: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdentifyParams {
+    /// `human`, `system`, or an agent's name. A bare name is taken as an agent name — nothing
+    /// verifies the claim, and the value of it is attribution, not access control.
+    pub actor: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdentifyResult {
+    pub actor: String,
+    /// Whether the agent tools will answer this connection at all.
+    pub agent_surface_enabled: bool,
 }
 
 #[cfg(test)]

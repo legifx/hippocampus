@@ -166,6 +166,18 @@ fn main() -> Result<()> {
 
     let ingest_for_shutdown = ingest_state.clone();
     runtime.block_on(async move {
+        // The kill switch is read before anything is served: a daemon that comes back from a
+        // crash must come back in the state its owner left it in, not in the state its
+        // configuration file describes (R7).
+        let kill = Arc::new(cortex_agent::KillSwitch::load(store.clone(), config.agent.enabled)?);
+        if kill.indexing_paused() {
+            ingest_state.set_paused(true);
+            tracing::warn!("indexing is paused (persisted); `cortex resume` starts it again");
+        }
+        if !kill.agent_surface_enabled() {
+            tracing::warn!("the Agent Surface is switched off (persisted)");
+        }
+
         let daemon = Arc::new(server::Daemon::new(
             store,
             index,
@@ -175,6 +187,8 @@ fn main() -> Result<()> {
             embed_stats,
             semantics,
             config,
+            kill,
+            paths.trash_dir(),
             paths.database(),
         ));
         let listener = server::bind(&paths.socket())

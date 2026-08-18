@@ -298,6 +298,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "cortex-agent"
+version = "0.0.1"
+dependencies = [
+ "blake3",
+ "cortex-core",
+ "cortex-store",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "cortex-cli"
 version = "0.0.1"
 dependencies = [
@@ -415,6 +429,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "clap",
+ "cortex-agent",
  "cortex-core",
  "cortex-embed",
  "cortex-extract",

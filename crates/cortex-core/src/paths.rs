@@ -98,6 +98,15 @@ impl Paths {
         self.state_dir.join("audit.log")
     }
 
+    /// Where content displaced by an agent waits.
+    ///
+    /// A trashed file is not a copy in the index — rule R10 forbids the index holding content —
+    /// it is the original, moved. That is what makes an overwrite undoable without the database
+    /// growing by the size of every file an agent touches.
+    pub fn trash_dir(&self) -> PathBuf {
+        self.state_dir.join("trash")
+    }
+
     pub fn socket(&self) -> PathBuf {
         self.runtime_dir.join("cortex.sock")
     }
@@ -115,6 +124,7 @@ impl Paths {
             create_private_dir(dir)?;
         }
         create_private_dir(&self.models_dir())?;
+        create_private_dir(&self.trash_dir())?;
         Ok(())
     }
 }

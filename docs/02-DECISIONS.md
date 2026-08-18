@@ -668,3 +668,64 @@ point is that these numbers hold while somebody else is using it.
 **Revisit if:** the daemon ever needs to *reserve* rather than borrow. It should not: indexing is
 background work by construction (D22), and background work that evicts a foreground application
 from the GPU has misunderstood what it is.
+
+---
+
+### D32 — Configuration is a hard off; the kill switch is runtime state
+**Status:** ACCEPTED
+
+`agent.enabled = false` in the configuration file cannot be lifted over RPC. `agent.enabled =
+true` merely permits the runtime switch to decide, and that switch — together with the indexing
+pause — lives in the `meta` table, not in the configuration file.
+
+**Why:** the two directions are not symmetrical. Somebody who disabled the Agent Surface in a
+file has said something an agent must not be able to talk them out of; somebody who disabled it
+at the terminal has said something that must survive the daemon crashing (R7). Writing the
+runtime state back into the user's configuration file would be worse than either: a temporary
+pause is not an edit to a file the user maintains by hand.
+
+**Consequence:** `agent.status` reports both, `enabled` and `configured_enabled`, so a client can
+tell "switched off just now" from "switched off in a file, and your RPC will not change that".
+
+---
+
+### D33 — The dry run is a plan with a fingerprint and an expiry, held only in memory
+**Status:** ACCEPTED
+
+A gated tool called without a plan id mutates nothing and returns a plan. The plan records what
+was at each target when it was made — size and mtime, not a hash. Applying it re-checks that,
+and refuses if it changed. Plans expire after two minutes, are bound to the actor that made
+them, are consumed on use, and must describe exactly the call that presents them.
+
+**Why the fingerprint:** a confirmation flag confirms an intention. What needs confirming is an
+*effect*, and the effect of "write this file" is different if somebody else created that file in
+the meantime. Without the check, an approval for `create` silently becomes an `overwrite`.
+
+**Why not persisted:** a plan that survived a restart would describe a filesystem the daemon has
+not looked at since. That is precisely the situation the staleness check exists to catch, so
+there is nothing to gain and a false sense of continuity to lose.
+
+**Why size and mtime rather than a hash:** hashing every target to plan a move makes planning
+cost what the move costs. The question is "did this change since I looked", and mtime answers it.
+
+**Revisit if:** a client wants to plan a thousand-file reorganisation and confirm it a minute
+later. Then the TTL is a configuration value rather than a constant.
+
+---
+
+### D34 — Destructive mutations are made reversible by a trash directory, never by the index
+**Status:** ACCEPTED
+
+An overwrite moves the previous version into `$XDG_STATE_HOME/hippocampus/trash/<slot>/` before
+writing, and a trashing is that move and nothing else. The undo journal stores the *path* it went
+to, and the inverse is a rename back.
+
+**Why:** the alternative is storing the old content in the database, and rule R10 forbids exactly
+that — the index is a cache, and a cache that holds the only copy of something is not one. It
+would also make the database grow by the size of every file an agent ever touched.
+
+**Consequence:** the trash is bounded by `agent.undo_journal_depth`, and the journal's inverse can
+fail honestly — if something else has taken the original path in the meantime, undo reports a
+failure rather than overwriting a third party's work. The rename may cross a filesystem boundary
+(a home directory on one disk, `~/.local/state` on another), so the move falls back to copy plus
+delete on `EXDEV`.

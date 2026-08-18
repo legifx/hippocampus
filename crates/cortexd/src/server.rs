@@ -9,12 +9,15 @@ use crate::ingest::IngestState;
 use cortex_core::config::Config;
 use cortex_core::ids::{NodeId, SessionId};
 use cortex_core::model::{Action, Actor, QueryMode};
+use cortex_agent::fs_tools::{Surface, ToolError};
+use cortex_agent::{Auditor, KillSwitch, PlanBook, Policy};
 use cortex_ingest::throttle;
 use cortex_query::search;
 use cortex_query::PathIndex;
 use cortex_rpc::protocol::SearchUpdateParams;
 use cortex_rpc::protocol::{
-    method, ActivityPingResult, EpisodeAppendParams, EpisodesRecentParams, EpisodesRecentResult,
+    method, ActivityPingResult, AgentSetEnabledParams, AgentStatusResult, AuditRecentParams,
+    AuditRecentResult, IdentifyParams, IdentifyResult, IndexSetPausedParams, IndexSetPausedResult, EpisodeAppendParams, EpisodesRecentParams, EpisodesRecentResult,
     CanonicalDumpResult, ExtractRequeueResult, ExtractStatusResult, IndexPathParams,
     IndexPathResult, ModelReloadResult,
     ModelStatusResult, NodeGetParams, NodeGetResult, PingResult, ReconcileParams, ReconcileResult,
@@ -45,6 +48,17 @@ pub struct Daemon {
     /// daemon is running — `cortex model fetch` does not need a restart.
     pub semantics: Arc<Semantics>,
     pub config: Config,
+    /// What agents may do. Derived from configuration once, at startup — a policy that can be
+    /// changed by a message is a policy an agent can argue with.
+    pub policy: Policy,
+    /// The kill switch (R7). Runtime state, persisted, and the only part of the policy a
+    /// running daemon can change.
+    pub kill: Arc<KillSwitch>,
+    /// Dry-run plans awaiting confirmation. In memory: a plan that outlived a restart would
+    /// describe a filesystem nobody has looked at since.
+    pub plans: PlanBook,
+    /// Where an agent's displaced content waits until the undo journal forgets it.
+    pub trash_dir: PathBuf,
     pub database_path: PathBuf,
     pub started: Instant,
     /// Signalled when a client calls `shutdown`.
@@ -61,8 +75,11 @@ impl Daemon {
         embed_stats: Arc<EmbedStats>,
         semantics: Arc<Semantics>,
         config: Config,
+        kill: Arc<KillSwitch>,
+        trash_dir: PathBuf,
         database_path: PathBuf,
     ) -> Self {
+        let policy = Policy::new(&config.agent, config.index.extra_deny.clone());
         Self {
             store,
             index,
@@ -72,10 +89,36 @@ impl Daemon {
             embed_stats,
             semantics,
             config,
+            policy,
+            kill,
+            plans: PlanBook::default(),
+            trash_dir,
             database_path,
             started: Instant::now(),
             shutdown: Arc::new(Notify::new()),
         }
+    }
+
+    /// Is the Agent Surface serving? Configuration and the kill switch must both say yes.
+    pub fn agent_surface_enabled(&self) -> bool {
+        self.policy.configured_enabled() && self.kill.agent_surface_enabled()
+    }
+
+    fn agent_status(&self) -> cortex_store::error::Result<AgentStatusResult> {
+        Ok(AgentStatusResult {
+            enabled: self.agent_surface_enabled(),
+            configured_enabled: self.policy.configured_enabled(),
+            indexing_paused: self.kill.indexing_paused(),
+            require_dry_run: self.policy.require_dry_run(),
+            write_allowlist: self
+                .policy
+                .write_allowlist()
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect(),
+            undo_depth: self.store.undo_depth()?,
+            audit_entries: self.store.audit_count()?,
+        })
     }
 
     fn watch_status(&self) -> WatchStatusResult {
@@ -318,6 +361,14 @@ async fn handle_connection(
     let mut reader = BufReader::new(reader);
     let writer = Arc::new(tokio::sync::Mutex::new(writer));
 
+    // Who is on the other end. Connection-scoped rather than per-request: an agent names
+    // itself once, and every episode and audit entry after that carries the name. A connection
+    // that never says anything is a human at a terminal, which is the safe assumption because
+    // it is the one that grants nothing.
+    let mut ctx = ConnCtx {
+        actor: cortex_core::model::Actor::Human,
+    };
+
     loop {
         let value = match transport::read_message(&mut reader).await {
             Ok(Some(value)) => value,
@@ -355,7 +406,7 @@ async fn handle_connection(
         // A search keeps its outcome here so the reranker can reuse it. Re-running the search in
         // the background task would be simpler and would double every query's retrieval work.
         let mut refinable: Option<search::Outcome> = None;
-        let outcome = dispatch(&daemon, &method, request.params, &mut refinable).await;
+        let outcome = dispatch(&daemon, &method, request.params, &mut refinable, &mut ctx).await;
 
         // A request without an id is a notification: the caller expects no answer, and sending
         // one would desynchronise its stream.
@@ -430,11 +481,17 @@ fn spawn_rerank(
     });
 }
 
+/// State that belongs to one connection rather than to the daemon.
+pub struct ConnCtx {
+    pub actor: cortex_core::model::Actor,
+}
+
 async fn dispatch(
     daemon: &Arc<Daemon>,
     method: &str,
     params: Option<serde_json::Value>,
     refinable: &mut Option<search::Outcome>,
+    ctx: &mut ConnCtx,
 ) -> Result<serde_json::Value, RpcError> {
     match method {
         method::PING => json(PingResult {
@@ -456,7 +513,7 @@ async fn dispatch(
                 episodes: stats.episodes,
                 embeddings: stats.embeddings,
                 outbox_pending: stats.outbox_pending,
-                agent_surface_enabled: daemon.config.agent.enabled,
+                agent_surface_enabled: daemon.agent_surface_enabled(),
                 indexed_paths: daemon.index.read().unwrap().len(),
                 index_memory_bytes: daemon.index.read().unwrap().memory_bytes(),
                 watcher: Some(daemon.watch_status()),
@@ -881,6 +938,128 @@ async fn dispatch(
             })
         }
 
+        method::AGENT_STATUS => json(daemon.agent_status().map_err(internal)?),
+
+        method::AGENT_SET_ENABLED => {
+            let params: AgentSetEnabledParams = parse(params)?;
+            // Configuration wins: turning the surface back on over RPC when the config file
+            // switched it off would make the file a suggestion (D32).
+            if params.enabled && !daemon.config.agent.enabled {
+                return Err(RpcError::new(
+                    RpcError::AGENT_SURFACE_DISABLED,
+                    "the Agent Surface is disabled in the configuration file; change \
+                     agent.enabled there and restart",
+                ));
+            }
+            daemon.kill.set_agent_surface(params.enabled).map_err(internal)?;
+            tracing::warn!(enabled = params.enabled, "agent surface switched");
+            json(daemon.agent_status().map_err(internal)?)
+        }
+
+        method::INDEX_SET_PAUSED => {
+            let params: IndexSetPausedParams = parse(params)?;
+            // Both, and in this order: the persisted record first, so a crash between the two
+            // leaves a daemon that comes back paused rather than one that comes back indexing.
+            daemon.kill.set_indexing_paused(params.paused).map_err(internal)?;
+            daemon.ingest.set_paused(params.paused);
+            if !params.paused {
+                daemon.ingest.signal_work();
+            }
+            tracing::warn!(paused = params.paused, "indexing switched");
+            json(IndexSetPausedResult { paused: params.paused })
+        }
+
+        method::AUDIT_RECENT => {
+            let params: AuditRecentParams = params
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(|e| RpcError::invalid_params(e.to_string()))?
+                .unwrap_or(AuditRecentParams { limit: None, actor: None, refused_only: false });
+            let entries = daemon
+                .store
+                .recent_audit(params.limit.unwrap_or(50).min(1000), params.actor.as_deref(), params.refused_only)
+                .map_err(internal)?;
+            json(AuditRecentResult {
+                entries,
+                total: daemon.store.audit_count().map_err(internal)?,
+            })
+        }
+
+        method::IDENTIFY => {
+            let params: IdentifyParams = parse(params)?;
+            ctx.actor = cortex_agent::actor_from_client(Some(&params.actor));
+            tracing::info!(actor = %ctx.actor.as_str(), "connection identified");
+            json(IdentifyResult {
+                actor: ctx.actor.as_str(),
+                agent_surface_enabled: daemon.agent_surface_enabled(),
+            })
+        }
+
+        // The agent tools. Every one of them is the same three lines — build the surface for
+        // this actor, call the one implementation, translate its refusal — because the tool
+        // logic lives in `cortex-agent` and this is only the socket's way in to it. The CLI
+        // and the MCP server reach the same code through the same methods.
+        method::FS_LIST => {
+            let params = parse(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            json(surface(daemon, &ctx.actor, &auditor).list(&params).map_err(tool_error)?)
+        }
+
+        method::FS_READ => {
+            let params = parse(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            json(surface(daemon, &ctx.actor, &auditor).read(&params).map_err(tool_error)?)
+        }
+
+        method::FS_STAT => {
+            let params = parse(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            json(surface(daemon, &ctx.actor, &auditor).stat(&params).map_err(tool_error)?)
+        }
+
+        method::FS_WRITE => {
+            let params = parse(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            json(surface(daemon, &ctx.actor, &auditor).write(&params).map_err(tool_error)?)
+        }
+
+        method::FS_MOVE => {
+            let params = parse(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            let result = surface(daemon, &ctx.actor, &auditor).move_path(&params).map_err(tool_error)?;
+            // A move changes paths the in-memory index answers from, and it changed them
+            // outside the watcher's knowledge if the target is not under a watched root.
+            rebuild_index(daemon).map_err(internal)?;
+            json(result)
+        }
+
+        method::FS_TRASH => {
+            let params = parse(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            let result = surface(daemon, &ctx.actor, &auditor).trash(&params).map_err(tool_error)?;
+            rebuild_index(daemon).map_err(internal)?;
+            json(result)
+        }
+
+        method::UNDO => {
+            let params = params
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(|e| RpcError::invalid_params(e.to_string()))?
+                .unwrap_or(cortex_core::tools::UndoParams {
+                    last: None,
+                    plan: None,
+                    dry_run: false,
+                });
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            let result = surface(daemon, &ctx.actor, &auditor).undo(&params).map_err(tool_error)?;
+            if !result.undone.is_empty() {
+                // Undo puts files back under paths the index stopped believing in.
+                daemon.ingest.signal_work();
+            }
+            json(result)
+        }
+
         method::SHUTDOWN => {
             daemon.ingest.stop();
             daemon.shutdown.notify_waiters();
@@ -900,6 +1079,42 @@ fn rebuild_index(daemon: &Arc<Daemon>) -> cortex_store::error::Result<()> {
     let paths = daemon.store.all_paths_with_ids()?;
     *daemon.index.write().unwrap() = PathIndex::build(paths);
     Ok(())
+}
+
+/// Build the tool surface for one call.
+///
+/// Cheap: everything in it is borrowed or an `Arc` clone. It is built per call rather than held
+/// on the daemon so that the kill switch is read at the moment of the call — a surface cached
+/// at connection time would keep serving an agent after the switch was thrown.
+fn surface<'a>(
+    daemon: &'a Arc<Daemon>,
+    actor: &cortex_core::model::Actor,
+    auditor: &'a Auditor,
+) -> Surface<'a> {
+    Surface {
+        policy: &daemon.policy,
+        enabled: daemon.kill.agent_surface_enabled(),
+        store: &daemon.store,
+        auditor,
+        plans: &daemon.plans,
+        trash: &daemon.trash_dir,
+        actor: actor.clone(),
+        now: indexer::unix_now(),
+    }
+}
+
+/// Translate a tool failure into the wire error, keeping the refusal's own code.
+///
+/// The code is what a client branches on — "ask the user to widen the allow-list" is a
+/// different reaction from "make a plan first" — so flattening every refusal into one internal
+/// error would make the surface unusable from the other side.
+fn tool_error(e: ToolError) -> RpcError {
+    let code = e.code();
+    let mut error = RpcError::new(code, e.to_string());
+    if let ToolError::Refused(refusal) = &e {
+        error.data = Some(serde_json::json!({ "refusal": refusal.tag() }));
+    }
+    error
 }
 
 fn parse<T: serde::de::DeserializeOwned>(

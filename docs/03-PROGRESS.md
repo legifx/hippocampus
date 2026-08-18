@@ -9,10 +9,49 @@ If you finish work without editing this file, the next agent starts from nothing
 
 | | |
 |---|---|
-| **Active milestone** | M2 — Meaning |
-| **Status** | **Complete.** Every component built, every gate green, recall measured against a checked-in goldset. One Definition-of-Done item is measured as *not met* and says so — see below. |
+| **Active milestone** | M3 — Agent Surface |
+| **Status** | **In progress.** The safety spine is built and tested: policy engine, kill switch, audit log, the `fs.*` tools with mandatory dry-run plans, and an undo journal that restores a hundred moved files byte for byte. What is left is the MCP server and the test that proves all three surfaces share one implementation. |
 | **Last updated** | 2026-08-18 |
 | **Blocked on** | nothing |
+
+## Where M3 stands
+
+Built and measured:
+
+- **`cortex-agent`** — a crate with no daemon in it, so every refusal is testable as a pure
+  function. Policy (deny-list for reads, allow-list for writes), kill switch, audit log, plans,
+  the `fs.*` tools, and undo.
+- **The kill switch (R7)** survives a restart: it lives in `meta`, not in the configuration
+  file, and a configured `false` cannot be lifted over RPC (D32). Both switches are independent —
+  pausing indexing does not disarm agents.
+- **The audit log (R8)** records every call, and the refusals are the point. Arguments are
+  redacted to a size a log can hold.
+- **The mandatory dry run (R6)** is a plan with a filesystem fingerprint, a two-minute expiry and
+  one use (D33). A plan for one file cannot be spent on another; a plan whose target changed is
+  refused as stale.
+- **Undo** is a trash directory plus an inverse in the journal (D34), never a copy in the index.
+
+**Verified, not asserted:** 13 red-team tests assert that every gated tool refuses without an
+allow-list entry, refuses without a confirmed dry-run, refuses a made-up plan id, refuses while
+the surface is off, and leaves an audit entry every time. 9 undo tests, including M3 §3 verbatim:
+100 files moved, `undo --last 100`, and the tree's canonical dump hashes identical to before.
+
+### Still to build for M3
+
+1. **`cortex-mcp`** — the MCP server binary. With the surface off it must refuse to accept
+   connections at all, not merely refuse each tool (M3 §4).
+2. **The three-surface test** (M3 §5): the same operation through MCP, RPC and CLI, asserted
+   identical.
+3. **The `brain.*` write tools** — `annotate`, `pin`, `forget`, `link` — and the read tools
+   beyond search: `recall`, `neighbors`, `timeline`, `working_set`, `diff`.
+4. **DoD §1**: Claude Code configured against the MCP server, completing a real task end to end.
+
+### Known deferral
+
+The `fs.*` handlers run inline on the async runtime rather than on a blocking pool. A listing of
+ten thousand entries therefore occupies one worker for as long as it takes. The runtime is
+multi-threaded so it degrades rather than stalls, but M4's 80 ms keystroke budget shares these
+threads — move them to `spawn_blocking` before the GUI lands.
 
 ## Where M2 stands — read this first
 
@@ -169,6 +208,44 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
+
+### 2026-08-18 — M3 begun: the safety spine
+
+The policy engine, the kill switch, the audit log, the `fs.*` tools, dry-run plans and the undo
+journal. 524 tests, of which 22 are new red-team and undo tests.
+
+**The layer is a crate with no daemon in it.** `cortex-agent` takes a policy, a store and an
+actor; the daemon is a fifty-line adapter over it. That is not tidiness — it is what makes
+"every gated tool refuses without an allow-list entry" a table-driven test over three tools
+rather than a claim, and it is what M3 §5 will lean on when the MCP server arrives.
+
+**Three attacks the red-team suite actually caught while it was being written:**
+
+- A `..` in a path is resolved *before* the allow-list is consulted, not after. The naive
+  version compared the literal string and let `allowed/../secret/f.txt` through.
+- A symlink inside the allow-list pointing outside it is the same attack with a different
+  spelling, so the resolution is `canonicalize` of the deepest existing ancestor — which also
+  handles the file that does not exist yet, which is every file a write creates.
+- `/data-private` is not inside `/data`. `starts_with` on a `Path` compares components, which
+  is why this one is correct rather than lucky, and there is now a test that says so.
+
+**The undo of an overwrite was wrong, and the DoD test found it.** The inverse was a single
+"restore from trash" step, which lands on a path that is occupied — by the file the overwrite
+just wrote. Inverse steps are now stored in the order of the forward steps they undo and applied
+in reverse, so an overwrite is undone by "delete the new one, then move the old one back".
+
+**M3 §3 passes verbatim:** 100 files moved through the surface, `undo --last 100`, and a
+canonical dump of the tree hashes identical to before. The dump covers every path, its length
+and its content hash.
+
+Two things worth knowing for the next session:
+
+- **The trash is why undo does not need the index to hold content** (D34). An overwrite moves
+  the old version into the state directory and journals the path; R10 stays intact and the
+  database does not grow by the size of everything an agent touches.
+- **A plan is bound to its call.** It carries a fingerprint of every target, is consumed on use,
+  expires in two minutes and must describe exactly the operation presenting it — so a plan for
+  `scratch.txt` cannot be spent on `precious.txt` (D33).
 
 ### 2026-08-18 — M2 finished: the GPU, the reranker, and a goldset that lied twice
 

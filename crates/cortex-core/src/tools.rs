@@ -1,0 +1,287 @@
+//! The Agent Surface's vocabulary: what a tool is asked for, and what it answers.
+//!
+//! These types live here rather than in the RPC crate because three surfaces share them — the
+//! socket, the CLI and the MCP server — and one of those (the CLI) has no business linking the
+//! storage layer. A tool whose arguments are spelled out once cannot be spelled differently by
+//! its second caller, which is what M3 §5 asks to be proven.
+
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+// ---------------------------------------------------------------------------
+// Reading
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FsListParams {
+    pub path: PathBuf,
+    /// A shell-style pattern matched against each entry's file name. `*` and `?` only — a full
+    /// glob dialect invites patterns whose cost is not obvious from reading them.
+    #[serde(default)]
+    pub glob: Option<String>,
+    /// How far to descend. 1 is the directory itself.
+    #[serde(default)]
+    pub depth: Option<u32>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FsEntry {
+    pub path: PathBuf,
+    pub kind: FsKind,
+    pub size: u64,
+    pub mtime: i64,
+    /// Whether the brain knows this path. An agent that can see the difference can tell
+    /// "not found" from "not indexed yet", which is the most common confusion at this surface.
+    pub indexed: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FsKind {
+    File,
+    Dir,
+    Symlink,
+    Other,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FsListResult {
+    pub path: PathBuf,
+    pub entries: Vec<FsEntry>,
+    /// True when `limit` cut the answer short.
+    pub truncated: bool,
+    /// Entries that exist but were not listed because the deny-list covers them. Counted
+    /// rather than named: the count keeps the answer honest, the names would leak what R1
+    /// exists to hide.
+    pub hidden: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FsReadParams {
+    pub path: PathBuf,
+    /// Half-open byte range `[start, end)`. Absent means "from the beginning, up to the cap".
+    #[serde(default)]
+    pub byte_range: Option<(u64, u64)>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FsReadResult {
+    pub path: PathBuf,
+    pub content: String,
+    /// Byte offset the content starts at, so a ranged read can be reassembled.
+    pub offset: u64,
+    /// Bytes returned, which is not `content.len()` once invalid UTF-8 has been replaced.
+    pub bytes: u64,
+    pub total_bytes: u64,
+    pub truncated: bool,
+    /// Set when the file was not valid UTF-8 and lossy replacement happened.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FsStatParams {
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FsStatResult {
+    pub path: PathBuf,
+    pub exists: bool,
+    pub kind: Option<FsKind>,
+    pub size: u64,
+    pub mtime: i64,
+    pub readable: bool,
+    /// Whether an agent could mutate this path if it asked.
+    pub writable: bool,
+    pub indexed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Mutation. Everything below is gated: allow-list, dry-run, episode, undo entry.
+// ---------------------------------------------------------------------------
+
+/// How a write treats a file that is already there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WriteMode {
+    /// Fail if the path exists. The safe default, and the default in the wire format.
+    Create,
+    /// Replace the contents. The previous version goes to the trash so the write is undoable.
+    Overwrite,
+    Append,
+}
+
+impl Default for WriteMode {
+    fn default() -> Self {
+        WriteMode::Create
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FsWriteParams {
+    pub path: PathBuf,
+    pub content: String,
+    #[serde(default)]
+    pub mode: WriteMode,
+    /// The id of a plan returned by a previous dry run. Absent means "plan it, do not do it".
+    #[serde(default)]
+    pub plan: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FsMoveParams {
+    pub from: PathBuf,
+    pub to: PathBuf,
+    #[serde(default)]
+    pub plan: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FsTrashParams {
+    pub path: PathBuf,
+    #[serde(default)]
+    pub plan: Option<String>,
+}
+
+/// What a mutation *would* do. Returned by every gated tool called without a plan id.
+///
+/// A plan is not advice. It is the only way to reach the mutation, and it expires — both
+/// because a filesystem an agent looked at ten minutes ago is not the one it is about to
+/// write to, and because an approval that never runs out is not an approval.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Plan {
+    pub id: String,
+    pub tool: String,
+    pub steps: Vec<PlanStep>,
+    /// Seconds until this plan stops being accepted.
+    pub expires_in_secs: i64,
+    /// Plain sentences, in the order the steps run. What a confirmation dialog shows.
+    pub summary: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlanStep {
+    pub action: PlanAction,
+    pub path: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<PathBuf>,
+    /// What is currently at `path`, if anything — the thing that would be lost.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replaces: Option<FsEntry>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanAction {
+    Create,
+    Overwrite,
+    Append,
+    Move,
+    Trash,
+}
+
+impl PlanAction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PlanAction::Create => "create",
+            PlanAction::Overwrite => "overwrite",
+            PlanAction::Append => "append",
+            PlanAction::Move => "move",
+            PlanAction::Trash => "trash",
+        }
+    }
+}
+
+/// The answer to a gated call: either the plan it needs first, or what it did.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum Mutation {
+    /// Nothing happened. Call again with `plan` set to this plan's id.
+    Planned { plan: Plan },
+    Applied {
+        /// The journal entry that can undo this.
+        undo_id: i64,
+        steps: Vec<PlanStep>,
+        /// Where the displaced content went, if anywhere.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        trashed: Option<PathBuf>,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// Undo
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UndoParams {
+    /// How many journal entries to reverse, newest first.
+    #[serde(default)]
+    pub last: Option<usize>,
+    /// Reverse everything one plan did, whatever its size.
+    #[serde(default)]
+    pub plan: Option<String>,
+    /// Report what would be reversed without reversing it.
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UndoResult {
+    pub undone: Vec<UndoneEntry>,
+    /// Entries that could not be reversed, and why. An undo that half worked must say so.
+    pub failed: Vec<UndoFailure>,
+    pub dry_run: bool,
+    pub remaining: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UndoneEntry {
+    pub id: i64,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UndoFailure {
+    pub id: i64,
+    pub description: String,
+    pub reason: String,
+}
+
+/// Plain sentences describing what a set of steps does, in the order they run.
+///
+/// Here rather than in the policy crate because all three surfaces print it: the CLI before
+/// asking for confirmation, the MCP server as the tool's answer, and the GUI in its dialog. A
+/// plan that reads differently depending on who shows it is a plan somebody approves twice.
+pub fn describe_steps(steps: &[PlanStep]) -> Vec<String> {
+    steps
+        .iter()
+        .map(|step| match (step.action, &step.from, &step.replaces) {
+            (PlanAction::Move, Some(from), None) => {
+                format!("move {} to {}", from.display(), step.path.display())
+            }
+            (PlanAction::Move, Some(from), Some(replaced)) => format!(
+                "move {} to {}, replacing the {} bytes already there",
+                from.display(),
+                step.path.display(),
+                replaced.size
+            ),
+            (PlanAction::Move, None, _) => format!("move something to {}", step.path.display()),
+            (PlanAction::Trash, _, _) => format!("move {} to the trash", step.path.display()),
+            (PlanAction::Create, _, _) => format!("create {}", step.path.display()),
+            (PlanAction::Overwrite, _, Some(replaced)) => format!(
+                "overwrite {}, discarding the {} bytes there (recoverable with `cortex undo`)",
+                step.path.display(),
+                replaced.size
+            ),
+            (PlanAction::Overwrite, _, None) => format!("write {}", step.path.display()),
+            (PlanAction::Append, _, _) => format!("append to {}", step.path.display()),
+        })
+        .collect()
+}

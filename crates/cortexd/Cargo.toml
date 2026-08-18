@@ -18,6 +18,7 @@ onnx = ["cortex-embed/onnx"]
 [dependencies]
 cortex-core.workspace = true
 cortex-store.workspace = true
+cortex-agent.workspace = true
 cortex-rpc.workspace = true
 cortex-query.workspace = true
 cortex-ingest.workspace = true

@@ -6,9 +6,15 @@
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use cortex_core::paths::Paths;
+use cortex_core::tools::{
+    FsListParams, FsListResult, FsMoveParams, FsReadParams, FsReadResult, FsStatParams,
+    FsStatResult, FsTrashParams, FsWriteParams, Mutation, UndoParams, UndoResult, WriteMode,
+};
 use cortex_rpc::client::Client;
 use cortex_rpc::protocol::{
-    method, EpisodesRecentParams, EpisodesRecentResult, ExtractRequeueResult, ExtractStatusResult,
+    method, AgentSetEnabledParams, AgentStatusResult, AuditRecentParams, AuditRecentResult,
+    EpisodesRecentParams, EpisodesRecentResult, ExtractRequeueResult, ExtractStatusResult,
+    IdentifyParams, IdentifyResult, IndexSetPausedParams, IndexSetPausedResult,
     CanonicalDumpResult, IndexPathParams, IndexPathResult, ModelReloadResult, ModelStatusResult,
     NodeGetParams, NodeGetResult, PingResult, RebuildParams, RebuildResult, ReconcileParams,
     ReconcileResult, SearchExplainParams, SearchUpdateParams,
@@ -26,6 +32,11 @@ struct Args {
     /// Print raw JSON instead of formatted output. For scripts and for agents.
     #[arg(long, global = true)]
     json: bool,
+
+    /// Act as this actor. Everything done on this connection is attributed to it in the
+    /// episode log and the audit log, and it is held to the agent policy.
+    #[arg(long = "as", value_name = "ACTOR", global = true)]
+    actor: Option<String>,
 
     #[command(subcommand)]
     command: Command,
@@ -122,8 +133,94 @@ enum Command {
         /// Reconcile only this path. Defaults to every configured root.
         path: Option<std::path::PathBuf>,
     },
+    /// List a directory, the way an agent sees it.
+    Ls {
+        path: std::path::PathBuf,
+        /// How far to descend.
+        #[arg(short, long, default_value_t = 1)]
+        depth: u32,
+        #[arg(short, long)]
+        limit: Option<usize>,
+    },
+    /// Print a file's contents through the surface, deny-list and all.
+    Cat {
+        path: std::path::PathBuf,
+        /// A byte range, as `start:end`.
+        #[arg(long, value_name = "START:END")]
+        range: Option<String>,
+    },
+    /// What the surface knows about a path, including whether it may be written.
+    Stat { path: std::path::PathBuf },
+    /// Write a file. Gated: plans first, applies second (rule R6).
+    Write {
+        path: std::path::PathBuf,
+        /// The content. Without it, standard input is read.
+        content: Option<String>,
+        #[arg(long, value_parser = ["create", "overwrite", "append"], default_value = "create")]
+        mode: String,
+        /// Apply the plan instead of printing it.
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+    /// Move a file. Gated.
+    Mv {
+        from: std::path::PathBuf,
+        to: std::path::PathBuf,
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+    /// Move a file to the trash, where `cortex undo` can still reach it. Gated.
+    Trash {
+        path: std::path::PathBuf,
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+    /// Reverse recent mutations, newest first.
+    Undo {
+        /// How many to reverse.
+        #[arg(short, long, default_value_t = 1)]
+        last: usize,
+        /// Reverse everything one plan did.
+        #[arg(long)]
+        plan: Option<String>,
+        /// Say what would be reversed, and reverse nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Stop watching and indexing. Survives a restart (rule R7).
+    ///
+    /// The index keeps answering; it just stops learning. `cortex resume` starts it again, and
+    /// a reconcile afterwards catches up on everything that changed meanwhile.
+    Pause,
+    /// Start indexing again after `cortex pause`.
+    Resume,
+    /// The Agent Surface: whether agents are being served at all (rule R7).
+    #[command(name = "agent-surface")]
+    AgentSurface {
+        #[command(subcommand)]
+        command: Option<AgentSurfaceCommand>,
+    },
+    /// Show what agents have asked for, and what was refused (rule R8).
+    Audit {
+        #[arg(short, long, default_value_t = 20)]
+        limit: usize,
+        /// Only one actor, e.g. `agent:claude`.
+        #[arg(long)]
+        actor: Option<String>,
+        /// Only the refusals.
+        #[arg(long)]
+        refused: bool,
+    },
     /// Ask the daemon to stop.
     Shutdown,
+}
+
+#[derive(Subcommand, Debug)]
+enum AgentSurfaceCommand {
+    /// Serve agent tools.
+    On,
+    /// Refuse every agent tool, and stop accepting MCP connections.
+    Off,
 }
 
 #[derive(Subcommand, Debug)]
@@ -211,6 +308,16 @@ async fn run(args: Args) -> Result<()> {
             socket.display()
         )
     })?;
+
+    // Naming yourself is one round trip and it is what makes the audit log worth reading.
+    if let Some(actor) = &args.actor {
+        let identified: IdentifyResult = client
+            .call(method::IDENTIFY, IdentifyParams { actor: actor.clone() })
+            .await?;
+        if !identified.agent_surface_enabled {
+            eprintln!("warning: the Agent Surface is switched off; agent tools will refuse");
+        }
+    }
 
     match args.command {
         Command::Ping => {
@@ -682,6 +789,243 @@ async fn run(args: Args) -> Result<()> {
             }
         }
 
+        Command::Ls { path, depth, limit } => {
+            let result: FsListResult = client
+                .call(
+                    method::FS_LIST,
+                    FsListParams { path, glob: None, depth: Some(depth), limit },
+                )
+                .await?;
+            if args.json {
+                print_json(&result)?;
+            } else {
+                for entry in &result.entries {
+                    println!(
+                        "{:<10} {:>10}  {}{}",
+                        format!("{:?}", entry.kind).to_lowercase(),
+                        entry.size,
+                        entry.path.display(),
+                        if entry.indexed { "" } else { "  (not indexed)" }
+                    );
+                }
+                let mut notes = Vec::new();
+                if result.hidden > 0 {
+                    notes.push(format!("{} hidden by the deny-list", result.hidden));
+                }
+                if result.truncated {
+                    notes.push("truncated".to_string());
+                }
+                println!(
+                    "\n{} entr{}{}",
+                    result.entries.len(),
+                    if result.entries.len() == 1 { "y" } else { "ies" },
+                    if notes.is_empty() { String::new() } else { format!(", {}", notes.join(", ")) }
+                );
+            }
+        }
+
+        Command::Cat { path, range } => {
+            let byte_range = match &range {
+                None => None,
+                Some(text) => {
+                    let (start, end) = text
+                        .split_once(':')
+                        .context("a range looks like `start:end`")?;
+                    Some((start.parse::<u64>()?, end.parse::<u64>()?))
+                }
+            };
+            let result: FsReadResult = client
+                .call(method::FS_READ, FsReadParams { path, byte_range })
+                .await?;
+            if args.json {
+                print_json(&result)?;
+            } else {
+                print!("{}", result.content);
+                if result.truncated {
+                    eprintln!(
+                        "\n[truncated: {} of {} bytes]",
+                        result.bytes, result.total_bytes
+                    );
+                }
+                if let Some(note) = &result.note {
+                    eprintln!("[{note}]");
+                }
+            }
+        }
+
+        Command::Stat { path } => {
+            let result: FsStatResult = client
+                .call(method::FS_STAT, FsStatParams { path })
+                .await?;
+            if args.json {
+                print_json(&result)?;
+            } else {
+                println!("path      {}", result.path.display());
+                if !result.exists {
+                    println!("state     does not exist");
+                } else {
+                    println!("kind      {:?}", result.kind);
+                    println!("size      {} bytes", result.size);
+                }
+                println!("readable  {}", yes_no(result.readable));
+                println!("writable  {}", yes_no(result.writable));
+                println!(
+                    "indexed   {}",
+                    match result.node_id {
+                        Some(id) => format!("yes, node {id}"),
+                        None => "no".to_string(),
+                    }
+                );
+                if let Some(mime) = &result.mime {
+                    println!("mime      {mime}");
+                }
+            }
+        }
+
+        Command::Write { path, content, mode, yes } => {
+            let content = match content {
+                Some(text) => text,
+                None => {
+                    use std::io::Read;
+                    let mut buf = String::new();
+                    std::io::stdin().read_to_string(&mut buf)?;
+                    buf
+                }
+            };
+            let mode = match mode.as_str() {
+                "overwrite" => WriteMode::Overwrite,
+                "append" => WriteMode::Append,
+                _ => WriteMode::Create,
+            };
+            let make = |plan: Option<String>| FsWriteParams {
+                path: path.clone(),
+                content: content.clone(),
+                mode,
+                plan,
+            };
+            let result = gated(&mut client, method::FS_WRITE, make, yes).await?;
+            report_mutation(&result, args.json)?;
+        }
+
+        Command::Mv { from, to, yes } => {
+            let make = |plan: Option<String>| FsMoveParams {
+                from: from.clone(),
+                to: to.clone(),
+                plan,
+            };
+            let result = gated(&mut client, method::FS_MOVE, make, yes).await?;
+            report_mutation(&result, args.json)?;
+        }
+
+        Command::Trash { path, yes } => {
+            let make = |plan: Option<String>| FsTrashParams { path: path.clone(), plan };
+            let result = gated(&mut client, method::FS_TRASH, make, yes).await?;
+            report_mutation(&result, args.json)?;
+        }
+
+        Command::Undo { last, plan, dry_run } => {
+            let result: UndoResult = client
+                .call(method::UNDO, UndoParams { last: Some(last), plan, dry_run })
+                .await?;
+            if args.json {
+                print_json(&result)?;
+            } else {
+                if result.undone.is_empty() && result.failed.is_empty() {
+                    println!("nothing to undo");
+                }
+                for entry in &result.undone {
+                    println!(
+                        "{} {}",
+                        if result.dry_run { "would undo" } else { "undid    " },
+                        entry.description
+                    );
+                }
+                for failure in &result.failed {
+                    println!("FAILED    {} — {}", failure.description, failure.reason);
+                }
+                println!("\n{} operation(s) still undoable", result.remaining);
+            }
+        }
+
+        Command::Pause | Command::Resume => {
+            let paused = matches!(args.command, Command::Pause);
+            let result: IndexSetPausedResult = client
+                .call(method::INDEX_SET_PAUSED, IndexSetPausedParams { paused })
+                .await?;
+            if args.json {
+                print_json(&result)?;
+            } else if result.paused {
+                println!("indexing paused — it stays paused across restarts until `cortex resume`");
+            } else {
+                println!("indexing resumed");
+            }
+        }
+
+        Command::AgentSurface { command } => {
+            let result: AgentStatusResult = match command {
+                None => client.call(method::AGENT_STATUS, serde_json::json!({})).await?,
+                Some(cmd) => {
+                    let enabled = matches!(cmd, AgentSurfaceCommand::On);
+                    client
+                        .call(method::AGENT_SET_ENABLED, AgentSetEnabledParams { enabled })
+                        .await?
+                }
+            };
+
+            if args.json {
+                print_json(&result)?;
+            } else {
+                println!(
+                    "surface     {}",
+                    if result.enabled { "ENABLED" } else { "DISABLED" }
+                );
+                if !result.configured_enabled {
+                    println!("            (switched off in the configuration file; RPC cannot lift that)");
+                }
+                println!("indexing    {}", if result.indexing_paused { "PAUSED" } else { "running" });
+                println!("dry run     {}", if result.require_dry_run { "required" } else { "not required" });
+                if result.write_allowlist.is_empty() {
+                    println!("writable    nothing — agents cannot mutate any file");
+                } else {
+                    println!("writable    {}", result.write_allowlist.join("\n            "));
+                }
+                println!("undoable    {} operation(s)", result.undo_depth);
+                println!("audit       {} entries", result.audit_entries);
+            }
+        }
+
+        Command::Audit { limit, actor, refused } => {
+            let result: AuditRecentResult = client
+                .call(
+                    method::AUDIT_RECENT,
+                    AuditRecentParams { limit: Some(limit), actor, refused_only: refused },
+                )
+                .await?;
+
+            if args.json {
+                print_json(&result)?;
+            } else if result.entries.is_empty() {
+                println!("no audit entries{}", if refused { " — nothing has been refused" } else { "" });
+            } else {
+                for entry in &result.entries {
+                    // The refusals are what this log exists for, so they are marked rather than
+                    // left to be spotted in a column of identical-looking lines.
+                    println!(
+                        "{}  {}  {:<20} {}",
+                        format_age(entry.ts),
+                        if entry.allowed { "ok " } else { "REF" },
+                        entry.tool,
+                        entry.actor
+                    );
+                    if let Some(summary) = &entry.result_summary {
+                        println!("    {summary}");
+                    }
+                    println!("    {}", compact_json(&entry.args));
+                }
+                println!("\nshowing {} of {} entries", result.entries.len(), result.total);
+            }
+        }
+
         Command::Shutdown => {
             let _: serde_json::Value = client.call(method::SHUTDOWN, serde_json::json!({})).await?;
             println!("stopping");
@@ -947,9 +1291,91 @@ fn print_watch_status(status: &WatchStatusResult) {
     }
 }
 
+fn yes_no(value: bool) -> &'static str {
+    if value {
+        "yes"
+    } else {
+        "no"
+    }
+}
+
+/// Run a gated tool: plan first, then apply if the caller said so.
+///
+/// The plan is always made, even with `--yes`. That is not ceremony — the plan is what records
+/// the state of the target, and applying it is what checks that the state has not changed since
+/// (rule R6). Skipping it would mean an approval given for a filesystem nobody looked at.
+async fn gated<P: serde::Serialize>(
+    client: &mut Client,
+    method_name: &str,
+    make_params: impl Fn(Option<String>) -> P,
+    apply: bool,
+) -> Result<Mutation> {
+    let planned: Mutation = client.call(method_name, make_params(None)).await?;
+    match planned {
+        Mutation::Planned { plan } if apply => {
+            Ok(client.call(method_name, make_params(Some(plan.id))).await?)
+        }
+        other => Ok(other),
+    }
+}
+
+fn report_mutation(result: &Mutation, as_json: bool) -> Result<()> {
+    if as_json {
+        return print_json(result);
+    }
+    match result {
+        Mutation::Planned { plan } => {
+            println!("plan {} — nothing has happened yet:", plan.id);
+            for line in &plan.summary {
+                println!("  {line}");
+            }
+            println!(
+                "\nrun the same command with --yes within {} seconds to apply it",
+                plan.expires_in_secs
+            );
+        }
+        Mutation::Applied { undo_id, steps, trashed } => {
+            for line in cortex_core::tools::describe_steps(steps) {
+                println!("{line}");
+            }
+            if let Some(trashed) = trashed {
+                println!("previous version kept at {}", trashed.display());
+            }
+            println!("`cortex undo` reverses this (entry {undo_id})");
+        }
+    }
+    Ok(())
+}
+
 fn print_json<T: serde::Serialize>(value: &T) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(value)?);
     Ok(())
+}
+
+/// How long ago something happened, from a Unix timestamp.
+///
+/// Relative rather than absolute on purpose: a log read at a glance answers "was that just
+/// now?", and getting a calendar date right would mean a time zone database for a column
+/// nobody reads that way.
+fn format_age(ts: i64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(ts);
+    let age = (now - ts).max(0) as u64;
+    format!("{:>8} ago", format_duration(age))
+}
+
+/// One line of JSON, cut short. Audit arguments are already redacted; this is about the width
+/// of a terminal, not about secrecy.
+fn compact_json(value: &serde_json::Value) -> String {
+    let text = value.to_string();
+    if text.chars().count() > 120 {
+        let head: String = text.chars().take(120).collect();
+        format!("{head}…")
+    } else {
+        text
+    }
 }
 
 fn format_duration(secs: u64) -> String {
