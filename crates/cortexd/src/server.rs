@@ -1,7 +1,9 @@
 //! The JSON-RPC server: accept loop and method dispatch.
 
 use crate::activity::Activity;
+use crate::embed_stage::EmbedStats;
 use crate::extract_stage::ExtractStats;
+use crate::semantics::Semantics;
 use crate::indexer;
 use crate::ingest::IngestState;
 use cortex_core::config::Config;
@@ -12,10 +14,11 @@ use cortex_query::search;
 use cortex_query::PathIndex;
 use cortex_rpc::protocol::{
     method, ActivityPingResult, EpisodeAppendParams, EpisodesRecentParams, EpisodesRecentResult,
-    ExtractRequeueResult, ExtractStatusResult, IndexPathParams, IndexPathResult, NodeGetParams,
-    NodeGetResult, PingResult, ReconcileParams, ReconcileResult, ReconcileSummary, Request,
-    Response, RpcError, SearchExplainParams, SearchExplainResult, SearchParams, SearchResult,
-    StatusResult, WatchStatusResult, ZoneInfo, ZoneSetColorParams, ZonesListResult,
+    ExtractRequeueResult, ExtractStatusResult, IndexPathParams, IndexPathResult, ModelReloadResult,
+    ModelStatusResult, NodeGetParams, NodeGetResult, PingResult, ReconcileParams, ReconcileResult,
+    ReconcileSummary, Request, Response, RpcError, SearchExplainParams, SearchExplainResult,
+    SearchParams, SearchResult, StatusResult, WatchStatusResult, ZoneInfo, ZoneSetColorParams,
+    ZonesListResult,
 };
 use cortex_rpc::transport;
 use cortex_store::Store;
@@ -35,6 +38,10 @@ pub struct Daemon {
     /// When a human was last known to be present. Drives the extraction stage's CPU share.
     pub activity: Arc<Activity>,
     pub extract_stats: Arc<ExtractStats>,
+    pub embed_stats: Arc<EmbedStats>,
+    /// The embedding model, if there is one. Behind a lock because it can arrive while the
+    /// daemon is running — `cortex model fetch` does not need a restart.
+    pub semantics: Arc<Semantics>,
     pub config: Config,
     pub database_path: PathBuf,
     pub started: Instant,
@@ -49,6 +56,8 @@ impl Daemon {
         ingest: Arc<IngestState>,
         activity: Arc<Activity>,
         extract_stats: Arc<ExtractStats>,
+        embed_stats: Arc<EmbedStats>,
+        semantics: Arc<Semantics>,
         config: Config,
         database_path: PathBuf,
     ) -> Self {
@@ -58,6 +67,8 @@ impl Daemon {
             ingest,
             activity,
             extract_stats,
+            embed_stats,
+            semantics,
             config,
             database_path,
             started: Instant::now(),
@@ -121,9 +132,16 @@ impl Daemon {
     /// the lock is uncontended except during a reconcile.
     fn run_search(&self, params: &SearchParams) -> search::Outcome {
         let index = self.index.read().unwrap();
+        // Resolved per request rather than held: the model can appear, and a search started a
+        // moment later should use it.
+        let semantic = self.semantics.get();
         search::run(search::Params {
             store: &self.store,
             index: &index,
+            semantic: semantic.as_ref().map(|loaded| search::Semantic {
+                embedder: loaded.embedder.as_ref(),
+                vectors: loaded.vectors.as_ref(),
+            }),
             requested_mode: params.mode,
             raw_query: &params.query,
             limit: params.limit.unwrap_or(self.config.search.default_limit),
@@ -133,6 +151,52 @@ impl Daemon {
             candidates_per_arm: self.config.search.candidates_per_arm,
             rrf_k: self.config.search.rrf_k,
             max_salience_boost: self.config.search.max_salience_boost,
+        })
+    }
+
+    fn model_status(&self) -> Result<ModelStatusResult, RpcError> {
+        use std::sync::atomic::Ordering;
+        let status = self.semantics.status();
+        let stats = &self.embed_stats;
+
+        let chunks_total = self.store.extract_progress().map_err(internal)?.chunks;
+        let chunks_embedded = match self.semantics.get() {
+            Some(loaded) => {
+                let model = loaded.embedder.model();
+                self.store
+                    .embedding_count(cortex_store::embeddings::ModelRef {
+                        id: &model.id,
+                        version: &model.version,
+                        dim: model.dim,
+                    })
+                    .map_err(internal)?
+            }
+            None => 0,
+        };
+
+        Ok(ModelStatusResult {
+            enabled: status.enabled,
+            model: status.model,
+            loaded: status.loaded,
+            backend: status.backend,
+            dim: status.dim,
+            note: status.note,
+            model_present: status.model_present,
+            runtime_present: status.runtime_present,
+            model_dir: status.model_dir,
+            runtime_path: status.runtime_path,
+            download_bytes: cortex_embed::registry::model_by_id(&self.config.embedding.model)
+                .map(|m| m.total_bytes())
+                .unwrap_or(0),
+            vectors_in_index: status.vectors,
+            chunks_total,
+            chunks_embedded,
+            chunks_pending: (chunks_total - chunks_embedded).max(0),
+            caught_up: stats.caught_up.load(Ordering::Relaxed),
+            embedded_this_run: stats.chunks_embedded.load(Ordering::Relaxed),
+            stale: stats.chunks_stale.load(Ordering::Relaxed),
+            failures: stats.failures.load(Ordering::Relaxed),
+            busy_ms: stats.busy_us.load(Ordering::Relaxed) / 1000,
         })
     }
 
@@ -432,6 +496,8 @@ async fn dispatch(
                 score,
                 path_candidates: outcome.path_candidates,
                 lexical_candidates: outcome.lexical_candidates,
+                vector_candidates: outcome.vector_candidates,
+                vector_note: outcome.vector_note.clone(),
                 extract_state: extract.as_ref().map(|(state, _)| state.as_str().to_string()),
                 extract_note: extract.and_then(|(_, note)| note),
                 chunks,
@@ -440,6 +506,30 @@ async fn dispatch(
         }
 
         method::EXTRACT_STATUS => json(daemon.extract_status()?),
+
+        method::MODEL_STATUS => json(daemon.model_status()?),
+
+        method::MODEL_RELOAD => {
+            // Called after `cortex model fetch`. Loading is cheap enough to do inline — it is
+            // opening a file and building a session, not inference — and doing it here means a
+            // freshly downloaded model works without restarting the daemon.
+            let outcome = daemon.semantics.load();
+            // The embedding stage waits on a long timer when it has no model; wake it so the
+            // corpus starts being embedded now rather than in a minute.
+            daemon.ingest.signal_work();
+            match outcome {
+                Ok(backend) => json(ModelReloadResult {
+                    loaded: true,
+                    backend: Some(backend),
+                    note: None,
+                }),
+                Err(note) => json(ModelReloadResult {
+                    loaded: false,
+                    backend: None,
+                    note: Some(note),
+                }),
+            }
+        }
 
         method::EXTRACT_REQUEUE => {
             let requeued = daemon.store.requeue_extraction().map_err(internal)?;
@@ -697,6 +787,10 @@ fn explain_reasons(
         );
     } else if outcome.expression.is_none() {
         reasons.push("the query had no searchable words, so the content arm did not run".to_string());
+    }
+
+    if let Some(note) = &outcome.vector_note {
+        reasons.push(format!("semantic search did not run: {note}"));
     }
 
     // A directory is never a candidate for extraction, so its state stays `pending` for ever.

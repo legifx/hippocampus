@@ -10,9 +10,11 @@
 //! transaction otherwise, and that barrier — not the work — dominates a large index run.
 
 pub mod chunks;
+pub mod embeddings;
 pub mod error;
 pub mod migrations;
 pub mod queries;
+pub mod vectors;
 
 use cortex_core::paths;
 use error::Result;

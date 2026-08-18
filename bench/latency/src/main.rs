@@ -8,13 +8,15 @@
 //! stalls a user notices.
 
 use clap::Parser;
-use cortex_core::ids::NodeId;
+use cortex_core::ids::{ChunkId, NodeId};
 use cortex_core::model::QueryMode;
+use cortex_embed::{Embedder, Input};
 use cortex_extract::pipeline;
 use cortex_query::fusion::{self, Arm, Ranking};
 use cortex_query::{lexical, search, PathIndex};
 use cortex_store::chunks::ChunkWrite;
 use cortex_store::queries::NodeUpsert;
+use cortex_store::vectors::VectorIndex;
 use cortex_store::Store;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -194,6 +196,66 @@ fn main() {
             detail: format!("P50 {b50:?}, P95 {b95:?}, P99 {b99:?}"),
         });
 
+        // ---- Vector ANN top-100 -----------------------------------------------------------
+        // Built from pseudo-random unit vectors rather than from the model. Approximate-nearest-
+        // neighbour latency is a function of the graph — its size, its dimensionality and its
+        // connectivity — and not of what the vectors mean, so this measures the same thing the
+        // real index would while taking seconds instead of hours of inference. What it does not
+        // measure is recall, which is the goldset's job.
+        let vector_count = store.extract_progress().map(|p| p.chunks as usize).unwrap_or(0).max(1000);
+        println!();
+        println!("building a {vector_count}-vector index for the ANN gate…");
+        let built = Instant::now();
+        let vectors = VectorIndex::open(&db_path.with_extension("bench.usearch"), VECTOR_DIM).unwrap();
+        vectors.clear().unwrap();
+        let mut seed = 0x2545_F491_4F6C_DD1D_u64;
+        let sample: Vec<Vec<f32>> = (0..vector_count)
+            .map(|i| {
+                let v = pseudo_unit_vector(&mut seed);
+                vectors.add(ChunkId(i as i64 + 1), &v).unwrap();
+                v
+            })
+            .collect();
+        println!(
+            "  {} vectors, {:.1?}, {:.1} MiB resident",
+            vectors.len(),
+            built.elapsed(),
+            vectors.memory_bytes() as f64 / (1024.0 * 1024.0)
+        );
+
+        let probes: Vec<usize> = (0..20).map(|i| i * (vector_count / 20).max(1) % vector_count).collect();
+        let labels: Vec<String> = probes.iter().map(|i| i.to_string()).collect();
+        let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
+        let (v50, v95, v99) = measure(&label_refs, args.reps.min(60), |label| {
+            let index: usize = label.parse().unwrap();
+            let hits = vectors.search(&sample[index], 100).unwrap();
+            std::hint::black_box(hits.len());
+        });
+        gates.push(Gate {
+            name: "vector ANN top-100",
+            budget: Duration::from_millis(40),
+            measured: v95,
+            detail: format!("P50 {v50:?}, P95 {v95:?}, P99 {v99:?}"),
+        });
+
+        // ---- Embedding the query ----------------------------------------------------------
+        // Only with a real model on the machine, because that is the only number worth having:
+        // the hashing embedder is microseconds and would flatter the hot path into meaning
+        // nothing. Reported rather than gated — the budget table gates the ANN search, and this
+        // is the cost of getting to it.
+        if let Some(embedder) = real_embedder() {
+            let queries = ["kamerawinkel", "was war der stand beim budget", "aurora report"];
+            let (q50, q95, _) = measure(&queries, args.reps.min(20), |q| {
+                let v = embedder.embed(&[Input::Query(q)]).unwrap();
+                std::hint::black_box(v.len());
+            });
+            println!();
+            println!("embedding one query with {}: P50 {q50:?}, P95 {q95:?}", embedder.backend());
+        } else {
+            println!();
+            println!("query embedding not measured: set HIPPOCAMPUS_TEST_RUNTIME and HIPPOCAMPUS_TEST_MODEL");
+        }
+
         // ---- The case the budget does not cover -------------------------------------------
         // A query for a word that is in a third of the corpus. FTS5 scores every match before
         // it can rank them, so this is linear in matches and no top-k trick avoids it. It is
@@ -256,6 +318,10 @@ fn main() {
             let outcome = search::run(search::Params {
                 store: &store,
                 index: &index,
+                // The lexical and path arms only. The vector arm is measured on its own below,
+                // because it needs an index that a benchmark can build in seconds rather than
+                // the hours of inference the real corpus would take.
+                semantic: None,
                 requested_mode: QueryMode::Auto,
                 raw_query: q,
                 limit: 50,
@@ -322,6 +388,44 @@ fn measure(queries: &[&str], reps: usize, mut f: impl FnMut(&str)) -> (Duration,
 
     let at = |p: f64| samples[((samples.len() as f64 * p) as usize).min(samples.len() - 1)];
     (at(0.50), at(0.95), at(0.99))
+}
+
+/// Dimensions of the vectors used for the ANN gate. The real model's width (D6), because the
+/// graph's cost depends on it.
+const VECTOR_DIM: usize = 384;
+
+/// A deterministic unit vector. xorshift, so the benchmark input never drifts.
+fn pseudo_unit_vector(seed: &mut u64) -> Vec<f32> {
+    let mut v = Vec::with_capacity(VECTOR_DIM);
+    for _ in 0..VECTOR_DIM {
+        let mut x = *seed;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        *seed = x;
+        v.push((x.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 40) as f32 / 8_388_608.0 - 1.0);
+    }
+    let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+    for value in v.iter_mut() {
+        *value /= norm;
+    }
+    v
+}
+
+/// The real embedder, when the machine has one. Optional on purpose: the latency gates must run
+/// on a machine that has never downloaded half a gigabyte.
+fn real_embedder() -> Option<Box<dyn Embedder>> {
+    let runtime = PathBuf::from(std::env::var("HIPPOCAMPUS_TEST_RUNTIME").ok()?);
+    let model = PathBuf::from(std::env::var("HIPPOCAMPUS_TEST_MODEL").ok()?);
+    cortex_embed::onnx::OnnxEmbedder::load(
+        &runtime,
+        &model,
+        cortex_embed::E5_SMALL,
+        cortex_embed::onnx::Device::Cpu,
+        8,
+    )
+    .ok()
+    .map(|e| Box::new(e) as Box<dyn Embedder>)
 }
 
 /// Open the cached content index, building it first if it is missing or stale.

@@ -1,0 +1,35 @@
+[package]
+name = "cortex-embed"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Embedding models for the Cortex daemon: registry, provisioning and inference."
+
+[features]
+# The real model. On by default for the daemon; a build without it still has the hashing
+# embedder, which is what the tests use and what keeps this crate compiling anywhere.
+default = ["onnx"]
+onnx = ["dep:ort", "dep:tokenizers"]
+
+[dependencies]
+cortex-core.workspace = true
+blake3.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+sha2 = "0.11"
+# rustls, deliberately: a build that needs libssl-dev on the machine is a build that fails for
+# the second user, and this is the only outbound connection the project ever makes.
+ureq = "3"
+flate2 = "1"
+tar = "0.4"
+
+# `cuda` only enables the provider registration API — with `load-dynamic` nothing links against
+# CUDA at build time, so this compiles on a machine that has never seen a GPU.
+ort = { version = "2.0.0-rc.13", default-features = false, features = ["load-dynamic", "ndarray", "cuda"], optional = true }
+tokenizers = { version = "0.23", default-features = false, features = ["onig"], optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true

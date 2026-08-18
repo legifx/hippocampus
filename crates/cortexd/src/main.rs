@@ -3,10 +3,12 @@
 //! Owns the index and serves every client over one Unix socket. See `docs/04-ARCHITECTURE.md`.
 
 mod activity;
+mod embed_stage;
 mod extract_stage;
 mod indexer;
 mod ingest;
 mod lock;
+mod semantics;
 mod server;
 
 use anyhow::{Context, Result};
@@ -87,6 +89,21 @@ fn main() -> Result<()> {
     let ingest_state = Arc::new(ingest::IngestState::default());
     let activity = Arc::new(activity::Activity::default());
     let extract_stats = Arc::new(extract_stage::ExtractStats::default());
+    let embed_stats = Arc::new(embed_stage::EmbedStats::default());
+
+    // The model is a deliberate download (rule R5), so not having one is the normal state of a
+    // fresh install and must not look like a failure.
+    let semantics = Arc::new(semantics::Semantics::new(
+        paths.state_dir(),
+        config.embedding.clone(),
+    ));
+    match semantics.load() {
+        Ok(backend) => tracing::info!(backend = %backend, "embedding model ready"),
+        Err(note) => tracing::info!(
+            reason = %note,
+            "no embedding model; path and lexical search are unaffected"
+        ),
+    }
 
     // The ingest loop gets its own thread: its work is blocking by nature, and running it on
     // the async runtime would let a long walk stall every query.
@@ -119,6 +136,23 @@ fn main() -> Result<()> {
             .spawn(move || stage.run())?
     };
 
+    // Its own thread, like extraction, and for the same reason: the work is blocking and
+    // throttled. It waits for a model rather than being spawned only when one exists, so
+    // `cortex model fetch` followed by `model.reload` needs no restart.
+    let embed_thread = {
+        let stage = embed_stage::Embedding::new(
+            store.clone(),
+            semantics.clone(),
+            ingest_state.clone(),
+            activity.clone(),
+            embed_stats.clone(),
+            config.clone(),
+        );
+        std::thread::Builder::new()
+            .name("cortex-embed".into())
+            .spawn(move || stage.run())?
+    };
+
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
@@ -131,6 +165,8 @@ fn main() -> Result<()> {
             ingest_state,
             activity,
             extract_stats,
+            embed_stats,
+            semantics,
             config,
             paths.database(),
         ));
@@ -171,6 +207,9 @@ fn main() -> Result<()> {
     }
     if let Err(e) = extract_thread.join() {
         tracing::warn!("extraction thread did not stop cleanly: {e:?}");
+    }
+    if let Err(e) = embed_thread.join() {
+        tracing::warn!("embedding thread did not stop cleanly: {e:?}");
     }
 
     tracing::info!("cortexd stopped");

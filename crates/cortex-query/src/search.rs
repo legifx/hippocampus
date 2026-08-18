@@ -22,7 +22,9 @@ use cortex_extract::snippet::{self, Location};
 use crate::fusion::{self, Arm, Ranking};
 use crate::path_index::PathIndex;
 use crate::{lexical, mode};
+use cortex_embed::{Embedder, Input};
 use cortex_store::chunks::LexicalHit;
+use cortex_store::vectors::VectorIndex;
 use cortex_store::Store;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -56,11 +58,27 @@ pub struct Outcome {
     pub expression: Option<String>,
     pub path_candidates: usize,
     pub lexical_candidates: usize,
+    pub vector_candidates: usize,
+    /// Why the vector arm did not run, when it did not. Shown by `cortex explain`, because
+    /// "semantic search found nothing" and "semantic search is not running" look identical from
+    /// the outside and have entirely different fixes.
+    pub vector_note: Option<String>,
+}
+
+/// The vector arm's two halves: something to turn a query into a vector, and something to find
+/// neighbours of it. Both or neither — an index without an embedder cannot be queried, and an
+/// embedder without an index has nothing to search.
+#[derive(Clone, Copy)]
+pub struct Semantic<'a> {
+    pub embedder: &'a dyn Embedder,
+    pub vectors: &'a VectorIndex,
 }
 
 pub struct Params<'a> {
     pub store: &'a Store,
     pub index: &'a PathIndex,
+    /// Absent when no model is provisioned, which is the default state of a fresh install.
+    pub semantic: Option<Semantic<'a>>,
     pub requested_mode: QueryMode,
     pub raw_query: &'a str,
     pub limit: usize,
@@ -98,9 +116,28 @@ pub fn run(params: Params<'_>) -> Outcome {
         }
     }
 
+    // Arm three: meaning. Skipped for `Locate` for the same reason as the lexical arm, and
+    // absent entirely until a model has been fetched.
+    let mut vector_note = None;
+    let mut vector_hits: Vec<ChunkMatch> = Vec::new();
+    if effective != QueryMode::Locate && !query.trim().is_empty() {
+        match params.semantic {
+            None => vector_note = Some("no embedding model (run `cortex model fetch`)".into()),
+            Some(semantic) if semantic.vectors.is_empty() => {
+                vector_note = Some("nothing embedded yet".into())
+            }
+            Some(semantic) => match vector_arm(semantic, params.store, query, params.candidates_per_arm) {
+                Ok(hits) => vector_hits = hits,
+                Err(note) => vector_note = Some(note),
+            },
+        }
+    }
+
     // One row per document, represented by its best-matching chunk.
     let best = fusion::best_per_node(&chunk_hits, |h| h.node_id, |h| h.score);
     let lexical_order: Vec<&LexicalHit> = best.iter().map(|i| &chunk_hits[*i]).collect();
+    let best_vector = fusion::best_per_node(&vector_hits, |h| h.node_id, |h| h.score);
+    let vector_order: Vec<&ChunkMatch> = best_vector.iter().map(|i| &vector_hits[*i]).collect();
 
     let fused = fusion::fuse(
         &[
@@ -112,6 +149,10 @@ pub fn run(params: Params<'_>) -> Outcome {
                 arm: Arm::Lexical,
                 nodes: lexical_order.iter().map(|h| h.node_id).collect(),
             },
+            Ranking {
+                arm: Arm::Vector,
+                nodes: vector_order.iter().map(|h| h.node_id).collect(),
+            },
         ],
         params.rrf_k,
     );
@@ -120,8 +161,16 @@ pub fn run(params: Params<'_>) -> Outcome {
         .iter()
         .map(|h| (h.node_id, h.path.as_str()))
         .collect();
-    let chunks: HashMap<NodeId, &LexicalHit> =
-        lexical_order.iter().map(|h| (h.node_id, *h)).collect();
+    // A document the vector arm found and the lexical arm did not still needs a snippet, and it
+    // is the case where a snippet matters most: nothing in the query appears in the text, so the
+    // path alone tells the reader nothing about why it is there.
+    let mut chunks: HashMap<NodeId, ChunkMatch> = HashMap::new();
+    for hit in &vector_order {
+        chunks.insert(hit.node_id, (*hit).clone());
+    }
+    for hit in &lexical_order {
+        chunks.insert(hit.node_id, ChunkMatch::from_lexical(hit));
+    }
     let terms = lexical::plain_terms(query);
 
     // Salience is applied *before* the list is cut, or it could never promote anything into it.
@@ -190,7 +239,91 @@ pub fn run(params: Params<'_>) -> Outcome {
         expression,
         path_candidates: path_hits.len(),
         lexical_candidates: lexical_order.len(),
+        vector_candidates: vector_order.len(),
+        vector_note,
     }
+}
+
+/// A chunk that matched, whichever arm found it.
+#[derive(Debug, Clone)]
+struct ChunkMatch {
+    node_id: NodeId,
+    path: PathBuf,
+    byte_start: i64,
+    byte_end: i64,
+    hash: String,
+    preview: Option<String>,
+    score: f64,
+}
+
+impl ChunkMatch {
+    fn from_lexical(hit: &LexicalHit) -> Self {
+        Self {
+            node_id: hit.node_id,
+            path: hit.path.clone(),
+            byte_start: hit.byte_start,
+            byte_end: hit.byte_end,
+            hash: hit.hash.clone(),
+            preview: hit.preview.clone(),
+            score: hit.score,
+        }
+    }
+}
+
+/// Embed the query, find its neighbours, and turn chunk ids back into locations.
+///
+/// Errors come back as a note rather than as a failure: the other two arms have an answer, and a
+/// search that returns nothing because one arm broke is worse than one that returns less.
+fn vector_arm(
+    semantic: Semantic<'_>,
+    store: &Store,
+    query: &str,
+    candidates: usize,
+) -> std::result::Result<Vec<ChunkMatch>, String> {
+    // `Input::Query`, not `Passage`. The model is asymmetric and embedding a query as a passage
+    // costs recall silently — see `cortex_embed::Input`.
+    let vector = semantic
+        .embedder
+        .embed(&[Input::Query(query)])
+        .map_err(|e| format!("could not embed the query: {e}"))?
+        .pop()
+        .ok_or_else(|| "the embedder returned nothing".to_string())?;
+
+    if vector.len() != semantic.vectors.dim() {
+        // A model was swapped without rebuilding the index. Refuse rather than compare vectors
+        // from two different spaces, which produces confident nonsense.
+        return Err(format!(
+            "the model produces {} dimensions but the index holds {}; rebuild the vector index",
+            vector.len(),
+            semantic.vectors.dim()
+        ));
+    }
+
+    let hits = semantic
+        .vectors
+        .search(&vector, candidates * CHUNK_OVERSAMPLE)
+        .map_err(|e| format!("vector search failed: {e}"))?;
+    let ids: Vec<cortex_core::ids::ChunkId> = hits.iter().map(|h| h.chunk_id).collect();
+    let locations = store
+        .chunk_locations(&ids)
+        .map_err(|e| format!("could not resolve vector hits: {e}"))?;
+
+    let by_id: HashMap<_, _> = locations.into_iter().map(|l| (l.chunk_id, l)).collect();
+    Ok(hits
+        .into_iter()
+        .filter_map(|hit| {
+            let location = by_id.get(&hit.chunk_id)?;
+            Some(ChunkMatch {
+                node_id: location.node_id,
+                path: location.path.clone(),
+                byte_start: location.byte_start,
+                byte_end: location.byte_end,
+                hash: location.hash.clone(),
+                preview: location.preview.clone(),
+                score: hit.similarity as f64,
+            })
+        })
+        .collect())
 }
 
 /// Map a requested mode onto one this build can actually serve.
@@ -208,7 +341,7 @@ fn effective_mode(requested: QueryMode) -> QueryMode {
 }
 
 /// Re-read the matching chunk, falling back to the stored preview.
-fn snippet_for(hit: &LexicalHit, terms: &[String]) -> Option<String> {
+fn snippet_for(hit: &ChunkMatch, terms: &[String]) -> Option<String> {
     let from_file = snippet::snippet(
         Location {
             path: &hit.path,
@@ -247,6 +380,10 @@ mod tests {
         tmp: tempfile::TempDir,
         store: Store,
         index: PathIndex,
+        vectors: VectorIndex,
+        embedder: cortex_embed::hashing::HashingEmbedder,
+        /// Whether the vector arm is wired up for this fixture.
+        semantic: bool,
     }
 
     impl Fixture {
@@ -300,7 +437,71 @@ mod tests {
             }
 
             let index = PathIndex::build(paths.iter().map(|(id, p)| (*id, p.as_str())));
-            Self { tmp, store, index }
+            let vectors = VectorIndex::open(
+                &tmp.path().join("vectors.usearch"),
+                cortex_embed::hashing::DIM,
+            )
+            .unwrap();
+            Self {
+                tmp,
+                store,
+                index,
+                vectors,
+                embedder: cortex_embed::hashing::HashingEmbedder::new(),
+                semantic: false,
+            }
+        }
+
+        /// Embed every chunk, as the embedding stage would.
+        ///
+        /// The hashing embedder is used on purpose: it is weak, it is real, and it needs no
+        /// download, so these tests exercise the same code path the model does without pinning
+        /// the suite to half a gigabyte of it.
+        fn with_vectors(mut self) -> Self {
+            let model = self.embedder.model();
+            let reference = cortex_store::embeddings::ModelRef {
+                id: &model.id,
+                version: &model.version,
+                dim: model.dim,
+            };
+            loop {
+                let pending = self.store.chunks_without_embedding(reference, 64).unwrap();
+                if pending.is_empty() {
+                    break;
+                }
+                let mut rows = Vec::new();
+                for chunk in &pending {
+                    let text = cortex_extract::snippet::chunk_text(Location {
+                        path: &chunk.path,
+                        byte_start: chunk.byte_start as usize,
+                        byte_end: chunk.byte_end as usize,
+                        hash: &chunk.hash,
+                    })
+                    .expect("the fixture wrote these files itself");
+                    let vector = self
+                        .embedder
+                        .embed(&[Input::Passage(&text)])
+                        .unwrap()
+                        .remove(0);
+                    rows.push(cortex_store::embeddings::EmbeddingWrite {
+                        chunk_id: chunk.chunk_id,
+                        vector,
+                    });
+                }
+                self.store.upsert_embeddings(reference, &rows, 1).unwrap();
+                self.vectors
+                    .add_many(rows.iter().map(|r| (r.chunk_id, r.vector.as_slice())))
+                    .unwrap();
+            }
+            self.semantic = true;
+            self
+        }
+
+        fn semantic(&self) -> Option<Semantic<'_>> {
+            self.semantic.then_some(Semantic {
+                embedder: &self.embedder,
+                vectors: &self.vectors,
+            })
         }
 
         fn search(&self, query: &str) -> Outcome {
@@ -311,6 +512,7 @@ mod tests {
             run(Params {
                 store: &self.store,
                 index: &self.index,
+                semantic: self.semantic(),
                 requested_mode: QueryMode::Auto,
                 raw_query: query,
                 limit,
@@ -325,6 +527,7 @@ mod tests {
             run(Params {
                 store: &self.store,
                 index: &self.index,
+                semantic: self.semantic(),
                 requested_mode: mode,
                 raw_query: query,
                 limit: 10,
@@ -494,6 +697,135 @@ mod tests {
         );
         assert_eq!(boosted.hits[0].score.salience_boost, 1.5);
         assert!(boosted.hits[0].score.final_score > boosted.hits[0].score.fused);
+    }
+
+    #[test]
+    fn the_vector_arm_contributes_a_ranking_of_its_own() {
+        let fixture = Fixture::new(&[
+            ("montage.txt", "Die Montage der Kamera dauerte drei Stunden.\n"),
+            ("anderes.txt", "Der Haushalt wurde im Sommer freigegeben.\n"),
+        ])
+        .with_vectors();
+
+        let outcome = fixture.search("montage kamera");
+        assert!(outcome.vector_candidates > 0, "the vector arm produced nothing");
+        assert!(
+            outcome.hits.iter().any(|h| h.score.vector_rank.is_some()),
+            "no result carries a vector rank"
+        );
+        assert!(outcome.vector_note.is_none(), "{:?}", outcome.vector_note);
+    }
+
+    #[test]
+    fn a_document_the_lexical_arm_misses_can_still_be_found() {
+        // The lexical arm requires every term to be present. A document holding only some of
+        // them is invisible to it and still relevant — which is the whole reason for a second
+        // content arm, and is testable even with the deliberately weak hashing embedder.
+        let fixture = Fixture::new(&[
+            ("beide.txt", "Die Montage der Kamera dauerte drei Stunden.\n"),
+            ("nur-montage.txt", "Die Montage begann am Dienstag und war schnell erledigt.\n"),
+        ])
+        .with_vectors();
+
+        let outcome = fixture.search("montage kamera");
+        let partial = outcome
+            .hits
+            .iter()
+            .find(|h| h.path.ends_with("nur-montage.txt"))
+            .expect("the partially matching document must appear at all");
+
+        assert!(
+            partial.score.lexical_rank.is_none(),
+            "the fixture is wrong: the lexical arm found it after all"
+        );
+        assert!(
+            partial.score.vector_rank.is_some(),
+            "it should have been found by the vector arm"
+        );
+    }
+
+    #[test]
+    fn a_result_found_only_by_meaning_still_gets_a_snippet() {
+        // The case where a snippet matters most: none of the query words appear in the text, so
+        // the path alone says nothing about why the result is there.
+        let fixture = Fixture::new(&[(
+            "nur-montage.txt",
+            "Die Montage begann am Dienstag und war schnell erledigt.\n",
+        )])
+        .with_vectors();
+
+        let outcome = fixture.search("montage kamera");
+        let hit = &outcome.hits[0];
+        assert!(hit.score.vector_rank.is_some());
+        assert!(
+            hit.snippet.as_deref().is_some_and(|s| s.contains("Montage")),
+            "expected a snippet from the file, got {:?}",
+            hit.snippet
+        );
+    }
+
+    #[test]
+    fn without_a_model_the_search_says_so_instead_of_failing() {
+        // A fresh install has no model, and that must read as "not running" rather than as
+        // "found nothing" — the two have completely different fixes.
+        let fixture = Fixture::new(&[("notiz.txt", "Die Blickachse bleibt konstant.\n")]);
+        let outcome = fixture.search("blickachse");
+
+        assert!(!outcome.hits.is_empty(), "the other arms must still answer");
+        assert_eq!(outcome.vector_candidates, 0);
+        assert!(
+            outcome
+                .vector_note
+                .as_deref()
+                .is_some_and(|n| n.contains("cortex model fetch")),
+            "the note must name the fix: {:?}",
+            outcome.vector_note
+        );
+    }
+
+    #[test]
+    fn locate_mode_does_not_pay_for_the_vector_arm() {
+        // Embedding a query costs milliseconds. The ninety-per-cent case is a path lookup, and
+        // it must not wait for a model.
+        let fixture = Fixture::new(&[("notizen.md", "Inhalt.\n")]).with_vectors();
+        let outcome = fixture.search_as(QueryMode::Locate, "notizen.md");
+        assert_eq!(outcome.vector_candidates, 0);
+        assert!(outcome.vector_note.is_none(), "locate must not even explain itself");
+    }
+
+    #[test]
+    fn an_index_from_another_model_is_refused_rather_than_compared() {
+        // Vectors from two models are numbers in unrelated spaces. Comparing them produces
+        // confident nonsense, which is worse than an empty arm and much harder to notice.
+        let fixture = Fixture::new(&[("notiz.txt", "Die Blickachse bleibt konstant.\n")])
+            .with_vectors();
+
+        let mismatched = VectorIndex::open(&fixture.tmp.path().join("other.usearch"), 16).unwrap();
+        mismatched.add(cortex_core::ids::ChunkId(1), &[0.25; 16]).unwrap();
+
+        let outcome = run(Params {
+            store: &fixture.store,
+            index: &fixture.index,
+            semantic: Some(Semantic {
+                embedder: &fixture.embedder,
+                vectors: &mismatched,
+            }),
+            requested_mode: QueryMode::Auto,
+            raw_query: "blickachse",
+            limit: 10,
+            prefix: true,
+            candidates_per_arm: 100,
+            rrf_k: 60.0,
+            max_salience_boost: 1.5,
+        });
+
+        assert_eq!(outcome.vector_candidates, 0);
+        assert!(
+            outcome.vector_note.as_deref().is_some_and(|n| n.contains("dimensions")),
+            "{:?}",
+            outcome.vector_note
+        );
+        assert!(!outcome.hits.is_empty(), "the other arms must still answer");
     }
 
     #[test]

@@ -141,6 +141,8 @@ pub mod method {
     pub const INDEX_PATH: &str = "index.path";
     pub const SEARCH_EXPLAIN: &str = "search.explain";
     pub const EXTRACT_STATUS: &str = "extract.status";
+    pub const MODEL_STATUS: &str = "model.status";
+    pub const MODEL_RELOAD: &str = "model.reload";
     pub const EXTRACT_REQUEUE: &str = "extract.requeue";
     pub const ACTIVITY_PING: &str = "activity.ping";
     pub const WATCH_STATUS: &str = "watch.status";
@@ -161,6 +163,8 @@ pub mod method {
         SEARCH_EXPLAIN,
         EXTRACT_STATUS,
         EXTRACT_REQUEUE,
+        MODEL_STATUS,
+        MODEL_RELOAD,
         ACTIVITY_PING,
         WATCH_STATUS,
         ZONES_LIST,
@@ -333,6 +337,10 @@ pub struct SearchExplainResult {
     pub score: Option<ScoreBreakdown>,
     pub path_candidates: usize,
     pub lexical_candidates: usize,
+    pub vector_candidates: usize,
+    /// Why the vector arm did not run, when it did not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vector_note: Option<String>,
     pub extract_state: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extract_note: Option<String>,
@@ -367,6 +375,51 @@ pub struct ExtractStatusResult {
     pub user_active: bool,
     pub cpu_share: f64,
     pub paused: bool,
+}
+
+/// The embedding model, the vector index, and how far the two have got.
+///
+/// One method rather than three, because the questions people actually ask — "is semantic search
+/// working", "why not", "how far along is it" — are answered by the same handful of numbers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelStatusResult {
+    pub enabled: bool,
+    pub model: String,
+    /// Whether an embedder is loaded right now.
+    pub loaded: bool,
+    pub backend: Option<String>,
+    pub dim: Option<usize>,
+    /// Why it is not loaded, when it is not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    pub model_present: bool,
+    pub runtime_present: bool,
+    pub model_dir: String,
+    pub runtime_path: String,
+    /// Bytes the model would take to download, for a client that wants to warn first.
+    pub download_bytes: u64,
+
+    pub vectors_in_index: usize,
+    pub chunks_total: i64,
+    pub chunks_embedded: i64,
+    /// Chunks still waiting for a vector. Zero and `caught_up` together mean semantic search
+    /// covers the whole corpus.
+    pub chunks_pending: i64,
+    pub caught_up: bool,
+
+    /// Counters since this daemon started.
+    pub embedded_this_run: u64,
+    pub stale: u64,
+    pub failures: u64,
+    pub busy_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelReloadResult {
+    pub loaded: bool,
+    pub backend: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

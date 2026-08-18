@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 pub struct Config {
     pub index: IndexConfig,
     pub search: SearchConfig,
+    pub embedding: EmbeddingConfig,
     pub resources: ResourceConfig,
     pub agent: AgentConfig,
     pub federation: FederationConfig,
@@ -23,6 +24,7 @@ impl Default for Config {
         Self {
             index: IndexConfig::default(),
             search: SearchConfig::default(),
+            embedding: EmbeddingConfig::default(),
             resources: ResourceConfig::default(),
             agent: AgentConfig::default(),
             federation: FederationConfig::default(),
@@ -120,6 +122,59 @@ impl Default for SearchConfig {
             max_salience_boost: 1.5,
             rerank: true,
             rerank_top_n: 30,
+        }
+    }
+}
+
+/// The embedding model, and whether it runs at all.
+///
+/// Nothing here causes a download. The model is fetched by an explicit user action
+/// (`cortex model fetch`, rule R5); this decides what to do with it once it is there.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct EmbeddingConfig {
+    /// Which model to use.
+    ///
+    /// `multilingual-e5-small` is decision D6. `hashing` is the built-in embedder that needs no
+    /// download — useful for testing the pipeline and as a control when measuring the goldset,
+    /// but weaker than the lexical arm it would sit beside, which is why it is not the default.
+    pub model: String,
+
+    /// Run the embedder when the model is present.
+    ///
+    /// Off means the vector arm never runs even with a model on disk: metadata and lexical
+    /// search are unaffected, and nothing spends CPU on inference.
+    pub enabled: bool,
+
+    /// `auto` tries the GPU and falls back to the CPU; `cpu` never tries; `cuda` refuses to
+    /// start without it. See D6 — and note that CUDA needs a runtime and cuDNN that a driver
+    /// alone does not provide.
+    pub device: String,
+
+    /// Threads for CPU inference. Zero means "let the runtime decide".
+    ///
+    /// Measured on the reference workstation: eight threads embed a 1 600-character chunk in
+    /// about 75 ms, one thread in 279 ms, and sixteen in 86 ms — hyperthreads make it worse.
+    pub threads: usize,
+
+    /// Chunks per inference call. Padding is per batch, so a very large batch wastes work on
+    /// whichever chunk in it happens to be longest.
+    pub batch_size: usize,
+
+    /// Use this ONNX Runtime library instead of the one in the state directory. For a system
+    /// installation, or for a build of the runtime with different providers.
+    pub runtime_path: Option<PathBuf>,
+}
+
+impl Default for EmbeddingConfig {
+    fn default() -> Self {
+        Self {
+            model: "multilingual-e5-small".to_string(),
+            enabled: true,
+            device: "auto".to_string(),
+            threads: 8,
+            batch_size: 16,
+            runtime_path: None,
         }
     }
 }
@@ -247,6 +302,15 @@ impl Config {
     pub fn validate(&self, path: &Path) -> Result<()> {
         let bad = |msg: String| Err(Error::config(path, msg));
 
+        if !["auto", "cpu", "cuda"].contains(&self.embedding.device.as_str()) {
+            return bad(format!(
+                "embedding.device must be auto, cpu or cuda, not {:?}",
+                self.embedding.device
+            ));
+        }
+        if self.embedding.batch_size == 0 {
+            return bad("embedding.batch_size must be at least 1".into());
+        }
         if !(0.0..=1.0).contains(&self.resources.cpu_share_active) {
             return bad("resources.cpu_share_active must be between 0.0 and 1.0".into());
         }
@@ -342,6 +406,26 @@ mod tests {
 
     fn p() -> PathBuf {
         PathBuf::from("<test>")
+    }
+
+    #[test]
+    fn an_unknown_embedding_device_is_refused_at_startup() {
+        // A typo here would otherwise mean "no GPU" discovered hours into a first index run.
+        let text = r#"
+            [embedding]
+            device = "metal"
+        "#;
+        let error = Config::from_toml(text, Path::new("test.toml")).unwrap_err();
+        assert!(error.to_string().contains("device"), "{error}");
+    }
+
+    #[test]
+    fn the_embedding_defaults_name_the_model_the_decision_chose() {
+        let config = Config::default();
+        assert_eq!(config.embedding.model, "multilingual-e5-small");
+        assert!(config.embedding.enabled);
+        assert_eq!(config.embedding.device, "auto");
+        assert!(config.embedding.runtime_path.is_none(), "nothing is assumed about the machine");
     }
 
     #[test]

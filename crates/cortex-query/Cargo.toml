@@ -11,6 +11,9 @@ description = "Retrieval for the Cortex daemon: path index, fuzzy matching, fusi
 cortex-core.workspace = true
 cortex-store.workspace = true
 cortex-extract.workspace = true
+# For the query side of the vector arm only: cortex-query never loads a model itself, it is
+# handed one that the daemon owns.
+cortex-embed = { workspace = true, default-features = false }
 serde.workspace = true
 tracing.workspace = true
 

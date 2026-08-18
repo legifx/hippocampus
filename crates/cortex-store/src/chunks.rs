@@ -118,6 +118,23 @@ pub struct LexicalHit {
     pub score: f64,
 }
 
+/// Where a chunk is, without any opinion about how it was found.
+///
+/// The vector index knows chunk ids and nothing else; this is how they become something a result
+/// list can show. Deliberately the same fields the lexical arm carries, so both arms hand the
+/// snippet path identical information.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChunkLocation {
+    pub chunk_id: ChunkId,
+    pub node_id: NodeId,
+    pub path: PathBuf,
+    pub ordinal: i64,
+    pub byte_start: i64,
+    pub byte_end: i64,
+    pub hash: String,
+    pub preview: Option<String>,
+}
+
 /// How much of the index has been through extraction.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ExtractProgress {
@@ -299,6 +316,39 @@ impl Store {
                 Ok((NodeId(r.get(0)?), r.get(1)?))
             })?
             .collect::<rusqlite::Result<HashMap<_, _>>>()?;
+        Ok(rows)
+    }
+
+    /// Resolve chunk ids to their locations, for the vector arm.
+    ///
+    /// Ids that no longer exist are absent rather than an error: the vector index is a cache and
+    /// may briefly know about a chunk the database has already deleted.
+    pub fn chunk_locations(&self, ids: &[ChunkId]) -> Result<Vec<ChunkLocation>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders = std::iter::repeat_n("?", ids.len()).collect::<Vec<_>>().join(",");
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT c.id, c.node_id, n.path, c.ordinal, c.byte_start, c.byte_end, c.hash,
+                    c.text_preview
+             FROM chunks c JOIN nodes n ON n.id = c.node_id
+             WHERE c.id IN ({placeholders}) AND n.path IS NOT NULL"
+        ))?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(ids.iter().map(|id| id.0)), |r| {
+                Ok(ChunkLocation {
+                    chunk_id: ChunkId(r.get(0)?),
+                    node_id: NodeId(r.get(1)?),
+                    path: PathBuf::from(r.get::<_, String>(2)?),
+                    ordinal: r.get(3)?,
+                    byte_start: r.get(4)?,
+                    byte_end: r.get(5)?,
+                    hash: r.get(6)?,
+                    preview: r.get(7)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
 
@@ -810,6 +860,29 @@ mod tests {
         let pending = store.pending_extraction(10).unwrap();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].id, node);
+    }
+
+    #[test]
+    fn chunk_ids_resolve_to_locations_and_missing_ones_drop_out() {
+        let (store, node) = store_with_file("located.md");
+        store
+            .replace_chunks(node, &[chunk(0, "erster Abschnitt"), chunk(1, "zweiter Abschnitt")])
+            .unwrap();
+        let ids: Vec<ChunkId> = store
+            .chunks_for_node(node)
+            .unwrap()
+            .into_iter()
+            .map(|c| c.id)
+            .collect();
+
+        let mut located = store
+            .chunk_locations(&[ids[0], ids[1], ChunkId(9999)])
+            .unwrap();
+        located.sort_by_key(|c| c.ordinal);
+        assert_eq!(located.len(), 2, "an id the vector index still holds must simply drop out");
+        assert_eq!(located[0].node_id, node);
+        assert!(located[0].path.ends_with("located.md"));
+        assert!(!located[0].hash.is_empty());
     }
 
     #[test]

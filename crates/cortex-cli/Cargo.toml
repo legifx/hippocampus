@@ -14,6 +14,8 @@ path = "src/main.rs"
 [dependencies]
 cortex-core.workspace = true
 cortex-rpc.workspace = true
+# For the registry and the download path only — the CLI provisions the model, the daemon runs it.
+cortex-embed = { workspace = true, default-features = false }
 anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true

@@ -9,9 +9,10 @@ use cortex_core::paths::Paths;
 use cortex_rpc::client::Client;
 use cortex_rpc::protocol::{
     method, EpisodesRecentParams, EpisodesRecentResult, ExtractRequeueResult, ExtractStatusResult,
-    IndexPathParams, IndexPathResult, NodeGetParams, NodeGetResult, PingResult, ReconcileParams,
-    ReconcileResult, SearchExplainParams, SearchExplainResult, SearchParams, SearchResult,
-    StatusResult, WatchStatusResult, ZoneSetColorParams, ZonesListResult,
+    IndexPathParams, IndexPathResult, ModelReloadResult, ModelStatusResult, NodeGetParams,
+    NodeGetResult, PingResult, ReconcileParams, ReconcileResult, SearchExplainParams,
+    SearchExplainResult, SearchParams, SearchResult, StatusResult, WatchStatusResult,
+    ZoneSetColorParams, ZonesListResult,
 };
 
 #[derive(Parser, Debug)]
@@ -58,6 +59,11 @@ enum Command {
     Extract {
         #[command(subcommand)]
         command: Option<ExtractCommand>,
+    },
+    /// The embedding model: what it is, whether it is there, and how to get it.
+    Model {
+        #[command(subcommand)]
+        command: Option<ModelCommand>,
     },
     /// Index a path. Metadata only — content extraction arrives in M2.
     Index {
@@ -109,6 +115,24 @@ enum ExtractCommand {
 }
 
 #[derive(Subcommand, Debug)]
+enum ModelCommand {
+    /// Download the embedding model and the ONNX runtime.
+    ///
+    /// This is the one command in the project that opens a network connection (rule R5). It
+    /// says what it is about to fetch and from where before it does anything.
+    Fetch {
+        /// Fetch without asking.
+        #[arg(short, long)]
+        yes: bool,
+        /// Only the runtime library, not the model.
+        #[arg(long)]
+        runtime_only: bool,
+    },
+    /// Load a model that was fetched while the daemon was already running.
+    Reload,
+}
+
+#[derive(Subcommand, Debug)]
 enum ZoneCommand {
     /// Pick a zone's colour by hand. It then survives regeneration.
     SetColor {
@@ -138,6 +162,16 @@ async fn run(args: Args) -> Result<()> {
         None => Paths::from_env()?,
     };
     let socket = paths.socket();
+
+    // Provisioning is a user action against the filesystem, not a daemon operation: it must work
+    // before there is a daemon, and it must not tie up the socket for the minutes a download
+    // takes. The daemon is told afterwards, if one happens to be listening.
+    if let Command::Model {
+        command: Some(ModelCommand::Fetch { yes, runtime_only }),
+    } = &args.command
+    {
+        return fetch_model(&paths, *yes, *runtime_only, args.json).await;
+    }
 
     let mut client = Client::connect(&socket).await.with_context(|| {
         format!(
@@ -483,6 +517,35 @@ async fn run(args: Args) -> Result<()> {
             }
         },
 
+        Command::Model { command } => match command {
+            Some(ModelCommand::Fetch { .. }) => unreachable!("handled before connecting"),
+            Some(ModelCommand::Reload) => {
+                let result: ModelReloadResult = client
+                    .call(method::MODEL_RELOAD, serde_json::json!({}))
+                    .await?;
+                if args.json {
+                    print_json(&result)?;
+                } else if result.loaded {
+                    println!("loaded: {}", result.backend.as_deref().unwrap_or("unknown backend"));
+                } else {
+                    println!(
+                        "not loaded: {}",
+                        result.note.as_deref().unwrap_or("no reason given")
+                    );
+                }
+            }
+            None => {
+                let result: ModelStatusResult = client
+                    .call(method::MODEL_STATUS, serde_json::json!({}))
+                    .await?;
+                if args.json {
+                    print_json(&result)?;
+                } else {
+                    print_model_status(&result);
+                }
+            }
+        },
+
         Command::Reconcile { path } => {
             let path = match path {
                 Some(p) => Some(
@@ -522,6 +585,144 @@ async fn run(args: Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Download the model, with the user's consent and a progress line.
+async fn fetch_model(paths: &Paths, yes: bool, runtime_only: bool, json: bool) -> Result<()> {
+    use cortex_embed::fetch::{ModelStore, Progress};
+    use cortex_embed::registry::{self, RUNTIME};
+
+    let store = ModelStore::new(paths.state_dir());
+    let model = registry::model_by_id("multilingual-e5-small")
+        .context("the default model is missing from the registry")?;
+
+    let total = RUNTIME.archive.bytes + if runtime_only { 0 } else { model.total_bytes() };
+    if !yes {
+        // Rule R5 is about consent, not only about defaults. Say what will be downloaded, from
+        // where, and how big it is — then ask.
+        println!("About to download {:.0} MB:", total as f64 / 1_000_000.0);
+        println!("  {} ({:.0} MB)", RUNTIME.archive.url, RUNTIME.archive.bytes as f64 / 1_000_000.0);
+        if !runtime_only {
+            for file in model.files {
+                println!("  {} ({:.0} MB)", file.url, file.bytes as f64 / 1_000_000.0);
+            }
+        }
+        println!("into {}", store.root().display());
+        print!("Continue? [y/N] ");
+        use std::io::Write;
+        std::io::stdout().flush()?;
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer)?;
+        if !matches!(answer.trim(), "y" | "Y" | "yes") {
+            println!("nothing was downloaded");
+            return Ok(());
+        }
+    }
+
+    let mut last_percent = 0u64;
+    let mut progress = |event: Progress<'_>| match event {
+        Progress::Started { name, bytes } => {
+            last_percent = 0;
+            println!("fetching {name} ({:.0} MB)", bytes as f64 / 1_000_000.0);
+        }
+        Progress::Advanced { done, total, .. } => {
+            let percent = if total > 0 { done * 100 / total } else { 0 };
+            if percent >= last_percent + 5 {
+                last_percent = percent;
+                print!("\r  {percent} %");
+                use std::io::Write;
+                let _ = std::io::stdout().flush();
+            }
+        }
+        Progress::Verified { name } => println!("\r  {name}: verified"),
+        Progress::AlreadyPresent { name } => println!("  {name}: already there"),
+    };
+
+    store
+        .fetch_runtime(&RUNTIME, &mut progress)
+        .context("could not provision the ONNX runtime")?;
+    if !runtime_only {
+        store
+            .fetch_model(model, &mut progress)
+            .context("could not provision the model")?;
+    }
+
+    println!("model store: {}", store.root().display());
+
+    // Tell a running daemon, if there is one. Not being able to reach it is not a failure —
+    // the files are on disk and the next start will find them.
+    match Client::connect(&paths.socket()).await {
+        Ok(mut client) => {
+            let result: ModelReloadResult = client
+                .call(method::MODEL_RELOAD, serde_json::json!({}))
+                .await?;
+            if json {
+                print_json(&result)?;
+            } else if result.loaded {
+                println!("daemon reloaded: {}", result.backend.as_deref().unwrap_or(""));
+            } else {
+                println!(
+                    "daemon did not load it: {}",
+                    result.note.as_deref().unwrap_or("no reason given")
+                );
+            }
+        }
+        Err(_) => println!("no daemon running; it will pick the model up at the next start"),
+    }
+
+    Ok(())
+}
+
+fn print_model_status(status: &ModelStatusResult) {
+    println!("model      {}", status.model);
+    if !status.enabled {
+        println!("state      disabled in the configuration");
+        return;
+    }
+
+    match (&status.backend, &status.note) {
+        (Some(backend), _) => println!("state      loaded — {backend}"),
+        (None, Some(note)) => println!("state      not loaded — {note}"),
+        (None, None) => println!("state      not loaded"),
+    }
+
+    println!(
+        "files      model {} · runtime {}",
+        if status.model_present { "present" } else { "missing" },
+        if status.runtime_present { "present" } else { "missing" }
+    );
+    if !status.model_present || !status.runtime_present {
+        println!(
+            "           run `cortex model fetch` ({:.0} MB)",
+            status.download_bytes as f64 / 1_000_000.0
+        );
+    }
+    println!("           {}", status.model_dir);
+
+    if let Some(dim) = status.dim {
+        println!("vectors    {} in the index, {dim} dimensions", status.vectors_in_index);
+    }
+    println!(
+        "coverage   {} of {} chunks embedded{}",
+        status.chunks_embedded,
+        status.chunks_total,
+        if status.chunks_pending > 0 {
+            format!(", {} pending", status.chunks_pending)
+        } else if status.caught_up {
+            " (complete)".to_string()
+        } else {
+            String::new()
+        }
+    );
+    if status.embedded_this_run > 0 || status.busy_ms > 0 {
+        println!(
+            "this run   {} embedded, {} stale, {} failures, busy {:.1}s",
+            status.embedded_this_run,
+            status.stale,
+            status.failures,
+            status.busy_ms as f64 / 1000.0
+        );
+    }
 }
 
 fn print_extract_status(status: &ExtractStatusResult) {

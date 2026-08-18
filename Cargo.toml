@@ -7,6 +7,7 @@ members = [
     "crates/cortex-query",
     "crates/cortex-ingest",
     "crates/cortex-extract",
+    "crates/cortex-embed",
     "crates/cortexd",
     "crates/cortex-cli",
     "bench/corpus-gen",
@@ -28,6 +29,7 @@ cortex-rpc = { path = "crates/cortex-rpc" }
 cortex-query = { path = "crates/cortex-query" }
 cortex-ingest = { path = "crates/cortex-ingest" }
 cortex-extract = { path = "crates/cortex-extract" }
+cortex-embed = { path = "crates/cortex-embed" }
 
 anyhow = "1"
 thiserror = "2"
@@ -41,6 +43,7 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 clap = { version = "4", features = ["derive"] }
 etcetera = "0.10"
 blake3 = "1"
+usearch = "2.26"
 tempfile = "3"
 
 [profile.release]
