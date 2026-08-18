@@ -10,7 +10,7 @@ use cortex_rpc::protocol::{
     method, EpisodeAppendParams, EpisodesRecentParams, EpisodesRecentResult, IndexPathParams,
     IndexPathResult, NodeGetParams, NodeGetResult, PingResult, ReconcileParams, ReconcileResult,
     ReconcileSummary, Request, Response, RpcError, SearchParams, SearchResult, StatusResult,
-    WatchStatusResult,
+    WatchStatusResult, ZoneInfo, ZoneSetColorParams, ZonesListResult,
 };
 use cortex_rpc::transport;
 use cortex_store::Store;
@@ -391,6 +391,40 @@ async fn dispatch(
         }
 
         method::WATCH_STATUS => json(daemon.watch_status()),
+
+        method::ZONES_LIST => {
+            let zones = daemon.store.zones().map_err(internal)?;
+            let counts = daemon.store.zone_node_counts().map_err(internal)?;
+            json(ZonesListResult {
+                zones: zones
+                    .into_iter()
+                    .map(|z| {
+                        let id = z.id.map(|i| i.0).unwrap_or_default();
+                        ZoneInfo {
+                            id,
+                            root_path: z.root_path.display().to_string(),
+                            name: z.name,
+                            color_hue: z.color_hue,
+                            icon: z.icon,
+                            user_override: z.user_override,
+                            node_count: counts.get(&id).copied().unwrap_or(0),
+                        }
+                    })
+                    .collect(),
+            })
+        }
+
+        method::ZONE_SET_COLOR => {
+            let params: ZoneSetColorParams = parse(params)?;
+            if params.hue >= 360 {
+                return Err(RpcError::invalid_params("hue must be between 0 and 359"));
+            }
+            daemon
+                .store
+                .set_zone_color(cortex_core::ids::ZoneId(params.id), params.hue)
+                .map_err(internal)?;
+            json(serde_json::json!({ "ok": true }))
+        }
 
         method::RECONCILE => {
             let params: ReconcileParams = params

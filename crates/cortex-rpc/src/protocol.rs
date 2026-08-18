@@ -140,6 +140,8 @@ pub mod method {
     pub const EPISODES_RECENT: &str = "episodes.recent";
     pub const INDEX_PATH: &str = "index.path";
     pub const WATCH_STATUS: &str = "watch.status";
+    pub const ZONES_LIST: &str = "zones.list";
+    pub const ZONE_SET_COLOR: &str = "zone.set_color";
     pub const RECONCILE: &str = "reconcile";
     pub const SHUTDOWN: &str = "shutdown";
 
@@ -153,6 +155,8 @@ pub mod method {
         EPISODES_RECENT,
         INDEX_PATH,
         WATCH_STATUS,
+        ZONES_LIST,
+        ZONE_SET_COLOR,
         RECONCILE,
         SHUTDOWN,
     ];
@@ -186,6 +190,36 @@ pub struct ReconcileSummary {
     pub renamed: u64,
     pub unchanged: u64,
     pub skipped: u64,
+}
+
+/// One spatial zone. See decision D15.
+///
+/// Only the hue travels: saturation and lightness are fixed by the theme, so no zone can be
+/// louder than another. The name and icon are what make the colour redundant rather than
+/// load-bearing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZoneInfo {
+    pub id: i64,
+    pub root_path: String,
+    pub name: String,
+    pub color_hue: u16,
+    pub icon: Option<String>,
+    /// True when the user chose this colour, so regeneration leaves it alone.
+    pub user_override: bool,
+    /// Nodes currently assigned to this zone.
+    pub node_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZonesListResult {
+    pub zones: Vec<ZoneInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZoneSetColorParams {
+    pub id: i64,
+    /// Hue in degrees, 0–359.
+    pub hue: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

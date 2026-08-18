@@ -87,12 +87,12 @@ fn main() -> Result<()> {
     // The ingest loop gets its own thread: its work is blocking by nature, and running it on
     // the async runtime would let a long walk stall every query.
     let ingest_thread = {
-        let ingest = ingest::Ingest {
-            store: store.clone(),
-            index: index.clone(),
-            state: ingest_state.clone(),
-            config: config.clone(),
-        };
+        let ingest = ingest::Ingest::new(
+            store.clone(),
+            index.clone(),
+            ingest_state.clone(),
+            config.clone(),
+        );
         std::thread::Builder::new()
             .name("cortex-ingest".into())
             .spawn(move || ingest.run())?

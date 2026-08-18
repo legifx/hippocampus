@@ -66,6 +66,16 @@ pub struct IndexConfig {
     /// their sync client, and they will rightly blame us. Exceeding this degrades visibly in
     /// `cortex status` and falls back to reconciliation for the unwatched part.
     pub watch_budget: usize,
+
+    /// Maximum number of spatial zones.
+    ///
+    /// Zones exist for orientation, and orientation does not survive being given a thousand
+    /// categories — a hundred colours is the same as none. When more candidates are found than
+    /// this, the shallowest are kept, because those are the ones a person actually names when
+    /// describing where something is. Assignment also costs one pass over the index per zone,
+    /// so an unbounded count makes indexing quadratic in a way nobody would attribute to
+    /// colour coding.
+    pub zone_budget: usize,
 }
 
 impl Default for IndexConfig {
@@ -78,6 +88,7 @@ impl Default for IndexConfig {
             reconcile_interval_secs: 3600,
             respect_gitignore: true,
             watch_budget: 20_000,
+            zone_budget: 64,
         }
     }
 }
@@ -280,6 +291,13 @@ impl Config {
             return bad(
                 "index.watch_budget must be greater than zero when metadata_roots are \
                  configured, otherwise nothing is ever watched"
+                    .into(),
+            );
+        }
+        if self.index.zone_budget == 0 {
+            return bad(
+                "index.zone_budget must be greater than zero; set index.metadata_roots to \
+                 nothing instead if you want no zones at all"
                     .into(),
             );
         }

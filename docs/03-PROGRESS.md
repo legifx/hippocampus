@@ -10,24 +10,21 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | M1 — Perception |
-| **Status** | M1 largely done: watcher, coalescer, reconcile, path index, benchmarks. Three items outstanding (below). |
-| **Last updated** | 2026-08-17 |
+| **Status** | M1 complete except the 24-hour soak test, which the owner deferred. Ready for M2. |
+| **Last updated** | 2026-08-18 |
 | **Blocked on** | nothing |
 
 ## Outstanding in M1
 
-Everything else in the milestone is implemented and measured. These three are not:
+One item, deliberately deferred by the project owner:
 
-1. **Zones (D15).** The `zones` table exists and `nodes.zone_id` is wired through the model and
-   the protocol, but nothing populates them. Needs: root detection from XDG user directories and
-   detected project roots, plus stable hue assignment. The GUI in M4 is the first consumer, so
-   this is not blocking anything yet.
-2. **`parent_id` threading.** Always `None`. The directory graph therefore has no edges, which
-   `structural` queries will need in M2. `Store::set_parent` exists and is tested; the walker
-   and the watcher simply do not call it.
-3. **The 24-hour soak test.** The M1 definition of done requires bounded RSS and file
-   descriptors across 24 hours of synthetic churn. Not yet written. It belongs in `bench/` as a
-   nightly CI job, not in the unit suite.
+- **The 24-hour soak test.** The M1 definition of done requires bounded RSS and file
+  descriptors across 24 hours of synthetic churn. Not written. It belongs in `bench/` as a
+  nightly CI job, not in the unit suite. Everything it would guard is currently unguarded:
+  a descriptor leak in the watcher, or unbounded growth in the coalescer, would not be caught
+  by anything else.
+
+Zones and `parent_id` are done — see the session log.
 
 ## Then M2 — Meaning
 
@@ -50,6 +47,9 @@ Do not start M2 before the three items above are closed, or they never will be.
 - The path index is rebuilt wholesale after any bulk change (reconcile, directory rename,
   directory removal). Correct and simple; if it ever shows up in a profile, patch incrementally
   instead — but only then.
+- `assign_zones` runs one `UPDATE ... LIKE` per zone over the whole index. Linear in
+  zones × nodes, which is why the zone budget exists. If zones ever need to be numerous, this
+  is the thing to replace, not the budget.
 - The ingest loop polls on a 250 ms timer rather than blocking on the inotify descriptor.
   Measured idle cost is 0.000 % of one core, so this is not worth changing without a reason.
 
@@ -106,6 +106,43 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
+
+### 2026-08-18 — M1: zones and the directory graph
+
+The two structural gaps M1 left behind are closed. 225 tests green, every latency gate still
+passing, RSS 150 MiB.
+
+**Zones (D15).** `cortex_core::zones` derives a stable hue from a zone's path; detection lives
+in `cortex_ingest::zone_detect`. Two sources qualify as a zone: conventional areas directly
+under a configured root (`Documents`, `Projects`, `Pictures`, …) and project roots anywhere
+within three levels, identified by markers like `.git` or `Cargo.toml`. The deepest containing
+zone wins, so a repository inside `Documents` reads as that repository. Observable through
+`cortex zones`, overridable with `cortex zones set-color`.
+
+**The directory graph.** `parent_id` is populated: in bulk by `Store::link_parents` after a
+reconcile, and directly on incremental inserts, where the parent is one cached lookup away.
+`cortex node` now shows both parent and zone.
+
+Three things worth knowing:
+
+1. **A zone budget was necessary, and it is a real constraint rather than a safety valve.**
+   Zone assignment costs one pass over the index *per zone*. The benchmark corpus produces 567
+   candidates, because its generator scatters `.git` directories as noise and those are genuine
+   project markers — the initial index went from 4.1 s to 7.1 s before the cap. Capped at 64 by
+   default, with the drop logged. A real home directory is far below that; the corpus is the
+   pathological case, which is exactly what it is for.
+2. **Truncating to a budget needs a total order.** Sorting candidates by depth alone leaves ties
+   to directory iteration order, so which zones survived the cap — and therefore every colour —
+   could differ between runs on an unchanged tree. That defeats the entire premise of D15.
+   Now sorted by depth, then path.
+3. **Bulk assignment is for when the zone *set* changes, not when a file appears.** Re-running
+   it per new directory would make creating a handful of folders take longer than the initial
+   index. Incremental inserts read a cached zone list instead, and full re-detection is
+   triggered only by a conventional directory name or a project-marker file appearing.
+
+The `NodeUpsert` zone field distinguishes "no opinion" from "no zone": a bulk metadata refresh
+passes `None` and the stored assignment is kept, because otherwise every size change would blank
+the colour of the file that changed.
 
 ### 2026-08-17 — M1: perception
 
@@ -224,6 +261,11 @@ are visible across sessions.
 | 2026-08-17 | M1 | Idle RSS, 105 273 paths indexed | 176.3 MiB | 250 MB | yes |
 | 2026-08-17 | M1 | Path index footprint | 69.6 MiB / 105 273 paths | — | — |
 | 2026-08-17 | M1 | `cargo test --workspace` | 185 passed, 0 failed | green | yes |
+| 2026-08-18 | M1 | Full initial index incl. zones and parents | 4.32 s reconcile + ~3.2 s structure | 60 s | yes |
+| 2026-08-18 | M1 | Idle RSS, 105 273 paths, zones assigned | 150.2 MiB | 250 MB | yes |
+| 2026-08-18 | M1 | Fuzzy path match, literal | P95 1.23 ms | 10 ms | yes |
+| 2026-08-18 | M1 | Keystroke path | P95 5.23 ms | 10 ms | yes |
+| 2026-08-18 | M1 | `cargo test --workspace` | 225 passed, 0 failed | green | yes |
 
 Path-search figures come from `bench-latency` against the standard corpus, release build.
 Index, CPU and memory figures are from a live daemon; the index time is taken from the
@@ -257,7 +299,10 @@ rather than a note.
 | Move detection: `mv` of a directory is not a mass delete plus create | file and directory counts unchanged; the new path and its children are searchable |
 | Live watcher picks up a new file | searchable within ~2 s at a 300 ms debounce |
 | Reconcile after a blind period equals a from-scratch rebuild | asserted by unit test against a canonical path dump |
-| Watcher survives 24 h without leaking descriptors or memory | **not yet tested** — see outstanding items at the top |
+| Watcher survives 24 h without leaking descriptors or memory | **not tested** — deferred by the owner; see outstanding items at the top |
+| Zones detected, coloured stably and assigned deepest-first | verified live: conventional areas and project roots, distinct hues, a repository inside an area wins over it |
+| A new project becomes a zone without a restart | verified live: detected ~3 s after its `package.json` appeared |
+| Directory graph is complete | verified live: a file walks up through every ancestor to the indexed root, which correctly has no parent |
 
 
 ## Goldset recall

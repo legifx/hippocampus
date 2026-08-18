@@ -6,9 +6,11 @@
 
 use crate::error::{Result, StoreError};
 use crate::Store;
-use cortex_core::ids::{EpisodeId, NodeId, SessionId};
+use cortex_core::ids::{EpisodeId, NodeId, SessionId, ZoneId};
 use cortex_core::model::{Action, Actor, Episode, Node, NodeKind, Tier};
+use cortex_core::zones::Zone;
 use rusqlite::{params, OptionalExtension, Row};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Everything needed to record a node the first time it is seen, or to refresh it.
@@ -23,6 +25,13 @@ pub struct NodeUpsert {
     pub ctime: i64,
     pub inode: i64,
     pub dev: i64,
+    /// The zone this path belongs to, when the caller already knows it.
+    ///
+    /// `None` means "not known here", not "no zone": a bulk pass leaves this unset and lets
+    /// `assign_zones` work it out for the whole index at once, while an incremental insert
+    /// fills it in from the cached zone list so a newly created file is not colourless until
+    /// the next reconcile.
+    pub zone_id: Option<ZoneId>,
 }
 
 /// What the index believes about one path. The comparison unit for reconciliation.
@@ -264,6 +273,194 @@ impl Store {
         Ok(())
     }
 
+    /// Insert or refresh a zone, returning its id.
+    ///
+    /// A zone whose colour the user has chosen keeps it: regeneration may rename a zone or move
+    /// its icon, but silently repainting a deliberate choice would make the setting look broken.
+    pub fn upsert_zone(&self, zone: &Zone) -> Result<ZoneId> {
+        let conn = self.conn();
+        let root = path_to_str(&zone.root_path)?;
+
+        conn.execute(
+            "INSERT INTO zones (root_path, name, color_hue, icon, user_override)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(root_path) DO UPDATE SET
+                 name      = excluded.name,
+                 icon      = excluded.icon,
+                 color_hue = CASE WHEN zones.user_override = 1
+                                  THEN zones.color_hue
+                                  ELSE excluded.color_hue END",
+            params![
+                root,
+                zone.name,
+                zone.color_hue as i64,
+                zone.icon,
+                zone.user_override as i64,
+            ],
+        )?;
+
+        let id: i64 = conn.query_row("SELECT id FROM zones WHERE root_path = ?1", [root], |r| {
+            r.get(0)
+        })?;
+        Ok(ZoneId(id))
+    }
+
+    /// Every zone, shallowest root first.
+    pub fn zones(&self) -> Result<Vec<Zone>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, root_path, name, color_hue, icon, user_override FROM zones ORDER BY root_path",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(Zone {
+                id: Some(ZoneId(row.get(0)?)),
+                root_path: PathBuf::from(row.get::<_, String>(1)?),
+                name: row.get(2)?,
+                color_hue: row.get::<_, i64>(3)? as u16,
+                icon: row.get(4)?,
+                user_override: row.get::<_, i64>(5)? != 0,
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// How many nodes are currently assigned to each zone.
+    pub fn zone_node_counts(&self) -> Result<HashMap<i64, i64>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT zone_id, count(*) FROM nodes WHERE zone_id IS NOT NULL GROUP BY zone_id",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?;
+        Ok(rows.collect::<std::result::Result<HashMap<_, _>, _>>()?)
+    }
+
+    /// Set a zone's colour by hand, and mark it so regeneration leaves it alone.
+    pub fn set_zone_color(&self, id: ZoneId, hue: u16) -> Result<()> {
+        let conn = self.conn();
+        conn.execute(
+            "UPDATE zones SET color_hue = ?2, user_override = 1 WHERE id = ?1",
+            params![id.0, (hue % 360) as i64],
+        )?;
+        Ok(())
+    }
+
+    /// Remove zones whose root is no longer among the given set.
+    ///
+    /// Nodes pointing at a removed zone fall back to `NULL` through the schema's
+    /// `ON DELETE SET NULL`, so a stale zone cannot leave dangling references behind.
+    pub fn prune_zones(&self, keep: &[PathBuf]) -> Result<usize> {
+        let conn = self.conn();
+        let existing: Vec<(i64, String)> = {
+            let mut stmt = conn.prepare("SELECT id, root_path FROM zones")?;
+            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get::<_, String>(1)?)))?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
+        };
+
+        let keep: std::collections::HashSet<&Path> = keep.iter().map(|p| p.as_path()).collect();
+        let mut removed = 0;
+        for (id, root) in existing {
+            if !keep.contains(Path::new(&root)) {
+                removed += conn.execute("DELETE FROM zones WHERE id = ?1", [id])?;
+            }
+        }
+        Ok(removed)
+    }
+
+    /// Assign every node to the deepest zone containing it.
+    ///
+    /// Done in SQL rather than row by row: a hundred thousand individual updates would take
+    /// longer than the entire index run that produced them. Zones are applied shallowest-first
+    /// so that a deeper zone overwrites a shallower one and wins, which is the rule from D15.
+    pub fn assign_zones(&self) -> Result<usize> {
+        let mut zones = self.zones()?;
+        zones.sort_by_key(|z| z.root_path.components().count());
+
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+
+        // Clear first, so that a node which has left every zone does not keep a stale colour.
+        tx.execute("UPDATE nodes SET zone_id = NULL WHERE zone_id IS NOT NULL", [])?;
+
+        for zone in &zones {
+            let Some(id) = zone.id else { continue };
+            let root = path_to_str(&zone.root_path)?;
+            tx.execute(
+                "UPDATE nodes SET zone_id = ?1
+                 WHERE path IS NOT NULL AND (path = ?2 OR path LIKE ?2 || '/%')",
+                params![id.0, root],
+            )?;
+        }
+
+        // Counted after the fact, not by summing the statements above: a node inside three
+        // nested zones is written three times and assigned once, and reporting three would be
+        // a number that looks like a count of nodes but is not one.
+        let assigned: i64 = tx.query_row(
+            "SELECT count(*) FROM nodes WHERE zone_id IS NOT NULL",
+            [],
+            |r| r.get(0),
+        )?;
+
+        tx.commit()?;
+        Ok(assigned as usize)
+    }
+
+    /// Link every node to its parent directory.
+    ///
+    /// The directory graph is what `structural` queries traverse, and it is cheap to maintain
+    /// but easy to forget: `parent_id` stayed `NULL` through all of M1 because nothing ever set
+    /// it, and nothing complained, because nothing read it yet.
+    ///
+    /// Resolved in one pass over the whole index rather than per insert. Looking the parent up
+    /// on every upsert would be an extra query per file during a bulk index run, for a
+    /// relationship that is trivially derivable in bulk afterwards.
+    pub fn link_parents(&self) -> Result<usize> {
+        let known: HashMap<String, i64> = {
+            let conn = self.conn();
+            let mut stmt =
+                conn.prepare("SELECT id, path FROM nodes WHERE path IS NOT NULL")?;
+            let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(1)?, r.get::<_, i64>(0)?)))?;
+            rows.collect::<std::result::Result<HashMap<_, _>, _>>()?
+        };
+
+        // Only rows whose parent is actually wrong are touched, so a steady-state index does
+        // no writes at all here.
+        let current: Vec<(i64, String, Option<i64>)> = {
+            let conn = self.conn();
+            let mut stmt =
+                conn.prepare("SELECT id, path, parent_id FROM nodes WHERE path IS NOT NULL")?;
+            let rows = stmt.query_map([], |r| {
+                Ok((r.get(0)?, r.get::<_, String>(1)?, r.get::<_, Option<i64>>(2)?))
+            })?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
+        };
+
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let mut linked = 0;
+
+        for (id, path, parent_id) in current {
+            let wanted = Path::new(&path)
+                .parent()
+                .and_then(|p| p.to_str())
+                .and_then(|p| known.get(p))
+                .copied()
+                // A node must never be its own parent: the filesystem root's parent is itself
+                // as far as `Path::parent` is concerned once you reach it.
+                .filter(|candidate| *candidate != id);
+
+            if wanted != parent_id {
+                tx.execute(
+                    "UPDATE nodes SET parent_id = ?2 WHERE id = ?1",
+                    params![id, wanted],
+                )?;
+                linked += 1;
+            }
+        }
+
+        tx.commit()?;
+        Ok(linked)
+    }
+
     /// Every indexed path with its node id, for building the in-memory path index at startup.
     pub fn all_paths_with_ids(&self) -> Result<Vec<(NodeId, String)>> {
         let conn = self.conn();
@@ -320,8 +517,9 @@ fn upsert_node_on(conn: &rusqlite::Connection, node: &NodeUpsert, now: i64) -> R
 
     conn.execute(
         "INSERT INTO nodes
-             (kind, path, parent_id, mime, size, mtime, ctime, inode, dev, first_seen, last_seen)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)
+             (kind, path, parent_id, mime, size, mtime, ctime, inode, dev, zone_id,
+              first_seen, last_seen)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?11, ?10, ?10)
          -- The unique index on `path` is partial (it excludes pathless concept and
          -- annotation nodes), so the conflict target has to repeat its WHERE clause.
          ON CONFLICT(path) WHERE path IS NOT NULL DO UPDATE SET
@@ -333,6 +531,9 @@ fn upsert_node_on(conn: &rusqlite::Connection, node: &NodeUpsert, now: i64) -> R
              ctime     = excluded.ctime,
              inode     = excluded.inode,
              dev       = excluded.dev,
+             -- A bulk caller passes no zone; keeping the existing one stops a metadata
+             -- refresh from wiping an assignment it simply had no opinion about.
+             zone_id   = coalesce(excluded.zone_id, nodes.zone_id),
              last_seen = excluded.last_seen",
         params![
             node.kind.as_str(),
@@ -345,6 +546,7 @@ fn upsert_node_on(conn: &rusqlite::Connection, node: &NodeUpsert, now: i64) -> R
             node.inode,
             node.dev,
             now,
+            node.zone_id.map(|z| z.0),
         ],
     )?;
 
@@ -490,6 +692,7 @@ mod tests {
             ctime: 0,
             inode: 0,
             dev: 0,
+            zone_id: None,
         }
     }
 
@@ -721,6 +924,207 @@ mod tests {
 
         let reread = store.node_by_id(child.id).unwrap().unwrap();
         assert_eq!(reread.parent_id, Some(parent.id));
+    }
+
+    fn zone(path: &str) -> Zone {
+        Zone::derived(path, cortex_core::zones::name_for(Path::new(path)), None)
+    }
+
+    #[test]
+    fn a_zone_round_trips() {
+        let store = Store::open_in_memory().unwrap();
+        let id = store.upsert_zone(&zone("/home/user/Projects")).unwrap();
+
+        let zones = store.zones().unwrap();
+        assert_eq!(zones.len(), 1);
+        assert_eq!(zones[0].id, Some(id));
+        assert_eq!(zones[0].name, "Projects");
+        assert_eq!(zones[0].color_hue, cortex_core::zones::hue_for(Path::new("/home/user/Projects")));
+        assert!(!zones[0].user_override);
+    }
+
+    #[test]
+    fn re_registering_a_zone_updates_rather_than_duplicates() {
+        let store = Store::open_in_memory().unwrap();
+        let first = store.upsert_zone(&zone("/home/user/Projects")).unwrap();
+
+        let mut renamed = zone("/home/user/Projects");
+        renamed.name = "Work".into();
+        let second = store.upsert_zone(&renamed).unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(store.zones().unwrap()[0].name, "Work");
+    }
+
+    #[test]
+    fn a_hand_picked_colour_survives_regeneration() {
+        // Silently repainting a deliberate choice makes the setting look broken, which is worse
+        // than not offering it.
+        let store = Store::open_in_memory().unwrap();
+        let id = store.upsert_zone(&zone("/home/user/Projects")).unwrap();
+        store.set_zone_color(id, 200).unwrap();
+
+        store.upsert_zone(&zone("/home/user/Projects")).unwrap();
+
+        let stored = &store.zones().unwrap()[0];
+        assert_eq!(stored.color_hue, 200, "a user override must not be regenerated away");
+        assert!(stored.user_override);
+    }
+
+    #[test]
+    fn nodes_are_assigned_to_the_deepest_containing_zone() {
+        let store = store_with(&[
+            "/home/user/notes.md",
+            "/home/user/Projects/readme.md",
+            "/home/user/Projects/aurora/src/main.rs",
+        ]);
+        let home = store.upsert_zone(&zone("/home/user")).unwrap();
+        let projects = store.upsert_zone(&zone("/home/user/Projects")).unwrap();
+        let aurora = store.upsert_zone(&zone("/home/user/Projects/aurora")).unwrap();
+
+        assert_eq!(store.assign_zones().unwrap(), 3);
+
+        let zone_of = |p: &str| store.node_by_path(Path::new(p)).unwrap().unwrap().zone_id;
+        assert_eq!(zone_of("/home/user/notes.md"), Some(home));
+        assert_eq!(zone_of("/home/user/Projects/readme.md"), Some(projects));
+        assert_eq!(zone_of("/home/user/Projects/aurora/src/main.rs"), Some(aurora));
+    }
+
+    #[test]
+    fn an_incremental_insert_can_carry_its_own_zone() {
+        // The incremental path knows the zone from its cached list, so a newly created file is
+        // coloured immediately rather than staying blank until the next reconcile.
+        let store = Store::open_in_memory().unwrap();
+        let id = store.upsert_zone(&zone("/home/user/Pictures")).unwrap();
+
+        let mut u = upsert(NodeKind::File, "/home/user/Pictures/new.jpg");
+        u.zone_id = Some(id);
+        store.upsert_node(&u, 0).unwrap();
+
+        let node = store.node_by_path(Path::new("/home/user/Pictures/new.jpg")).unwrap().unwrap();
+        assert_eq!(node.zone_id, Some(id));
+    }
+
+    #[test]
+    fn a_metadata_refresh_without_a_zone_keeps_the_existing_one() {
+        // A bulk pass passes no zone. Treating that as "no zone" would blank every assignment
+        // the moment a file's size changed.
+        let store = Store::open_in_memory().unwrap();
+        let id = store.upsert_zone(&zone("/home/user/Pictures")).unwrap();
+
+        let mut u = upsert(NodeKind::File, "/home/user/Pictures/new.jpg");
+        u.zone_id = Some(id);
+        store.upsert_node(&u, 0).unwrap();
+
+        u.zone_id = None;
+        u.size = 4096;
+        store.upsert_node(&u, 1).unwrap();
+
+        let node = store.node_by_path(Path::new("/home/user/Pictures/new.jpg")).unwrap().unwrap();
+        assert_eq!(node.zone_id, Some(id), "an unopinionated update must not clear the zone");
+        assert_eq!(node.size, 4096);
+    }
+
+    #[test]
+    fn a_node_outside_every_zone_has_no_zone() {
+        let store = store_with(&["/srv/elsewhere/file.txt"]);
+        store.upsert_zone(&zone("/home/user/Projects")).unwrap();
+        store.assign_zones().unwrap();
+
+        let node = store.node_by_path(Path::new("/srv/elsewhere/file.txt")).unwrap().unwrap();
+        assert_eq!(node.zone_id, None);
+    }
+
+    #[test]
+    fn reassigning_clears_a_stale_zone() {
+        // A node that has left every zone must lose its colour, not keep the old one.
+        let store = store_with(&["/home/user/Projects/file.txt"]);
+        let id = store.upsert_zone(&zone("/home/user/Projects")).unwrap();
+        store.assign_zones().unwrap();
+        assert!(store.node_by_path(Path::new("/home/user/Projects/file.txt")).unwrap().unwrap().zone_id.is_some());
+
+        store.prune_zones(&[]).unwrap();
+        store.assign_zones().unwrap();
+
+        let node = store.node_by_path(Path::new("/home/user/Projects/file.txt")).unwrap().unwrap();
+        assert_eq!(node.zone_id, None);
+        let _ = id;
+    }
+
+    #[test]
+    fn pruning_keeps_what_it_is_told_to() {
+        let store = Store::open_in_memory().unwrap();
+        store.upsert_zone(&zone("/home/user/Projects")).unwrap();
+        store.upsert_zone(&zone("/home/user/Documents")).unwrap();
+
+        let removed = store.prune_zones(&[PathBuf::from("/home/user/Projects")]).unwrap();
+
+        assert_eq!(removed, 1);
+        assert_eq!(store.zones().unwrap().len(), 1);
+        assert_eq!(store.zones().unwrap()[0].root_path, PathBuf::from("/home/user/Projects"));
+    }
+
+    #[test]
+    fn deleting_a_zone_does_not_delete_its_nodes() {
+        let store = store_with(&["/home/user/Projects/file.txt"]);
+        store.upsert_zone(&zone("/home/user/Projects")).unwrap();
+        store.assign_zones().unwrap();
+
+        store.prune_zones(&[]).unwrap();
+
+        assert_eq!(store.all_paths().unwrap(), vec!["/home/user/Projects/file.txt"]);
+    }
+
+    #[test]
+    fn parents_are_linked_across_the_whole_tree() {
+        let store = store_with(&[
+            "/home/user",
+            "/home/user/Projects",
+            "/home/user/Projects/aurora",
+            "/home/user/Projects/aurora/main.rs",
+        ]);
+
+        assert!(store.link_parents().unwrap() > 0);
+
+        let node = |p: &str| store.node_by_path(Path::new(p)).unwrap().unwrap();
+        let user = node("/home/user");
+        let projects = node("/home/user/Projects");
+        let aurora = node("/home/user/Projects/aurora");
+        let main = node("/home/user/Projects/aurora/main.rs");
+
+        assert_eq!(main.parent_id, Some(aurora.id));
+        assert_eq!(aurora.parent_id, Some(projects.id));
+        assert_eq!(projects.parent_id, Some(user.id));
+        assert_eq!(user.parent_id, None, "the topmost indexed node has no indexed parent");
+    }
+
+    #[test]
+    fn linking_parents_is_idempotent_and_quiet_when_nothing_changed() {
+        let store = store_with(&["/a", "/a/b", "/a/b/c.txt"]);
+        assert!(store.link_parents().unwrap() > 0);
+        assert_eq!(
+            store.link_parents().unwrap(),
+            0,
+            "a steady-state index must produce no writes"
+        );
+    }
+
+    #[test]
+    fn a_gap_in_the_tree_leaves_the_parent_unset_rather_than_guessing() {
+        // The intermediate directory is not indexed, so there is nothing correct to point at.
+        let store = store_with(&["/a", "/a/b/c.txt"]);
+        store.link_parents().unwrap();
+
+        let child = store.node_by_path(Path::new("/a/b/c.txt")).unwrap().unwrap();
+        assert_eq!(child.parent_id, None);
+    }
+
+    #[test]
+    fn no_node_is_ever_its_own_parent() {
+        let store = store_with(&["/"]);
+        store.link_parents().unwrap();
+        let root = store.node_by_path(Path::new("/")).unwrap().unwrap();
+        assert_ne!(root.parent_id, Some(root.id));
     }
 
     #[test]

@@ -51,7 +51,7 @@ the system is complete without it.
 | Milestone | Content | State |
 |---|---|---|
 | M0 | Daemon skeleton, schema, JSON-RPC socket, CLI | **done** |
-| M1 | Filesystem watcher, metadata index, episodes, trigram path search | **nearly done** |
+| M1 | Filesystem watcher, metadata index, episodes, trigram path search, zones | **done** |
 | M2 | Extraction, chunking, embeddings, hybrid search | |
 | M3 | Agent Surface: MCP, policy engine, undo journal | |
 | M4 | Search overlay (first GUI) | |
@@ -90,6 +90,9 @@ cargo build --release
 
 # Compare the index against the filesystem and repair any drift
 ./target/release/cortex --root /tmp/hippocampus-demo reconcile
+
+# See the spatial zones and their colours
+./target/release/cortex --root /tmp/hippocampus-demo zones
 
 # Search it
 ./target/release/cortex --root /tmp/hippocampus-demo search report

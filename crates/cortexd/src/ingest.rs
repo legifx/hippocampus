@@ -73,6 +73,27 @@ pub struct Ingest {
     pub index: Arc<RwLock<PathIndex>>,
     pub state: Arc<IngestState>,
     pub config: Config,
+    /// The current zone set, kept in memory so that assigning a zone to a newly seen path is a
+    /// comparison against a handful of prefixes rather than a database round trip. Bulk
+    /// assignment still exists, but it is for when the *set* changes, not for every new file.
+    zones: RwLock<Vec<cortex_core::zones::Zone>>,
+}
+
+impl Ingest {
+    pub fn new(
+        store: Arc<Store>,
+        index: Arc<RwLock<PathIndex>>,
+        state: Arc<IngestState>,
+        config: Config,
+    ) -> Self {
+        Self {
+            store,
+            index,
+            state,
+            config,
+            zones: RwLock::new(Vec::new()),
+        }
+    }
 }
 
 impl Ingest {
@@ -105,8 +126,16 @@ impl Ingest {
         // An initial reconcile brings the index up to date with everything that changed while
         // the daemon was not running. Without it, the first minutes after every start serve a
         // stale index.
+        let mut refreshed = false;
         for root in &roots {
-            self.run_reconcile(root);
+            refreshed |= self.run_reconcile(root);
+        }
+
+        // If no reconcile had anything to do, the structure refresh still has to run once. An
+        // index built by an earlier version has no zones and no directory graph, and a clean
+        // reconcile would never trigger the pass that creates them.
+        if !refreshed {
+            self.refresh_structure();
         }
 
         let mut coalescer = Coalescer::new(Duration::from_millis(self.config.index.debounce_ms));
@@ -168,14 +197,16 @@ impl Ingest {
         }
     }
 
-    fn run_reconcile(&self, root: &Path) {
+    /// Returns whether the structure refresh ran, so a caller can avoid repeating it.
+    fn run_reconcile(&self, root: &Path) -> bool {
         if self.state.is_paused() {
-            return;
+            return false;
         }
         let started = Instant::now();
         let report = reconcile(&self.store, root, &self.config.index.extra_deny, unix_now());
 
-        if !report.is_clean() {
+        let refreshed = !report.is_clean();
+        if refreshed {
             tracing::info!(
                 root = %root.display(),
                 added = report.added,
@@ -188,9 +219,11 @@ impl Ingest {
             // Whole subtrees may have moved, so patching the in-memory index entry by entry
             // would be more error-prone than rebuilding it from what the database now says.
             self.rebuild_index();
+            self.refresh_structure();
         }
 
         *self.state.last_reconcile.lock().unwrap() = Some(report);
+        refreshed
     }
 
     fn publish_health(&self, watcher: &Watcher) {
@@ -210,6 +243,74 @@ impl Ingest {
         if needs {
             self.index.write().unwrap().compact();
         }
+    }
+
+    /// Re-derive the parts of the index that are computed from the whole tree rather than from
+    /// one path: the directory graph and the zone assignment.
+    ///
+    /// Both are cheap in bulk and expensive per row, so they run after a change rather than
+    /// during one. Both are also idempotent, so running them more often than strictly necessary
+    /// costs a little time and can never produce a wrong answer.
+    pub fn refresh_structure(&self) {
+        match self.store.link_parents() {
+            Ok(0) => {}
+            Ok(n) => tracing::debug!(linked = n, "directory graph updated"),
+            Err(e) => tracing::warn!(error = %e, "could not link parents"),
+        }
+        self.refresh_zones(true);
+    }
+
+    /// Re-detect zones and, if the set actually changed, re-assign every node.
+    ///
+    /// The bulk assignment costs one pass over the index *per zone*, so doing it whenever a
+    /// directory appears would make creating a handful of folders take longer than the initial
+    /// index did. It runs when the set of zones changes — which is rare — and incremental
+    /// inserts cover everything in between by consulting the cached list.
+    fn refresh_zones(&self, force_assign: bool) {
+        let detected = cortex_ingest::zone_detect::detect(
+            &self.config.index.metadata_roots,
+            self.config.index.zone_budget,
+        );
+
+        let previous: Vec<std::path::PathBuf> = self
+            .zones
+            .read()
+            .unwrap()
+            .iter()
+            .map(|z| z.root_path.clone())
+            .collect();
+        let roots: Vec<std::path::PathBuf> = detected.iter().map(|z| z.root_path.clone()).collect();
+        let set_changed = previous != roots;
+
+        for zone in &detected {
+            if let Err(e) = self.store.upsert_zone(zone) {
+                tracing::warn!(error = %e, root = %zone.root_path.display(), "could not record zone");
+            }
+        }
+        // A directory that stopped being a project, or was deleted, must stop being a zone —
+        // otherwise the colour legend slowly fills with places that no longer exist.
+        if let Err(e) = self.store.prune_zones(&roots) {
+            tracing::warn!(error = %e, "could not prune zones");
+        }
+
+        // Re-read so the cache carries the database ids that incremental inserts need.
+        match self.store.zones() {
+            Ok(stored) => *self.zones.write().unwrap() = stored,
+            Err(e) => tracing::warn!(error = %e, "could not read zones back"),
+        }
+
+        if set_changed || force_assign {
+            match self.store.assign_zones() {
+                Ok(n) => tracing::debug!(zones = detected.len(), assigned = n, "zones assigned"),
+                Err(e) => tracing::warn!(error = %e, "could not assign zones"),
+            }
+        }
+    }
+
+    /// The zone a path belongs to, from the cached set.
+    fn zone_for(&self, path: &Path) -> Option<cortex_core::ids::ZoneId> {
+        let zones = self.zones.read().unwrap();
+        cortex_core::zones::zone_for(path, &zones).and_then(|z| z.id)
     }
 
     /// Rebuild the in-memory path index from the database.
@@ -242,6 +343,21 @@ impl Ingest {
                     }
                 }
                 self.index_path(path, *is_dir);
+
+                // Re-detect zones only when this path could plausibly have created one: a
+                // directory with a conventional name, or a file that is a project marker.
+                // Anything else leaves the zone set untouched, and re-running detection for it
+                // would cost a full pass over the index for nothing.
+                let name = file_name_of(path);
+                let might_be_a_zone = if *is_dir {
+                    cortex_ingest::zone_detect::is_conventional_area(&name)
+                        || self.config.index.metadata_roots.iter().any(|r| path.parent() == Some(r))
+                } else {
+                    cortex_ingest::zone_detect::is_project_marker(&name)
+                };
+                if might_be_a_zone {
+                    self.refresh_zones(false);
+                }
             }
 
             Change::Touch { path } => {
@@ -264,6 +380,7 @@ impl Ingest {
                         // A directory removal takes an unknown number of descendants with it,
                         // so the in-memory index is rebuilt rather than guessed at.
                         self.rebuild_index();
+                        self.refresh_structure();
                     }
                     Err(e) => tracing::warn!(error = %e, path = %path.display(), "could not remove"),
                 }
@@ -293,6 +410,7 @@ impl Ingest {
                             }),
                         );
                         self.rebuild_index();
+                        self.refresh_structure();
                     }
                     Err(e) => tracing::warn!(error = %e, "could not record a rename"),
                 }
@@ -312,10 +430,19 @@ impl Ingest {
             return;
         };
 
+        // One lookup, on a path that is almost certainly already in SQLite's page cache. Doing
+        // it here keeps the directory graph correct between reconciles rather than only after
+        // one.
+        let parent_id = path
+            .parent()
+            .and_then(|parent| self.store.node_by_path(parent).ok().flatten())
+            .map(|node| node.id);
+
         let record = NodeUpsert {
             kind: if is_dir { NodeKind::Dir } else { NodeKind::File },
             path: path.to_path_buf(),
-            parent_id: None,
+            parent_id,
+            zone_id: self.zone_for(path),
             mime: None,
             size: metadata.len() as i64,
             mtime: unix_seconds(metadata.modified().ok()),

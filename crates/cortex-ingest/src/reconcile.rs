@@ -247,6 +247,8 @@ fn write_batched(store: &Store, entries: &[&OnDisk], now: i64) {
                     ctime: entry.ctime,
                     inode: entry.inode,
                     dev: entry.dev,
+                    // Left unset: assign_zones works the whole index out at once afterwards.
+                    zone_id: None,
                 };
                 let id = batch.upsert_node(&record, now)?;
                 if detailed {

@@ -10,5 +10,6 @@ pub mod error;
 pub mod ids;
 pub mod model;
 pub mod paths;
+pub mod zones;
 
 pub use error::{Error, Result};

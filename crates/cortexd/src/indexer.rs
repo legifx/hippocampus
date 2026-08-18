@@ -121,6 +121,7 @@ fn index_entry(
         ctime: system_time_to_unix(metadata.created().ok()),
         inode: inode_of(&metadata),
         dev: device_of(&metadata),
+        zone_id: None,
     };
 
     match store.upsert_node(&upsert, now) {

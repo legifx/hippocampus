@@ -11,6 +11,7 @@
 pub mod coalesce;
 pub mod event;
 pub mod reconcile;
+pub mod zone_detect;
 
 #[cfg(target_os = "linux")]
 pub mod watcher;

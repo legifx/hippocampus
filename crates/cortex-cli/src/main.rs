@@ -10,7 +10,7 @@ use cortex_rpc::client::Client;
 use cortex_rpc::protocol::{
     method, EpisodesRecentParams, EpisodesRecentResult, IndexPathParams, IndexPathResult,
     NodeGetParams, NodeGetResult, PingResult, ReconcileParams, ReconcileResult, SearchParams,
-    SearchResult, StatusResult, WatchStatusResult,
+    SearchResult, StatusResult, WatchStatusResult, ZoneSetColorParams, ZonesListResult,
 };
 
 #[derive(Parser, Debug)]
@@ -62,6 +62,14 @@ enum Command {
         #[command(subcommand)]
         command: WatchCommand,
     },
+    /// List the spatial zones and their colours.
+    Zones {
+        /// Show every zone. By default only the largest are listed.
+        #[arg(short, long)]
+        all: bool,
+        #[command(subcommand)]
+        command: Option<ZoneCommand>,
+    },
     /// Compare the index against the filesystem and repair any drift.
     Reconcile {
         /// Reconcile only this path. Defaults to every configured root.
@@ -69,6 +77,16 @@ enum Command {
     },
     /// Ask the daemon to stop.
     Shutdown,
+}
+
+#[derive(Subcommand, Debug)]
+enum ZoneCommand {
+    /// Pick a zone's colour by hand. It then survives regeneration.
+    SetColor {
+        id: i64,
+        /// Hue in degrees, 0-359.
+        hue: u16,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -250,6 +268,18 @@ async fn run(args: Args) -> Result<()> {
                         println!("  size     {} bytes", node.size);
                         println!("  tier     {}", node.tier.as_str());
                         println!("  salience {:.3}{}", node.salience, if node.pinned { " (pinned)" } else { "" });
+                        println!(
+                            "  parent   {}",
+                            node.parent_id
+                                .map(|p| p.to_string())
+                                .unwrap_or_else(|| "none (top of the indexed tree)".into())
+                        );
+                        println!(
+                            "  zone     {}",
+                            node.zone_id
+                                .map(|z| z.to_string())
+                                .unwrap_or_else(|| "none".into())
+                        );
                     }
                 }
             }
@@ -285,6 +315,53 @@ async fn run(args: Args) -> Result<()> {
                     print_json(&result)?;
                 } else {
                     print_watch_status(&result);
+                }
+            }
+        },
+
+        Command::Zones { all, command } => match command {
+            Some(ZoneCommand::SetColor { id, hue }) => {
+                if hue >= 360 {
+                    bail!("hue must be between 0 and 359");
+                }
+                let _: serde_json::Value = client
+                    .call(method::ZONE_SET_COLOR, ZoneSetColorParams { id, hue })
+                    .await?;
+                println!("zone {id} set to hue {hue}");
+            }
+            None => {
+                let result: ZonesListResult =
+                    client.call(method::ZONES_LIST, serde_json::json!({})).await?;
+                if args.json {
+                    // Agents and scripts always get everything; truncation is a courtesy to a
+                    // human reading a terminal, not a property of the data.
+                    print_json(&result)?;
+                } else if result.zones.is_empty() {
+                    println!("no zones — configure index.metadata_roots and reconcile");
+                } else {
+                    let mut zones = result.zones.clone();
+                    zones.sort_by(|a, b| b.node_count.cmp(&a.node_count));
+                    let total = zones.len();
+                    let shown = if all { total } else { total.min(20) };
+
+                    println!("{:>5}  {:>5}  {:<10} {:>9}  root", "id", "hue", "icon", "nodes");
+                    for zone in zones.iter().take(shown) {
+                        println!(
+                            "{:>5}  {:>4}{}  {:<10} {:>9}  {}",
+                            zone.id,
+                            zone.color_hue,
+                            if zone.user_override { "*" } else { " " },
+                            zone.icon.as_deref().unwrap_or("-"),
+                            zone.node_count,
+                            zone.root_path,
+                        );
+                    }
+                    if shown < total {
+                        println!("\n… and {} more. Pass --all to see them.", total - shown);
+                    }
+                    if zones.iter().any(|z| z.user_override) {
+                        println!("\n* colour chosen by hand; regeneration leaves it alone");
+                    }
                 }
             }
         },
