@@ -85,6 +85,7 @@ version = "0.0.1"
 dependencies = [
  "clap",
  "cortex-core",
+ "cortex-extract",
  "cortex-query",
  "cortex-store",
 ]
@@ -265,6 +266,8 @@ name = "cortex-query"
 version = "0.0.1"
 dependencies = [
  "cortex-core",
+ "cortex-extract",
+ "cortex-store",
  "serde",
  "tempfile",
  "tracing",
@@ -303,10 +306,12 @@ dependencies = [
  "anyhow",
  "clap",
  "cortex-core",
+ "cortex-extract",
  "cortex-ingest",
  "cortex-query",
  "cortex-rpc",
  "cortex-store",
+ "libc",
  "serde",
  "serde_json",
  "tempfile",

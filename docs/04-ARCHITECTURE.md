@@ -42,6 +42,23 @@ GUI, CLI, TUI, MCP — is an equal client speaking JSON-RPC to it over a Unix so
 └───────────────────────────────────────────────────────────────────────────────┘
 ```
 
+### Where that lives in the source
+
+The map above is the architecture; this is the current translation of it into crates, which
+moves as the system grows.
+
+| Box | Crate |
+|---|---|
+| Watcher, coalescing, reconciliation, resource throttling | `cortex-ingest` |
+| Classifier, extractor, chunker, snippets | `cortex-extract` |
+| Query engine, RRF fusion, query modes, the search orchestrator | `cortex-query` |
+| SQLite, FTS5, chunk and episode storage | `cortex-store` |
+| Ingest loop, extraction stage, activity signal, RPC server | `cortexd` |
+
+The search orchestrator lives in `cortex-query` rather than in the daemon on purpose: a binary
+cannot be depended on, and a benchmark that reimplements the search it measures eventually
+measures something else. The daemon owns scheduling and policy; the library owns retrieval.
+
 ## Why the daemon owns everything
 
 - It is testable without a display: integration tests, benchmarks, fuzzing.
@@ -84,17 +101,27 @@ than producing it. This is the difference between a tool and a demo.
 ## Data flow: a file changes
 
 ```
-fanotify event
+inotify event                                    (D20: inotify, not fanotify)
    │  (no content read)
    ├─► debounce/coalesce ~500 ms per (path, class)
    ├─► deny-list check ────────► rejected → metadata only, no extractor ever invoked
    ├─► episode written immediately (append-only)
    ├─► node upsert (move detected by inode, not delete+create)
-   └─► extraction queue (idle-priority)
-          └─► extract → chunk → hash
-                 └─► chunk hash unchanged? → skip embedding (largest perf lever)
-                 └─► changed? → embed → FTS5 + usearch
+   │      └─► stat changed? → extract_state = pending
+   └─► priority queue + wake signal ──► extraction stage (own thread, nice, duty cycle)
+          │  a just-touched file is taken before the backlog; the stage sleeps
+          │  until signalled rather than polling (D22)
+          └─► classify → extract → hash the text
+                 ├─► text hash unchanged? → nothing to do at all
+                 └─► changed? → chunk → hash per chunk
+                        ├─► chunk hash unchanged? → keep the row, keep the embedding
+                        └─► new? → FTS5 (+ embed → usearch, M2 second half)
 ```
+
+The two hashes do different jobs. The **text** hash decides whether the file is worth chunking;
+the **chunk** hash decides which chunks survive an edit and therefore which embeddings are kept.
+A save with no edit stops at the first; editing one paragraph of a long document stops nearly
+everything at the second.
 
 ## Storage layout
 

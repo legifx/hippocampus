@@ -14,6 +14,7 @@
 //!   than only by its own unit tests
 //! - German and English content, mixed within files as well as across them
 
+mod prose;
 mod rng;
 mod words;
 
@@ -38,8 +39,11 @@ struct Args {
     #[arg(long, default_value_t = 20260817)]
     seed: u64,
 
-    /// Write real content into text and code files. Off by default: the M1 benchmarks only
-    /// index metadata, and empty files make a 100k-file corpus fit in a fraction of the space.
+    /// Write real content into text and code files.
+    ///
+    /// On by default from M2: retrieval cannot be benchmarked against empty files. Turning it
+    /// off produces exactly the same tree with empty files in it, which is a great deal smaller
+    /// and is all the path benchmarks need.
     #[arg(long)]
     with_content: bool,
 
@@ -68,6 +72,12 @@ fn main() -> std::io::Result<()> {
 
     let mut rng = Rng::new(args.seed);
     let mut stats = Stats::default();
+    // Built once, shared by every document: term frequencies are a property of the corpus, not
+    // of a file, and rebuilding the vocabulary per file would destroy exactly that.
+    let content = args.with_content.then(prose::Vocabulary::build);
+    if let Some(vocabulary) = &content {
+        println!("vocabulary: {} distinct words, Zipf-distributed", vocabulary.len());
+    }
 
     generate_sensitive_files(&args.out, &mut stats)?;
 
@@ -91,13 +101,13 @@ fn main() -> std::io::Result<()> {
         fs::create_dir_all(&root)?;
 
         match *area {
-            "Projects" => generate_projects(&root, quota, &mut rng, args.with_content, &mut stats)?,
+            "Projects" => generate_projects(&root, quota, &mut rng, content.as_ref(), args.seed, &mut stats)?,
             "Pictures" => generate_media(&root, quota, words::IMAGE_EXTENSIONS, &mut rng, &mut stats)?,
             "Music" | "Videos" => {
                 generate_media(&root, quota, words::MEDIA_EXTENSIONS, &mut rng, &mut stats)?
             }
-            "Downloads" => generate_downloads(&root, quota, &mut rng, args.with_content, &mut stats)?,
-            _ => generate_documents(&root, quota, &mut rng, args.with_content, &mut stats)?,
+            "Downloads" => generate_downloads(&root, quota, &mut rng, content.as_ref(), args.seed, &mut stats)?,
+            _ => generate_documents(&root, quota, &mut rng, content.as_ref(), args.seed, &mut stats)?,
         }
     }
 
@@ -152,7 +162,8 @@ fn generate_projects(
     root: &Path,
     quota: usize,
     rng: &mut Rng,
-    with_content: bool,
+    content: Option<&prose::Vocabulary>,
+    seed: u64,
     stats: &mut Stats,
 ) -> std::io::Result<()> {
     let mut remaining = quota;
@@ -183,7 +194,7 @@ fn generate_projects(
                     rng.below(10_000),
                     rng.pick(words::CODE_EXTENSIONS)
                 ));
-                write_file(&file, with_content, rng)?;
+                write_file(&file, content, seed)?;
                 stats.files += 1;
                 remaining -= 1;
                 if remaining == 0 {
@@ -214,7 +225,8 @@ fn generate_documents(
     root: &Path,
     quota: usize,
     rng: &mut Rng,
-    with_content: bool,
+    content: Option<&prose::Vocabulary>,
+    seed: u64,
     stats: &mut Stats,
 ) -> std::io::Result<()> {
     let mut remaining = quota;
@@ -252,7 +264,7 @@ fn generate_documents(
                 rng.below(100_000),
                 ext
             ));
-            write_file(&file, with_content, rng)?;
+            write_file(&file, content, seed)?;
             stats.files += 1;
             remaining -= 1;
             if remaining == 0 {
@@ -309,7 +321,8 @@ fn generate_downloads(
     root: &Path,
     quota: usize,
     rng: &mut Rng,
-    with_content: bool,
+    content: Option<&prose::Vocabulary>,
+    seed: u64,
     stats: &mut Stats,
 ) -> std::io::Result<()> {
     // One flat directory holding everything, which is what a real Downloads folder looks like
@@ -330,20 +343,37 @@ fn generate_downloads(
             rng.below(1_000_000),
             ext
         ));
-        write_file(&file, with_content, rng)?;
+        write_file(&file, content, seed)?;
         stats.files += 1;
     }
     Ok(())
 }
 
-fn write_file(path: &Path, with_content: bool, rng: &mut Rng) -> std::io::Result<()> {
-    if !with_content {
+/// Write a file, with or without content.
+///
+/// Content is generated from a **separate** generator, seeded from the file's own path rather
+/// than drawn from the stream that names things. Without that split, `--with-content` would
+/// consume draws and every file after the first would get a different name — so the two modes
+/// would produce two different corpora, and the path benchmark numbers from one could not be
+/// compared with the other. The tree is now identical either way, and the content is still
+/// reproducible byte for byte.
+fn write_file(path: &Path, content: Option<&prose::Vocabulary>, seed: u64) -> std::io::Result<()> {
+    let Some(vocabulary) = content else {
         return fs::write(path, b"");
-    }
+    };
 
-    let mut file = fs::File::create(path)?;
-    for _ in 0..rng.range(3, 40) {
-        writeln!(file, "{}", rng.pick(words::SENTENCES))?;
+    let mut file = std::io::BufWriter::new(fs::File::create(path)?);
+    let mut rng = Rng::new(seed ^ path_seed(path));
+    prose::write_document(&mut file, vocabulary, &mut rng)?;
+    file.flush()
+}
+
+/// A stable seed for one path. FNV-1a: a few lines, no dependency, and identical everywhere.
+fn path_seed(path: &Path) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in path.as_os_str().as_encoded_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
     }
-    Ok(())
+    hash
 }

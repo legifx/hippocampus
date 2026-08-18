@@ -4,6 +4,20 @@
 //! write in both, and an English-only corpus would let a monolingual embedding model look far
 //! better than it is (see decision D6). The M2 goldset is built against these words.
 
+/// The true head of any real vocabulary.
+///
+/// Function words are the most frequent words in every natural language, and nobody searches
+/// for them. Putting them at the top of the distribution is what leaves the *content* words at
+/// a realistic middling frequency — which is the frequency a benchmark query has to have, or it
+/// measures either a hit on everything or a hit on nothing.
+pub const FUNCTION_WORDS: &[&str] = &[
+    "der", "die", "das", "und", "in", "zu", "den", "mit", "von", "auf", "für", "ist", "im",
+    "dem", "nicht", "ein", "eine", "als", "auch", "es", "an", "werden", "aus", "er", "hat",
+    "dass", "sie", "nach", "wird", "bei", "einer", "um", "am", "sind", "noch", "wie", "über",
+    "the", "of", "and", "to", "in", "is", "that", "it", "for", "was", "on", "are", "as",
+    "with", "they", "at", "be", "this", "have", "from", "or", "had", "by", "but", "not",
+];
+
 pub const EN_NOUNS: &[&str] = &[
     "report", "invoice", "meeting", "budget", "contract", "schedule", "analysis", "summary",
     "proposal", "review", "backup", "archive", "photo", "recording", "transcript", "draft",
@@ -29,6 +43,12 @@ pub const PROJECT_NAMES: &[&str] = &[
     "ridgeline", "summit", "tundra",
 ];
 
+/// The top-level areas of the tree.
+///
+/// Kept beside the rest of the vocabulary although the generator now carries its own weighted
+/// list: these names are also what `zone_detect` recognises as conventional areas, and having
+/// them in one place is what stops the corpus and the detector from drifting apart.
+#[allow(dead_code)]
 pub const TOP_LEVEL: &[&str] = &[
     "Documents", "Projects", "Pictures", "Downloads", "Music", "Videos", "Archive", "Notes",
 ];

@@ -2,9 +2,11 @@
 
 **A memory daemon for your filesystem — and the file manager that grew out of it.**
 
-> Status: early. The daemon watches a filesystem, keeps a rebuildable index of it and answers
-> fuzzy path queries in about a millisecond over a hundred thousand files. Content extraction
-> and semantic search are next. See `docs/03-PROGRESS.md` for exactly where things stand.
+> Status: early. The daemon watches a filesystem, keeps a rebuildable index of it, and searches
+> both paths and file *contents* — a fuzzy path match takes about a millisecond over a hundred
+> thousand files, and a content query about fifteen. Extraction runs as background work that
+> holds itself to a measured share of one core. Embeddings and semantic search are next.
+> See `docs/03-PROGRESS.md` for exactly where things stand.
 
 ---
 
@@ -94,14 +96,31 @@ cargo build --release
 # See the spatial zones and their colours
 ./target/release/cortex --root /tmp/hippocampus-demo zones
 
-# Search it
+# Search it — paths and, inside configured content roots, what the files say
 ./target/release/cortex --root /tmp/hippocampus-demo search report
+
+# Ask why something ranked where it did, or why it did not appear at all
+./target/release/cortex --root /tmp/hippocampus-demo explain report ~/Documents/report.md
+
+# See how far content extraction has got
+./target/release/cortex --root /tmp/hippocampus-demo extract
 
 # See what it knows
 ./target/release/cortex --root /tmp/hippocampus-demo status
 ```
 
 Every command takes `--json` for scripting and for agent use.
+
+Content is only read inside roots you name explicitly. Add them to the configuration file:
+
+```toml
+[index]
+metadata_roots = ["/home/you"]     # paths and stats — cheap, broad
+content_roots  = ["/home/you/Documents", "/home/you/Projects"]
+```
+
+Metadata indexing may span a whole home directory; reading what is *inside* a file is opt-in and
+empty by default (hard rule R3). The deny-list applies before either, and cannot be shrunk.
 
 Without `--root`, the daemon uses the XDG locations: configuration in
 `~/.config/hippocampus/`, index in `~/.local/state/hippocampus/`, socket in

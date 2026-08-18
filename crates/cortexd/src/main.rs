@@ -2,6 +2,8 @@
 //!
 //! Owns the index and serves every client over one Unix socket. See `docs/04-ARCHITECTURE.md`.
 
+mod activity;
+mod extract_stage;
 mod indexer;
 mod ingest;
 mod lock;
@@ -83,6 +85,8 @@ fn main() -> Result<()> {
     );
 
     let ingest_state = Arc::new(ingest::IngestState::default());
+    let activity = Arc::new(activity::Activity::default());
+    let extract_stats = Arc::new(extract_stage::ExtractStats::default());
 
     // The ingest loop gets its own thread: its work is blocking by nature, and running it on
     // the async runtime would let a long walk stall every query.
@@ -98,6 +102,23 @@ fn main() -> Result<()> {
             .spawn(move || ingest.run())?
     };
 
+    // Extraction gets a thread of its own rather than a slot in the ingest loop. The two have
+    // opposite requirements: perception must react within a debounce window, while extraction
+    // is throttled to stay invisible. Sharing a thread would make the watcher wait behind a
+    // deliberate pause.
+    let extract_thread = {
+        let stage = extract_stage::Extraction::new(
+            store.clone(),
+            ingest_state.clone(),
+            activity.clone(),
+            extract_stats.clone(),
+            config.clone(),
+        );
+        std::thread::Builder::new()
+            .name("cortex-extract".into())
+            .spawn(move || stage.run())?
+    };
+
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
@@ -108,6 +129,8 @@ fn main() -> Result<()> {
             store,
             index,
             ingest_state,
+            activity,
+            extract_stats,
             config,
             paths.database(),
         ));
@@ -145,6 +168,9 @@ fn main() -> Result<()> {
     ingest_for_shutdown.stop();
     if let Err(e) = ingest_thread.join() {
         tracing::warn!("ingest thread did not stop cleanly: {e:?}");
+    }
+    if let Err(e) = extract_thread.join() {
+        tracing::warn!("extraction thread did not stop cleanly: {e:?}");
     }
 
     tracing::info!("cortexd stopped");

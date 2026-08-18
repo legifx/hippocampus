@@ -8,9 +8,10 @@ use clap::{Parser, Subcommand};
 use cortex_core::paths::Paths;
 use cortex_rpc::client::Client;
 use cortex_rpc::protocol::{
-    method, EpisodesRecentParams, EpisodesRecentResult, IndexPathParams, IndexPathResult,
-    NodeGetParams, NodeGetResult, PingResult, ReconcileParams, ReconcileResult, SearchParams,
-    SearchResult, StatusResult, WatchStatusResult, ZoneSetColorParams, ZonesListResult,
+    method, EpisodesRecentParams, EpisodesRecentResult, ExtractRequeueResult, ExtractStatusResult,
+    IndexPathParams, IndexPathResult, NodeGetParams, NodeGetResult, PingResult, ReconcileParams,
+    ReconcileResult, SearchExplainParams, SearchExplainResult, SearchParams, SearchResult,
+    StatusResult, WatchStatusResult, ZoneSetColorParams, ZonesListResult,
 };
 
 #[derive(Parser, Debug)]
@@ -39,6 +40,24 @@ enum Command {
         query: Vec<String>,
         #[arg(short, long)]
         limit: Option<usize>,
+        /// Match the last word exactly instead of as a prefix. What a goldset run wants.
+        #[arg(long)]
+        exact: bool,
+        /// Search paths only, skipping the content index.
+        #[arg(long)]
+        paths_only: bool,
+    },
+    /// Say why a file ranked where it did for a query — or why it did not appear.
+    Explain {
+        /// The query, exactly as it would be searched.
+        query: String,
+        /// The file to explain.
+        target: std::path::PathBuf,
+    },
+    /// Show how far content extraction has got.
+    Extract {
+        #[command(subcommand)]
+        command: Option<ExtractCommand>,
     },
     /// Index a path. Metadata only — content extraction arrives in M2.
     Index {
@@ -77,6 +96,16 @@ enum Command {
     },
     /// Ask the daemon to stop.
     Shutdown,
+}
+
+#[derive(Subcommand, Debug)]
+enum ExtractCommand {
+    /// Queue every file for extraction again.
+    ///
+    /// For when the *decision* changed rather than the files: a new content root makes
+    /// previously skipped files eligible, and nothing about them changed to trigger a re-read.
+    /// Unchanged content is recognised by its hash, so this costs a re-read, not a re-index.
+    Requeue,
 }
 
 #[derive(Subcommand, Debug)]
@@ -172,7 +201,7 @@ async fn run(args: Args) -> Result<()> {
             }
         }
 
-        Command::Search { query, limit } => {
+        Command::Search { query, limit, exact, paths_only } => {
             let query = query.join(" ");
             if query.trim().is_empty() {
                 bail!("nothing to search for");
@@ -182,8 +211,13 @@ async fn run(args: Args) -> Result<()> {
                     method::SEARCH,
                     SearchParams {
                         query,
-                        mode: Default::default(),
+                        mode: if paths_only {
+                            cortex_core::model::QueryMode::Locate
+                        } else {
+                            Default::default()
+                        },
                         limit,
+                        prefix: Some(!exact),
                     },
                 )
                 .await?;
@@ -191,19 +225,102 @@ async fn run(args: Args) -> Result<()> {
             if args.json {
                 print_json(&result)?;
             } else if result.hits.is_empty() {
-                println!("no results ({} ms)", result.elapsed_ms);
+                println!(
+                    "no results ({} ms, {} mode)",
+                    result.elapsed_ms,
+                    mode_name(result.mode)
+                );
             } else {
                 for hit in &result.hits {
                     println!("{}", hit.path.display());
+                    // The snippet is what makes a content hit legible: without it, a file that
+                    // matched on a word inside it looks like a result out of nowhere.
+                    if let Some(snippet) = &hit.snippet {
+                        println!("    {snippet}");
+                    }
                 }
                 println!(
-                    "\n{} result(s) in {} ms{}",
+                    "\n{} result(s) in {} ms, {} mode{}",
                     result.hits.len(),
                     result.elapsed_ms,
+                    mode_name(result.mode),
                     if result.partial { ", refining…" } else { "" }
                 );
             }
         }
+
+        Command::Explain { query, target } => {
+            let path = target
+                .canonicalize()
+                .unwrap_or(target)
+                .display()
+                .to_string();
+            let result: SearchExplainResult = client
+                .call(
+                    method::SEARCH_EXPLAIN,
+                    SearchExplainParams {
+                        query,
+                        mode: Default::default(),
+                        path: Some(path.clone()),
+                        id: None,
+                        prefix: None,
+                    },
+                )
+                .await?;
+
+            if args.json {
+                print_json(&result)?;
+            } else {
+                println!("{path}");
+                println!("  query      {:?} ({} mode)", result.query, mode_name(result.mode));
+                if let Some(expression) = &result.expression {
+                    println!("  lexical    {expression}");
+                }
+                println!(
+                    "  candidates {} from paths, {} from content",
+                    result.path_candidates, result.lexical_candidates
+                );
+                if let Some(score) = &result.score {
+                    println!(
+                        "  ranks      path {}, lexical {}, vector {}",
+                        rank_or_dash(score.path_rank),
+                        rank_or_dash(score.lexical_rank),
+                        rank_or_dash(score.vector_rank)
+                    );
+                    println!(
+                        "  score      fused {:.6} × salience {:.2} = {:.6}",
+                        score.fused, score.salience_boost, score.final_score
+                    );
+                }
+                println!();
+                for reason in &result.reasons {
+                    println!("  · {reason}");
+                }
+            }
+        }
+
+        Command::Extract { command } => match command {
+            Some(ExtractCommand::Requeue) => {
+                let result: ExtractRequeueResult = client
+                    .call(method::EXTRACT_REQUEUE, serde_json::json!({}))
+                    .await?;
+                if args.json {
+                    print_json(&result)?;
+                } else {
+                    println!("{} file(s) queued for extraction again", result.requeued);
+                }
+            }
+            None => {
+                let result: ExtractStatusResult = client
+                    .call(method::EXTRACT_STATUS, serde_json::json!({}))
+                    .await?;
+                if args.json {
+                    print_json(&result)?;
+                } else {
+                    print_extract_status(&result);
+                }
+            }
+        },
 
         Command::Index { path, recursive } => {
             let path = path
@@ -405,6 +522,58 @@ async fn run(args: Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn print_extract_status(status: &ExtractStatusResult) {
+    if !status.enabled {
+        // Rule R3 is opt-in, so an empty content root list is the default rather than a fault.
+        // Saying so plainly is the difference between "off" and "broken".
+        println!("extraction is off — no index.content_roots configured, so nothing is read");
+        println!("metadata indexing is unaffected; paths remain searchable");
+        return;
+    }
+
+    for root in &status.content_roots {
+        println!("root       {root}");
+    }
+    println!(
+        "queue      {} pending, {} done, {} skipped, {} failed",
+        status.pending, status.done, status.skipped, status.failed
+    );
+    println!("chunks     {} in the lexical index", status.chunks);
+    println!(
+        "this run   {} extracted, {} unchanged, {} chunks written, {} reused, {} deleted",
+        status.files_extracted,
+        status.files_unchanged,
+        status.chunks_written,
+        status.chunks_reused,
+        status.chunks_deleted
+    );
+    println!(
+        "budget     {:.0}% of one core ({}), busy {:.1}s so far",
+        status.cpu_share * 100.0,
+        if status.user_active { "user active" } else { "idle" },
+        status.busy_ms as f64 / 1000.0
+    );
+    if status.paused {
+        println!("state      PAUSED");
+    }
+}
+
+fn mode_name(mode: cortex_core::model::QueryMode) -> &'static str {
+    use cortex_core::model::QueryMode;
+    match mode {
+        QueryMode::Auto => "auto",
+        QueryMode::Locate => "locate",
+        QueryMode::Recall => "recall",
+        QueryMode::Temporal => "temporal",
+        QueryMode::Structural => "structural",
+        QueryMode::Deep => "deep",
+    }
+}
+
+fn rank_or_dash(rank: Option<u32>) -> String {
+    rank.map(|r| r.to_string()).unwrap_or_else(|| "-".into())
 }
 
 fn print_watch_status(status: &WatchStatusResult) {

@@ -35,17 +35,53 @@ const IDLE_POLL: Duration = Duration::from_millis(250);
 /// promptly rather than after the coalescing window.
 const MAX_SLEEP: Duration = Duration::from_millis(250);
 
+/// How many just-touched files may be waiting for priority extraction.
+///
+/// Bounded because it is a courtesy queue, not a work queue: everything in it is also in the
+/// database's own queue and will be extracted either way. Dropping the oldest entry when a burst
+/// overflows costs a little latency on one file and nothing else.
+const PRIORITY_QUEUE: usize = 512;
+
 /// Shared state the ingest loop publishes for the rest of the daemon to read.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct IngestState {
     pub watch_health: Mutex<Option<WatchHealth>>,
     pub last_reconcile: Mutex<Option<ReconcileReport>>,
+    /// Files a human just created or edited, for the extraction stage to take first.
+    ///
+    /// Without this, a file saved during a first index run waits behind the whole backlog —
+    /// measured at minutes on the reference corpus — because the queue is drained in index
+    /// order (see `Store::pending_extraction` for why it is not drained by recency).
+    priority: Mutex<std::collections::VecDeque<cortex_core::ids::NodeId>>,
+    /// Raised whenever something may have become extractable.
+    ///
+    /// The extraction stage backs off to a long sleep when its queue is empty, and this is what
+    /// wakes it. Polling instead cost 0.65 % of one core doing nothing — over the whole daemon's
+    /// idle budget, spent asking a question whose answer only changes when the watcher already
+    /// knows it has.
+    work_available: AtomicBool,
     /// Set by the kill switch. The loop keeps running but stops touching the index, so
     /// resuming does not mean rebuilding.
     pub paused: AtomicBool,
     /// Raised to ask for a reconcile at the next opportunity.
     resync_requested: AtomicBool,
     stop: AtomicBool,
+}
+
+impl Default for IngestState {
+    fn default() -> Self {
+        Self {
+            watch_health: Mutex::new(None),
+            last_reconcile: Mutex::new(None),
+            priority: Mutex::new(std::collections::VecDeque::new()),
+            // Signalled at construction: a daemon starting against an index full of pending
+            // files must not wait for a change that may never come.
+            work_available: AtomicBool::new(true),
+            paused: AtomicBool::new(false),
+            resync_requested: AtomicBool::new(false),
+            stop: AtomicBool::new(false),
+        }
+    }
 }
 
 impl IngestState {
@@ -65,6 +101,49 @@ impl IngestState {
     #[allow(dead_code)]
     pub fn set_paused(&self, paused: bool) {
         self.paused.store(paused, Ordering::Relaxed);
+    }
+
+    /// Shared by every background stage, so that one stop request ends all of them.
+    pub fn stop_requested(&self) -> bool {
+        self.stop.load(Ordering::Relaxed)
+    }
+
+    /// Note that a file was just touched, so extraction reaches it before the backlog.
+    pub fn prioritise(&self, node: cortex_core::ids::NodeId) {
+        {
+            let mut queue = self.priority.lock().unwrap();
+            if queue.len() >= PRIORITY_QUEUE {
+                queue.pop_front();
+            }
+            queue.push_back(node);
+        }
+        self.signal_work();
+    }
+
+    /// Tell the extraction stage that there may be something to do.
+    pub fn signal_work(&self) {
+        self.work_available.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether a signal is outstanding.
+    pub fn work_signalled(&self) -> bool {
+        self.work_available.load(Ordering::Relaxed)
+    }
+
+    /// Consume the signal.
+    ///
+    /// Cleared *before* the queue is read, never after: a signal arriving while the query runs
+    /// must survive it. Clearing afterwards would drop exactly the file that was created during
+    /// the query, and it would look like the watcher had missed it.
+    pub fn clear_work_signal(&self) {
+        self.work_available.store(false, Ordering::Relaxed);
+    }
+
+    /// Take up to `limit` files off the priority queue.
+    pub fn take_prioritised(&self, limit: usize) -> Vec<cortex_core::ids::NodeId> {
+        let mut queue = self.priority.lock().unwrap();
+        let take = limit.min(queue.len());
+        queue.drain(..take).collect()
     }
 }
 
@@ -142,7 +221,7 @@ impl Ingest {
         let reconcile_interval = Duration::from_secs(self.config.index.reconcile_interval_secs);
         let mut next_reconcile = Instant::now() + reconcile_interval;
 
-        while !self.state.stop.load(Ordering::Relaxed) {
+        while !self.state.stop_requested() {
             let now = Instant::now();
 
             match watcher.read_events() {
@@ -186,12 +265,12 @@ impl Ingest {
     /// Degraded mode: no watcher, so reconciliation is the only source of truth.
     fn reconcile_loop_without_watcher(&self, roots: &[PathBuf]) {
         let interval = Duration::from_secs(self.config.index.reconcile_interval_secs);
-        while !self.state.stop.load(Ordering::Relaxed) {
+        while !self.state.stop_requested() {
             for root in roots {
                 self.run_reconcile(root);
             }
             let deadline = Instant::now() + interval;
-            while Instant::now() < deadline && !self.state.stop.load(Ordering::Relaxed) {
+            while Instant::now() < deadline && !self.state.stop_requested() {
                 std::thread::sleep(MAX_SLEEP);
             }
         }
@@ -220,6 +299,8 @@ impl Ingest {
             // would be more error-prone than rebuilding it from what the database now says.
             self.rebuild_index();
             self.refresh_structure();
+            // Added or updated files are pending extraction now, and the stage may be asleep.
+            self.state.signal_work();
         }
 
         *self.state.last_reconcile.lock().unwrap() = Some(report);
@@ -453,6 +534,11 @@ impl Ingest {
 
         match self.store.upsert_node(&record, unix_now()) {
             Ok(id) => {
+                if !is_dir {
+                    // A file that just changed is the one somebody is most likely to search for
+                    // in the next minute. Directories have no content to extract.
+                    self.state.prioritise(id);
+                }
                 let _ = self.store.append_episode(
                     unix_now(),
                     &Actor::System,

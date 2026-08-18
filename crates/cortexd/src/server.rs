@@ -1,16 +1,21 @@
 //! The JSON-RPC server: accept loop and method dispatch.
 
+use crate::activity::Activity;
+use crate::extract_stage::ExtractStats;
 use crate::indexer;
 use crate::ingest::IngestState;
 use cortex_core::config::Config;
 use cortex_core::ids::{NodeId, SessionId};
-use cortex_core::model::{Action, Actor, NodeKind, ScoreBreakdown, SearchHit, Tier};
+use cortex_core::model::{Action, Actor, QueryMode};
+use cortex_ingest::throttle;
+use cortex_query::search;
 use cortex_query::PathIndex;
 use cortex_rpc::protocol::{
-    method, EpisodeAppendParams, EpisodesRecentParams, EpisodesRecentResult, IndexPathParams,
-    IndexPathResult, NodeGetParams, NodeGetResult, PingResult, ReconcileParams, ReconcileResult,
-    ReconcileSummary, Request, Response, RpcError, SearchParams, SearchResult, StatusResult,
-    WatchStatusResult, ZoneInfo, ZoneSetColorParams, ZonesListResult,
+    method, ActivityPingResult, EpisodeAppendParams, EpisodesRecentParams, EpisodesRecentResult,
+    ExtractRequeueResult, ExtractStatusResult, IndexPathParams, IndexPathResult, NodeGetParams,
+    NodeGetResult, PingResult, ReconcileParams, ReconcileResult, ReconcileSummary, Request,
+    Response, RpcError, SearchExplainParams, SearchExplainResult, SearchParams, SearchResult,
+    StatusResult, WatchStatusResult, ZoneInfo, ZoneSetColorParams, ZonesListResult,
 };
 use cortex_rpc::transport;
 use cortex_store::Store;
@@ -27,6 +32,9 @@ pub struct Daemon {
     pub store: Arc<Store>,
     pub index: Arc<RwLock<PathIndex>>,
     pub ingest: Arc<IngestState>,
+    /// When a human was last known to be present. Drives the extraction stage's CPU share.
+    pub activity: Arc<Activity>,
+    pub extract_stats: Arc<ExtractStats>,
     pub config: Config,
     pub database_path: PathBuf,
     pub started: Instant,
@@ -39,6 +47,8 @@ impl Daemon {
         store: Arc<Store>,
         index: Arc<RwLock<PathIndex>>,
         ingest: Arc<IngestState>,
+        activity: Arc<Activity>,
+        extract_stats: Arc<ExtractStats>,
         config: Config,
         database_path: PathBuf,
     ) -> Self {
@@ -46,6 +56,8 @@ impl Daemon {
             store,
             index,
             ingest,
+            activity,
+            extract_stats,
             config,
             database_path,
             started: Instant::now(),
@@ -102,39 +114,67 @@ impl Daemon {
         }
     }
 
-    /// Build search hits from the in-memory path index.
+    /// Run a query across every arm.
     ///
-    /// The database is consulted only for the handful of rows that survived ranking. Reading
-    /// tier and salience for a hundred thousand candidates in order to display fifty of them
-    /// would undo everything the index is for.
-    fn search_paths(&self, query: &str, limit: usize) -> Vec<SearchHit> {
-        let hits = self.index.read().unwrap().search(query, limit);
+    /// The read lock on the path index is held for the length of the search. That is deliberate:
+    /// a rebuild swapping the index mid-query would mix ranks from two different corpora, and
+    /// the lock is uncontended except during a reconcile.
+    fn run_search(&self, params: &SearchParams) -> search::Outcome {
+        let index = self.index.read().unwrap();
+        search::run(search::Params {
+            store: &self.store,
+            index: &index,
+            requested_mode: params.mode,
+            raw_query: &params.query,
+            limit: params.limit.unwrap_or(self.config.search.default_limit),
+            // Typing is the default assumption: results should appear while a word is still
+            // half written. A caller that wants exact matching says so.
+            prefix: params.prefix.unwrap_or(true),
+            candidates_per_arm: self.config.search.candidates_per_arm,
+            rrf_k: self.config.search.rrf_k,
+            max_salience_boost: self.config.search.max_salience_boost,
+        })
+    }
 
-        hits.into_iter()
-            .enumerate()
-            .map(|(rank, hit)| {
-                let node = self.store.node_by_id(hit.node_id).ok().flatten();
-                SearchHit {
-                    node_id: hit.node_id,
-                    path: PathBuf::from(&hit.path),
-                    kind: node.as_ref().map(|n| n.kind).unwrap_or(NodeKind::File),
-                    tier: node.as_ref().map(|n| n.tier).unwrap_or(Tier::Stm),
-                    zone_id: node.as_ref().and_then(|n| n.zone_id),
-                    snippet: None,
-                    score: ScoreBreakdown {
-                        path_rank: Some(rank as u32 + 1),
-                        lexical_rank: None,
-                        vector_rank: None,
-                        fused: hit.score as f64,
-                        salience_boost: 1.0,
-                        rerank: None,
-                        final_score: hit.score as f64,
-                    },
-                }
-            })
-            .collect()
+    fn extract_status(&self) -> Result<ExtractStatusResult, RpcError> {
+        let progress = self.store.extract_progress().map_err(internal)?;
+        let idle = self.activity.idle_for();
+        let active = idle < std::time::Duration::from_secs(self.config.resources.idle_after_secs);
+        let stats = &self.extract_stats;
+        use std::sync::atomic::Ordering;
+
+        Ok(ExtractStatusResult {
+            enabled: !self.config.index.content_roots.is_empty(),
+            content_roots: self
+                .config
+                .index
+                .content_roots
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect(),
+            pending: progress.pending,
+            done: progress.done,
+            skipped: progress.skipped,
+            failed: progress.failed,
+            chunks: progress.chunks,
+            files_extracted: stats.files_extracted.load(Ordering::Relaxed),
+            files_unchanged: stats.files_unchanged.load(Ordering::Relaxed),
+            chunks_written: stats.chunks_written.load(Ordering::Relaxed),
+            chunks_reused: stats.chunks_reused.load(Ordering::Relaxed),
+            chunks_deleted: stats.chunks_deleted.load(Ordering::Relaxed),
+            busy_ms: stats.busy_us.load(Ordering::Relaxed) / 1000,
+            idle_secs: idle.as_secs(),
+            user_active: active,
+            cpu_share: throttle::share_for(
+                active,
+                self.config.resources.cpu_share_active,
+                self.config.resources.cpu_share_idle,
+            ),
+            paused: self.ingest.is_paused(),
+        })
     }
 }
+
 
 /// Bind the Unix socket.
 ///
@@ -291,10 +331,13 @@ async fn dispatch(
 
         method::SEARCH => {
             let params: SearchParams = parse(params)?;
-            let limit = params.limit.unwrap_or(daemon.config.search.default_limit);
             let started = Instant::now();
 
-            let hits = daemon.search_paths(&params.query, limit);
+            // A search arriving over the socket is evidence that somebody typed it. That is the
+            // only activity signal a headless daemon can trust, and it is a good one.
+            daemon.activity.ping();
+
+            let outcome = daemon.run_search(&params);
 
             // Searching is itself an episode. Without this, "what was I looking for on
             // Tuesday" has nothing to answer from.
@@ -304,13 +347,112 @@ async fn dispatch(
                 Action::Search,
                 None,
                 None,
-                &serde_json::json!({ "query": params.query, "mode": params.mode }),
+                &serde_json::json!({
+                    "query": outcome.query,
+                    "mode": outcome.mode,
+                    "hits": outcome.hits.len(),
+                }),
             );
 
             json(SearchResult {
-                hits,
+                hits: outcome.hits,
+                mode: outcome.mode,
                 elapsed_ms: started.elapsed().as_millis() as u64,
+                // The cross-encoder is the only thing that would arrive later, and it belongs
+                // to M2's second half.
                 partial: false,
+            })
+        }
+
+        method::SEARCH_EXPLAIN => {
+            let params: SearchExplainParams = parse(params)?;
+            let node = match (params.id, params.path.as_deref()) {
+                (Some(id), _) => daemon.store.node_by_id(id).map_err(internal)?,
+                (None, Some(path)) => daemon
+                    .store
+                    .node_by_path(Path::new(path))
+                    .map_err(internal)?,
+                (None, None) => {
+                    return Err(RpcError::invalid_params("either `id` or `path` is required"))
+                }
+            };
+
+            // Explaining runs the same search rather than a reconstruction of it. A second
+            // implementation would eventually explain something the search does not do.
+            let outcome = daemon.run_search(&SearchParams {
+                query: params.query.clone(),
+                mode: params.mode,
+                // The whole list is needed: a node ranked fortieth still has a rank, and
+                // "not in the top ten" is not an explanation.
+                limit: Some(daemon.config.search.candidates_per_arm),
+                prefix: params.prefix,
+            });
+
+            let (rank, score) = match &node {
+                Some(node) => search::explain(&outcome, node.id),
+                None => (None, None),
+            };
+
+            let chunks = match &node {
+                Some(node) => daemon
+                    .store
+                    .chunks_for_node(node.id)
+                    .map_err(internal)?
+                    .len(),
+                None => 0,
+            };
+            let extract = match params.path.as_deref() {
+                Some(path) => daemon
+                    .store
+                    .extract_note(Path::new(path))
+                    .map_err(internal)?,
+                None => match &node {
+                    Some(node) => daemon
+                        .store
+                        .extract_note(&node.path)
+                        .map_err(internal)?,
+                    None => None,
+                },
+            };
+
+            let reasons = explain_reasons(
+                &outcome,
+                node.as_ref(),
+                rank,
+                chunks,
+                extract.as_ref().map(|(state, note)| (*state, note.clone())),
+            );
+
+            json(SearchExplainResult {
+                query: outcome.query.clone(),
+                mode: outcome.mode,
+                expression: outcome.expression.clone(),
+                node,
+                rank,
+                score,
+                path_candidates: outcome.path_candidates,
+                lexical_candidates: outcome.lexical_candidates,
+                extract_state: extract.as_ref().map(|(state, _)| state.as_str().to_string()),
+                extract_note: extract.and_then(|(_, note)| note),
+                chunks,
+                reasons,
+            })
+        }
+
+        method::EXTRACT_STATUS => json(daemon.extract_status()?),
+
+        method::EXTRACT_REQUEUE => {
+            let requeued = daemon.store.requeue_extraction().map_err(internal)?;
+            // The stage may be in its long idle sleep; it changed nothing on the filesystem, so
+            // nothing else would ever tell it.
+            daemon.ingest.signal_work();
+            json(ExtractRequeueResult { requeued })
+        }
+
+        method::ACTIVITY_PING => {
+            daemon.activity.ping();
+            json(ActivityPingResult {
+                idle_secs: daemon.activity.idle_for().as_secs(),
             })
         }
 
@@ -520,4 +662,79 @@ fn json<T: serde::Serialize>(value: T) -> Result<serde_json::Value, RpcError> {
 
 fn internal<E: std::fmt::Display>(e: E) -> RpcError {
     RpcError::internal(e.to_string())
+}
+
+/// Turn a search outcome into sentences a person can act on.
+///
+/// The ordering matters: the first thing said should be the thing that is wrong. "Not indexed"
+/// makes every other observation irrelevant, and "extraction skipped it" explains an empty
+/// content arm better than any score ever could.
+fn explain_reasons(
+    outcome: &search::Outcome,
+    node: Option<&cortex_core::model::Node>,
+    rank: Option<u32>,
+    chunks: usize,
+    extract: Option<(cortex_core::model::ExtractState, Option<String>)>,
+) -> Vec<String> {
+    use cortex_core::model::ExtractState;
+
+    let mut reasons = Vec::new();
+
+    let Some(node) = node else {
+        reasons.push("this path is not in the index at all".to_string());
+        return reasons;
+    };
+
+    match rank {
+        Some(rank) => reasons.push(format!("ranked {rank} for this query")),
+        None => reasons.push("did not appear in the results for this query".to_string()),
+    }
+
+    if outcome.mode == QueryMode::Locate {
+        reasons.push(
+            "the query was answered from paths alone; prefix it with `recall:` to search content"
+                .to_string(),
+        );
+    } else if outcome.expression.is_none() {
+        reasons.push("the query had no searchable words, so the content arm did not run".to_string());
+    }
+
+    // A directory is never a candidate for extraction, so its state stays `pending` for ever.
+    // Reporting that as "not reached yet" would send somebody looking for a stalled queue.
+    if node.kind == cortex_core::model::NodeKind::Dir {
+        reasons.push("a directory has no content of its own; only its name is searchable".to_string());
+        return reasons;
+    }
+
+    match extract {
+        Some((ExtractState::Pending, _)) => {
+            reasons.push("content extraction has not reached this file yet".to_string())
+        }
+        Some((ExtractState::Skipped, note)) => reasons.push(format!(
+            "content was not read: {}",
+            note.unwrap_or_else(|| "no reason recorded".into())
+        )),
+        Some((ExtractState::Failed, note)) => reasons.push(format!(
+            "content extraction failed: {}",
+            note.unwrap_or_else(|| "no reason recorded".into())
+        )),
+        Some((ExtractState::Done, note)) => {
+            if chunks == 0 {
+                reasons.push("extracted, but produced no chunks — the file has no text".to_string());
+            }
+            if let Some(note) = note {
+                reasons.push(note);
+            }
+        }
+        None => {}
+    }
+
+    if chunks > 0 {
+        reasons.push(format!("{chunks} chunk(s) in the lexical index"));
+    }
+    if node.salience == 0.0 {
+        reasons.push("salience is zero, so no boost was applied (the salience engine is M5)".to_string());
+    }
+
+    reasons
 }

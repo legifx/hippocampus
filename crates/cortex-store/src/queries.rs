@@ -69,6 +69,15 @@ pub struct Batch<'a> {
 }
 
 impl Batch<'_> {
+    /// The transaction this batch runs in.
+    ///
+    /// Visible to sibling modules so that chunk writes share one commit barrier with the node
+    /// write that caused them — a document produces tens of chunks, and committing each of
+    /// them separately is the cost this whole type exists to avoid.
+    pub(crate) fn tx(&self) -> &rusqlite::Connection {
+        self.tx
+    }
+
     pub fn upsert_node(&self, node: &NodeUpsert, now: i64) -> Result<NodeId> {
         upsert_node_on(self.tx, node, now)
     }
@@ -264,6 +273,20 @@ impl Store {
     }
 
     /// Set a node's parent, linking it into the directory graph.
+    /// Set a node's salience.
+    ///
+    /// The salience *engine* is M5. The column and this writer exist now because ranking
+    /// already consumes salience, and a signal that nothing can write is a signal nothing can
+    /// test — the difference between "the boost is applied correctly" and "the boost is always
+    /// one, so it cannot be wrong".
+    pub fn set_salience(&self, node: NodeId, salience: f64) -> Result<()> {
+        self.conn().execute(
+            "UPDATE nodes SET salience = ?2 WHERE id = ?1",
+            params![node.0, salience.clamp(0.0, 1.0)],
+        )?;
+        Ok(())
+    }
+
     pub fn set_parent(&self, child: NodeId, parent: Option<NodeId>) -> Result<()> {
         let conn = self.conn();
         conn.execute(
@@ -534,6 +557,12 @@ fn upsert_node_on(conn: &rusqlite::Connection, node: &NodeUpsert, now: i64) -> R
              -- A bulk caller passes no zone; keeping the existing one stops a metadata
              -- refresh from wiping an assignment it simply had no opinion about.
              zone_id   = coalesce(excluded.zone_id, nodes.zone_id),
+             -- A file whose size or mtime moved has to be read again; one whose stat is
+             -- unchanged must not be, or every reconcile would re-queue the entire index and
+             -- extraction would never reach a steady state.
+             extract_state = CASE
+                 WHEN nodes.size != excluded.size OR nodes.mtime != excluded.mtime
+                 THEN 'pending' ELSE nodes.extract_state END,
              last_seen = excluded.last_seen",
         params![
             node.kind.as_str(),
@@ -671,7 +700,7 @@ fn row_to_episode(row: &Row<'_>) -> rusqlite::Result<Result<Episode>> {
 ///
 /// A lossy conversion would produce an index entry that can never be matched back to the real
 /// file, which is worse than declining to index it and saying so.
-fn path_to_str(path: &Path) -> Result<&str> {
+pub(crate) fn path_to_str(path: &Path) -> Result<&str> {
     path.to_str().ok_or_else(|| {
         StoreError::corrupt(format!("path is not valid UTF-8: {}", path.display()))
     })

@@ -173,7 +173,7 @@ fn assemble(text: &str, boundaries: Vec<usize>) -> Vec<Chunk> {
     let mut chunks: Vec<Chunk> = Vec::new();
     let mut pending: Option<(usize, usize)> = None;
 
-    let mut flush = |start: usize, end: usize, chunks: &mut Vec<Chunk>| {
+    let flush = |start: usize, end: usize, chunks: &mut Vec<Chunk>| {
         for (piece_start, piece_end) in hard_split(text, start, end) {
             let body = &text[piece_start..piece_end];
             if body.trim().is_empty() {
@@ -276,7 +276,7 @@ fn overlap_start(text: &str, previous: Option<&Chunk>, start: usize) -> usize {
 }
 
 /// Largest character boundary at or below `index`.
-fn floor_char_boundary(text: &str, index: usize) -> usize {
+pub(crate) fn floor_char_boundary(text: &str, index: usize) -> usize {
     let mut index = index.min(text.len());
     while index > 0 && !text.is_char_boundary(index) {
         index -= 1;

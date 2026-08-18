@@ -9,6 +9,8 @@ description = "Retrieval for the Cortex daemon: path index, fuzzy matching, fusi
 
 [dependencies]
 cortex-core.workspace = true
+cortex-store.workspace = true
+cortex-extract.workspace = true
 serde.workspace = true
 tracing.workspace = true
 

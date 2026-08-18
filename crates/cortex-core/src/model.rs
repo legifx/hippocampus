@@ -223,6 +223,48 @@ pub struct SearchHit {
     pub score: ScoreBreakdown,
 }
 
+/// How far content extraction has got with a file.
+///
+/// Stored on the node so the extraction queue can be *resumed* rather than recomputed. Without
+/// it, every restart would have to re-classify the whole index to find out what is left to do,
+/// which on a large corpus is the same cost as extracting again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtractState {
+    /// Never looked at, or the file changed since it was.
+    Pending,
+    /// Extracted and chunked. Says nothing about how much text was found — a file may legally
+    /// produce zero chunks.
+    Done,
+    /// Deliberately not read: denied, outside the content roots, binary, or too large. This is
+    /// a normal outcome, not a failure, and it must not be retried on every pass.
+    Skipped,
+    /// Reading was attempted and did not work. Distinguished from `Skipped` because a failure
+    /// is worth retrying after the file changes, and worth reporting when it does not.
+    Failed,
+}
+
+impl ExtractState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ExtractState::Pending => "pending",
+            ExtractState::Done => "done",
+            ExtractState::Skipped => "skipped",
+            ExtractState::Failed => "failed",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "pending" => ExtractState::Pending,
+            "done" => ExtractState::Done,
+            "skipped" => ExtractState::Skipped,
+            "failed" => ExtractState::Failed,
+            _ => return None,
+        })
+    }
+}
+
 /// Which retrieval strategy a query asks for.
 ///
 /// The mode is guessed heuristically and can be forced with a prefix. `Locate` is roughly
@@ -230,8 +272,12 @@ pub struct SearchHit {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum QueryMode {
-    /// Path and name, purely lexical.
+    /// Not specified: let the daemon detect it. The default, and what every client sends
+    /// unless the user forced a mode, because the heuristic belongs in one place rather than
+    /// in each client.
     #[default]
+    Auto,
+    /// Path and name, purely lexical.
     Locate,
     /// Semantic recall — pattern completion from a fragment.
     Recall,
@@ -275,6 +321,16 @@ mod tests {
         }
         for tier in [Tier::Working, Tier::Stm, Tier::Ltm, Tier::Cold] {
             assert_eq!(Tier::parse(tier.as_str()), Some(tier));
+        }
+        for state in [
+            ExtractState::Pending,
+            ExtractState::Done,
+            ExtractState::Skipped,
+            ExtractState::Failed,
+        ] {
+            // These strings are also a CHECK constraint in migration 0002, so a typo here is
+            // not a display bug — it is an insert that the database refuses at runtime.
+            assert_eq!(ExtractState::parse(state.as_str()), Some(state));
         }
         for action in [
             Action::Create,

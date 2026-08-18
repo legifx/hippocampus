@@ -8,7 +8,7 @@
 //! `socat` and needs no length-prefix state machine.
 
 use cortex_core::ids::NodeId;
-use cortex_core::model::{Episode, Node, QueryMode, SearchHit};
+use cortex_core::model::{Episode, Node, QueryMode, ScoreBreakdown, SearchHit};
 use serde::{Deserialize, Serialize};
 
 /// JSON-RPC 2.0 request.
@@ -139,6 +139,10 @@ pub mod method {
     pub const EPISODE_APPEND: &str = "episode.append";
     pub const EPISODES_RECENT: &str = "episodes.recent";
     pub const INDEX_PATH: &str = "index.path";
+    pub const SEARCH_EXPLAIN: &str = "search.explain";
+    pub const EXTRACT_STATUS: &str = "extract.status";
+    pub const EXTRACT_REQUEUE: &str = "extract.requeue";
+    pub const ACTIVITY_PING: &str = "activity.ping";
     pub const WATCH_STATUS: &str = "watch.status";
     pub const ZONES_LIST: &str = "zones.list";
     pub const ZONE_SET_COLOR: &str = "zone.set_color";
@@ -154,6 +158,10 @@ pub mod method {
         EPISODE_APPEND,
         EPISODES_RECENT,
         INDEX_PATH,
+        SEARCH_EXPLAIN,
+        EXTRACT_STATUS,
+        EXTRACT_REQUEUE,
+        ACTIVITY_PING,
         WATCH_STATUS,
         ZONES_LIST,
         ZONE_SET_COLOR,
@@ -266,20 +274,109 @@ pub struct StatusResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchParams {
     pub query: String,
+    /// `Auto` — the default — lets the daemon detect the mode, so the heuristic lives in one
+    /// place instead of in every client.
     #[serde(default)]
     pub mode: QueryMode,
     #[serde(default)]
     pub limit: Option<usize>,
+    /// Treat the last word as a prefix, which is what makes results appear while the user is
+    /// still typing. Defaults to true; a benchmark or a goldset run turns it off to measure
+    /// exact matching.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
     pub hits: Vec<SearchHit>,
+    /// The mode that actually ran. Not necessarily the one that was asked for: `Auto` is
+    /// resolved server-side, and a mode whose machinery is not built yet degrades to one that
+    /// is. A client that shows the mode must show this one.
+    pub mode: QueryMode,
     /// Milliseconds spent server-side. The latency budgets are the specification, so the
     /// protocol reports the number rather than making clients guess it.
     pub elapsed_ms: u64,
     /// True when a later, better-ranked update is still coming (reranking, from M2).
     pub partial: bool,
+}
+
+/// Why a particular node ranked where it did — or did not appear at all.
+///
+/// Without this the search is neither debuggable nor trustworthy: "it did not find my file" has
+/// half a dozen causes, and only the daemon can tell them apart.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchExplainParams {
+    pub query: String,
+    #[serde(default)]
+    pub mode: QueryMode,
+    /// The node to explain, by path or by id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<NodeId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchExplainResult {
+    /// The query as it was searched, after any mode prefix was stripped.
+    pub query: String,
+    pub mode: QueryMode,
+    /// The FTS5 expression the content arm ran, when it ran one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expression: Option<String>,
+    pub node: Option<Node>,
+    /// Position in the result list, one-based. `None` when it did not make the list.
+    pub rank: Option<u32>,
+    pub score: Option<ScoreBreakdown>,
+    pub path_candidates: usize,
+    pub lexical_candidates: usize,
+    pub extract_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extract_note: Option<String>,
+    pub chunks: usize,
+    /// Plain sentences, in the order they should be read. The point of the whole method.
+    pub reasons: Vec<String>,
+}
+
+/// How far content extraction has got. The counterpart to `watch.status` for the replay stage.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtractStatusResult {
+    /// False when no content root is configured, in which case nothing is extracted at all —
+    /// the default, and rule R3's whole point.
+    pub enabled: bool,
+    pub content_roots: Vec<String>,
+    pub pending: i64,
+    pub done: i64,
+    pub skipped: i64,
+    pub failed: i64,
+    pub chunks: i64,
+    /// Counters since this daemon started.
+    pub files_extracted: u64,
+    pub files_unchanged: u64,
+    pub chunks_written: u64,
+    pub chunks_reused: u64,
+    pub chunks_deleted: u64,
+    pub busy_ms: u64,
+    /// Seconds since a client last reported human activity. Drives the CPU share.
+    pub idle_secs: u64,
+    /// Whether the daemon currently considers a human present. Sent rather than derived,
+    /// because the threshold is configuration the client does not have.
+    pub user_active: bool,
+    pub cpu_share: f64,
+    pub paused: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtractRequeueResult {
+    pub requeued: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActivityPingResult {
+    pub idle_secs: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -395,12 +492,24 @@ mod tests {
     }
 
     #[test]
-    fn search_params_default_to_locate_mode() {
-        // Locate is roughly ninety per cent of real usage and the cheapest path, so it is the
-        // default a client gets when it says nothing.
+    fn search_params_default_to_letting_the_daemon_choose_the_mode() {
+        // `Auto`, not `Locate`. A client that says nothing wants the best answer, and the
+        // heuristic that decides what that means belongs in the daemon — one implementation
+        // rather than one per client.
         let params: SearchParams = serde_json::from_str(r#"{"query":"foo"}"#).unwrap();
-        assert_eq!(params.mode, QueryMode::Locate);
+        assert_eq!(params.mode, QueryMode::Auto);
         assert!(params.limit.is_none());
+        assert!(params.prefix.is_none(), "prefix matching is decided server-side too");
+    }
+
+    #[test]
+    fn a_client_built_before_the_content_arm_still_parses() {
+        // The M1 wire format, verbatim. Adding fields to a shared type is only safe while old
+        // messages keep working, and that is worth an assertion rather than an assumption.
+        let params: SearchParams =
+            serde_json::from_str(r#"{"query":"foo","mode":"locate","limit":10}"#).unwrap();
+        assert_eq!(params.mode, QueryMode::Locate);
+        assert_eq!(params.limit, Some(10));
     }
 
     #[test]

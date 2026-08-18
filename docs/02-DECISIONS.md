@@ -387,3 +387,97 @@ portable format; vectors are an implementation detail of whoever searches them.
 
 **Revisit if:** both ends are ever deliberately standardised on one model. Then shipping
 vectors becomes a pure optimisation and can be added without protocol changes.
+
+---
+
+### D22 — User activity is signalled by clients, and the expensive stages run on a duty cycle
+**Status:** ACCEPTED
+
+The extraction stage — and later the embedder — must yield when the user is active (M2 scope,
+resource budgets). Two parts to that: knowing when the user is active, and yielding.
+
+**Knowing.** Activity is *signalled*, never sniffed. Any client that knows a human is present
+calls `activity.ping`; an interactive request such as `search` counts as its own signal, because
+somebody typed it. The daemon reads no input devices, connects to no compositor and infers
+nothing from filesystem traffic.
+
+**Why:** reading `/dev/input` needs a privilege this daemon must never hold and exposes
+keystrokes it must never see. Asking the compositor makes a headless daemon depend on a
+graphical session. Inferring activity from filesystem events mistakes a background download for
+a person. A signal is the only source that is both accurate and free of privilege.
+
+**Consequence:** a daemon nobody has spoken to treats the machine as idle and uses the idle
+budget. That is correct for a headless install and is corrected the moment an interactive client
+connects. The GUI (M4) must ping on interaction, and that is now a requirement on it rather than
+an optimisation.
+
+**Yielding.** A duty cycle, not a scheduler priority: work runs in bounded slices with a pause
+of `worked × (1 − share) / share` between them. `nice` is applied as well but is not sufficient
+on its own — it yields CPU while doing nothing about page cache pressure or disk queue depth,
+which is what the user actually notices during a first index run.
+
+The share is a share **of one core**, because the stage is single-threaded. On the reference
+workstation that makes the default active share about one per cent of the machine. When
+extraction or embedding becomes parallel, the share must be divided across the workers rather
+than reinterpreted.
+
+**Revisit if:** a Wayland idle protocol (`ext-idle-notify-v1`) becomes available to a client that
+is *already* running for other reasons — the GUI. It would then ping on the compositor's behalf,
+which is the same signal from a better source, and needs no change here.
+
+---
+
+### D23 — The benchmark corpus must obey Zipf's law, and its content is seeded per path
+**Status:** ACCEPTED
+
+The generated corpus writes real content by default, drawn from a 20 000-word vocabulary sampled
+Zipfian, with the searchable domain vocabulary placed at rank 1 000 and function words at the
+head. Content is generated from a generator seeded by the file's own path, independent of the
+stream that names files.
+
+**Why:** the M1 corpus filled every file with sentences drawn from a list of sixteen, which was
+right for a benchmark that only indexed paths and actively misleading for one that measures
+retrieval. Every term occurred in almost every document, so a BM25 query had to score a third of
+the corpus: **44 ms against a 30 ms budget, caused entirely by the input not being text.** With a
+realistic distribution the same code measures 15 ms. Neither number was a property of the
+retrieval code; the first was a property of the corpus.
+
+Seeding content per path keeps the tree identical whether or not content is written. Without
+that, enabling content consumed draws from the naming generator and produced a different corpus,
+so the path numbers from one mode could not be compared with the other.
+
+**Consequence:** benchmark numbers from M0 and M1 were measured against a different corpus and
+are not directly comparable with M2's. The path gates were re-measured rather than carried
+forward. The corpus is now ~450 MB on disk instead of ~45 MB.
+
+**Also:** the pathological case did not disappear, it stopped being the *typical* case. A query
+for a stopword still scores every match — measured and reported by `bench-latency` on every run
+so that it stays visible rather than being hidden by a better corpus.
+
+**Revisit if:** retrieval ever needs to be tuned against a distribution this generator cannot
+produce. The answer then is a second preset, not a change to this one — a corpus that changes is
+a benchmark that cannot be compared with itself.
+
+---
+
+### D24 — `Auto` is the default query mode, and an unbuilt mode degrades visibly
+**Status:** ACCEPTED
+
+`QueryMode::Auto` means "the daemon decides", and it is what every client sends unless the user
+forced a mode. Detection is a heuristic over the query text, overridable by a prefix
+(`locate:`, `recall:`, `when:`, `graph:`, `deep:`). Modes whose machinery does not exist yet —
+`temporal`, `structural`, `deep` — run as `recall`, and the response states the mode that
+actually ran.
+
+**Why:** the heuristic has to live somewhere, and one implementation in the daemon is better than
+one per client that each drift. Reporting the effective mode is what keeps a degradation from
+becoming a lie: a client can show "searched content" rather than claiming it searched episodes.
+
+**The heuristic itself:** a query is `locate` when it looks like a location — a path separator, a
+leading dot or tilde, or a single token with a plausible file extension. Everything else is
+`recall`, which searches paths *and* content. Erring towards content is deliberate: a single
+remembered word from inside a document is exactly the case where a file manager's search
+normally gives up.
+
+**Revisit if:** the M2 goldset shows the heuristic mislabelling queries. It is one function with
+its own tests, and the goldset is the instrument that would show it.

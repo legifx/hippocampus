@@ -10,62 +10,74 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | M2 — Meaning |
-| **Status** | M2 started. The extraction layer is built and tested but **not yet wired into anything**. See "Where M2 stands" below. |
+| **Status** | First half of M2 done: content is extracted, chunked, indexed and searchable end to end, with fusion, snippets and explainability. The models are not started. |
 | **Last updated** | 2026-08-18 |
 | **Blocked on** | nothing |
 
 ## Where M2 stands — read this first
 
 M2 is being built in two halves. The first half is **meaning without models**: everything that
-makes content searchable using no machine learning at all. The second half is the models. This
-ordering is deliberate and follows the same discipline as M0 and M1 — if lexical search over
-extracted content is not good, no embedding will rescue it, and the models are by far the
-heaviest dependency in the project.
+makes content searchable using no machine learning at all. The second half is the models. The
+ordering is deliberate — if lexical search over extracted content is not good, no embedding will
+rescue it, and the models are by far the heaviest dependency in the project.
 
-### Done, tested, and green (275 tests across the workspace)
+**The first half is done and running.** On the reference corpus the daemon extracts 100 000
+files into 122 137 chunks in about 26 seconds of work, and a word that appears only *inside* a
+file is findable in roughly 15 ms. Everything below is what remains.
 
-**`cortex-extract`** — a new crate with three modules:
+### Done, tested, and green (377 tests across the workspace)
 
-- `classify` — decides what a file is and whether it may be read. Magic bytes for binary
-  formats; content sniffing for text, because plain text has no magic number; the extension is
-  consulted **only** to choose between text handlers, never to decide readability. Enforces
-  rule R1 (deny-list) and rule R3 (content roots) before anything opens a file.
-- `extract` — bounded, lossy-decoding text extraction. Truncation is reported rather than
-  silent, never cuts a character in half, and a byte-order mark is stripped.
-- `chunk` — structure-aware chunking: Markdown at headings (not inside fenced blocks), code at
-  top-level definitions, prose at paragraphs. Overlap of 15 %, BLAKE3 hash per chunk, byte
-  offsets that address the original text exactly.
+- **`cortex-extract`** — `classify`, `extract`, `chunk` from the previous session, plus
+  `pipeline` (one file in, one decision out, including the content-hash short circuit) and
+  `snippet` (re-reads a chunk from the file and refuses to quote it if the hash disagrees).
+- **`cortex-store::chunks`** — chunk writes that *diff* rather than replace: a chunk whose hash
+  is unchanged keeps its row, its id and therefore its future embedding. Also the extraction
+  queue, the state counters, and the BM25 query.
+- **`cortex-query`** — `lexical` (FTS5 expression building that user input cannot break),
+  `mode` (heuristic detection with prefix override, D24), `fusion` (RRF, salience boost,
+  best-chunk-per-document) and `search` (the orchestrator, which lives here rather than in the
+  daemon so the benchmark measures the code that ships).
+- **`cortex-ingest::throttle`** — the duty-cycle arithmetic, clock-free and exactly testable.
+- **`cortexd`** — the extraction stage on its own thread, the activity signal (D22), and the
+  RPC surface for all of it.
+- **CLI** — `cortex search` now shows snippets, `cortex explain` says why something ranked where
+  it did or why it did not appear, `cortex extract` shows the queue and the CPU budget.
+- **Benchmarks** — BM25 and fusion are gated; the corpus generator writes realistic prose (D23).
 
-**Migration 0002** — rebuilds `chunks_fts` with `contentless_delete=1`, which is what lets a
-contentless FTS index delete rows without being handed the original text back. Adds
-`nodes.extract_state` and `nodes.extract_note`.
+### Not done — the second half of M2
 
-### Not done — and the first thing to notice
+1. **The embedder.** `multilingual-e5-small` via ONNX Runtime, CUDA with CPU fallback, batched,
+   model fetched by an explicit user action and checksum-verified (D6, R5). Model id and version
+   stored per chunk. The chunk-hash short circuit already exists and is measured, so the
+   embedder inherits "unchanged chunks are never re-embedded" for free — assert it with a call
+   counter, which is M2 DoD §4.
+2. **The vector index.** usearch HNSW, `f16`, memory-mapped, rebuildable from `embeddings`
+   without re-running the model (DoD §8).
+3. **The vector arm.** `fusion` already takes an arbitrary list of rankings; adding it is one
+   more `Ranking` and one more branch in `search::run`. Nothing else should need to change —
+   if it does, that is a design smell worth stopping for.
+4. **The cross-encoder reranker.** Top-30, asynchronous, delivered as a result update. The
+   protocol already carries `partial` and `ScoreBreakdown::rerank` for exactly this.
+5. **The goldset.** 50 queries, German and English, judged, in `bench/goldset/`. Also the
+   instrument for the open questions listed further down. Recall@10 gets recorded in this file
+   and gated at −3 points.
+6. **`cortex --rebuild-index`** (DoD §7, rule R10). The pieces exist — the extraction stage
+   already re-chunks correctly when chunks are missing but hashes are not — but the command
+   itself does not, and neither does the canonical dump it must reproduce.
 
-**`cortex-extract` is not called by anything.** It compiles, it is tested, and it is dead code.
-Nothing extracts, nothing chunks, nothing writes to `chunks` or `chunks_fts`. The next session's
-first job is to wire it in.
+Smaller things still open from the first half:
 
-Remaining in the first half:
-
-1. **Store operations for chunks.** Write chunks for a node, replace them when the file
-   changes, delete them when it goes away, and keep `chunks_fts` in step. Must go through
-   `Store::batch` — a document produces tens of chunks and the commit barrier dominates
-   otherwise (see the M1 session log).
-2. **The extraction stage in the ingest loop.** Idle-priority: extraction is the "replay" stage
-   and must yield when the user is active. `nodes.extract_state` exists so the queue can be
-   resumed rather than recomputed. The per-chunk hash is what makes a re-index cheap — a file
-   whose content hash is unchanged must not be re-chunked at all.
-3. **BM25 retrieval** over `chunks_fts`. Note that SQLite's `bm25()` returns *negative* scores,
-   more negative being a better match. Getting that sign wrong inverts the ranking silently.
-4. **RRF fusion** of the trigram path arm and the BM25 content arm, plus the salience boost, and
-   the score breakdown that makes `cortex explain` possible. `ScoreBreakdown` already has the
-   fields; nothing populates `lexical_rank` yet.
-5. **Snippets.** Chunks store byte offsets and a bounded preview, not text (D16). A snippet
-   longer than the preview is re-read from the file using the offsets.
-
-Then the second half: the embedder (`multilingual-e5-small` via ONNX Runtime, D6), the usearch
-vector index, the cross-encoder reranker, and the 50-query German/English goldset.
+- **PDF extraction.** `Handling::Pdf` is classified and skipped. `pdf-extract` is available.
+  When it lands, note that `snippet` currently re-runs the *text* reader for every handler; a
+  PDF's byte offsets are into extracted text that no plain read reproduces, so the handling will
+  have to be stored per node and passed to the snippet path.
+- **Tree-sitter chunking**, still staged behind the heuristic (unchanged from last session).
+- **A wall-clock cap per extractor.** The byte budget bounds memory and the stage's own thread
+  bounds latency for everything else, but a single file on a stalled network mount can hold the
+  stage indefinitely. Cheap to add with the text reader; genuinely needed once an extractor
+  exists whose cost is not linear in bytes.
+- **A reader pool.** `Store` is still one connection behind a mutex, so a search serialises
+  against extraction writes. Now measurable: during a first index run, queries visibly wait.
 
 ### Deferred, still outstanding from M1
 
@@ -73,21 +85,20 @@ vector index, the cross-encoder reranker, and the 50-query German/English goldse
   guard is currently unguarded: a descriptor leak in the watcher, or unbounded growth in the
   coalescer, would not be caught by anything else.
 
-### Decisions taken during M2 so far
+### Open questions the goldset should answer, not opinion
 
-- **Chunk size is measured in characters, not tokens.** The specification says 300–600 tokens.
-  No tokenizer exists in the pipeline yet, and adding one purely to measure chunk sizes would
-  tie chunking to a model choice not yet made. `TARGET_CHARS = 1600` lands inside the intended
-  range at roughly 3.5–4 characters per token for a German/English mix. When the embedder
-  arrives with its own tokenizer this becomes a token count; the resulting boundary shift is a
-  re-index, which is a supported operation.
-- **Code chunking is heuristic, not parsed.** The build prompt specifies tree-sitter. A grammar
-  per language is one dependency per language, and the heuristic already captures the property
-  that matters — a definition is not split from its signature. Tree-sitter remains the correct
-  answer and is planned; this is a deliberate staging, not a silent descope.
-- **PDF extraction is not implemented.** `Handling::Pdf` is recognised and classified but
-  `has_text()` returns false for it, so such files are recorded and skipped. `pdf-extract` is
-  available; this is the natural next extractor after the text path works end to end.
+Recorded here rather than guessed at, because the goldset is the instrument that decides them:
+
+- **Ties in fusion are broken by node id.** When a path hit and a content hit score identically,
+  which should a person see first? Preferring the path arm is defensible ("a name is stronger
+  evidence than a mention") but it is a tuning decision, and tuning without measurement is how a
+  ranking becomes folklore.
+- **Prefix matching is on by default.** It is what makes results appear while typing; it also
+  makes "budge" match "budgetieren". `--exact` exists for measuring both.
+- **Arm weights are all 1.0.** RRF needs no calibration, which is its virtue. Whether the
+  content arm deserves more weight than the path arm for `recall` queries is measurable.
+- **The mode heuristic** (D24) may mislabel queries. One function, its own tests, easy to fix
+  once there is evidence.
 
 ### A limitation worth knowing before writing the goldset
 
@@ -99,9 +110,6 @@ expansion, and it will affect the German half of the M2 goldset.
 
 ### Things M1 deliberately left rough
 
-- `Store` still wraps one connection behind a mutex, so queries serialise against ingest
-  writes. Replace with a reader pool plus a single writer in M2, when extraction makes the
-  writer busy enough for it to matter.
 - The path index is rebuilt wholesale after any bulk change (reconcile, directory rename,
   directory removal). Correct and simple; if it ever shows up in a profile, patch incrementally
   instead — but only then.
@@ -109,7 +117,7 @@ expansion, and it will affect the German half of the M2 goldset.
   zones × nodes, which is why the zone budget exists. If zones ever need to be numerous, this
   is the thing to replace, not the budget.
 - The ingest loop polls on a 250 ms timer rather than blocking on the inotify descriptor.
-  Measured idle cost is 0.000 % of one core, so this is not worth changing without a reason.
+  Measured idle cost is 0.033 % of one core, so this is not worth changing without a reason.
 
 ---
 
@@ -150,6 +158,9 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 - Zone colours derived deterministically, fixed saturation/lightness, never the only signal (D15)
 - `inotify` rather than `fanotify`; the spec's mandate was measured and rejected (D20)
 - Path search has two tiers; the full scan runs only when the literal search finds nothing (D21)
+- User activity is signalled by clients, and expensive stages run on a duty cycle (D22)
+- The benchmark corpus obeys Zipf's law, and its content is seeded per path (D23)
+- `Auto` is the default query mode, and a mode that is not built yet degrades visibly (D24)
 
 ## Still open
 
@@ -164,6 +175,68 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
+
+### 2026-08-18 — M2, first half: content is searchable
+
+The extraction layer is wired in, and the search it feeds is complete without any model in it.
+377 tests green, every gate passing, no daemon left running.
+
+What exists now, end to end: a file is classified, read within a byte budget, split at its
+structure, hashed per chunk, written into a contentless FTS index, retrieved by BM25, fused with
+the path arm by RRF, boosted by salience, and displayed with a snippet re-read from the file. If
+it does not show up, `cortex explain` says which of those steps is the reason.
+
+Five things worth knowing, four of which cost real time:
+
+1. **A benchmark can fail because of its input.** BM25 top-100 measured 44 ms against a 30 ms
+   budget. The cause was not retrieval: the corpus filled every file with sentences drawn from a
+   list of sixteen, so every term occurred in almost every document, and ranking a query meant
+   scoring a third of the index. With a Zipfian vocabulary the same code measures 15 ms. The
+   corpus generator now writes realistic prose (D23) — and the pathological case is still
+   measured and printed on every run, because a corpus good enough to pass a gate must not be
+   allowed to hide the case that does not.
+
+2. **The queue query cost more than the work it fed.** Draining the extraction queue
+   newest-first needs `ORDER BY mtime DESC`, which cannot use the partial index on
+   `extract_state`: every batch read the whole backlog, evaluated a chunk count per row, and
+   sorted it. **11 ms per batch with 50 000 files pending, against 6 µs in index order.** Recency
+   is now handled where it costs nothing — the watcher pushes just-touched files onto a small
+   priority queue that the stage drains first. A file saved during an 85 000-file backlog is
+   searchable by content within about six seconds; before, it waited for the backlog.
+
+3. **A duty cycle that measures the wrong thing is not a duty cycle.** The first version timed
+   only the extraction, leaving the queue read and the commit — which dominate a batch of small
+   files — outside the slice. It also accumulated microsecond work in a millisecond counter, so
+   after extracting 100 000 files the stage reported that it had never done any work. Both
+   fixed; the share now measures at exactly 15.0 % of one core while the user is active, against
+   a configured 15 %.
+
+4. **Polling a database "just in case" is not free.** With the queue empty, asking once a second
+   whether anything was pending cost 0.65 % of one core on a 100 000-file index — more than the
+   daemon's entire idle budget of 0.5 %. The stage now backs off to 30 s and is woken by a signal
+   from the watcher. Idle cost afterwards: 0.100 % for the whole daemon.
+
+5. **The content hash cannot be trusted on its own.** `--rebuild-index` drops chunks and keeps
+   hashes, so a stage comparing only hashes would decide there was nothing to do and leave the
+   corpus permanently unsearchable. The queue therefore reports the chunk count alongside the
+   hash, and a file with a matching hash and no chunks is re-chunked. Rule R10 has a test.
+
+Verified live against the reference corpus, with a real daemon:
+
+- 100 000 files extracted into 122 137 chunks, 26 s of work at the idle budget.
+- A re-extraction of the entire corpus wrote **zero** new chunks — the hash short circuit
+  recognised every file as unchanged. That is M2 DoD §4 minus the embedder that does not exist
+  yet, and the number it asserts is exactly the number of embedding calls a re-index will make.
+- Deny-listed files (`.aws/credentials`, `.env`, `*.kdbx`, `id_ed25519`) are absent from the
+  index entirely, not merely unextracted.
+- A file renamed to a deny-listed name loses its chunks: withdrawn content stops being
+  searchable rather than lingering.
+- Idle RSS 170.3 MiB with 100 000 files and 122 137 chunks indexed, against a 250 MB budget.
+
+One structural change worth noting for anyone looking for the code: the search orchestrator
+moved from `cortexd` into `cortex-query::search`. The daemon binary cannot be depended on, and a
+benchmark that reimplements the search it measures is a benchmark that eventually measures
+something else.
 
 ### 2026-08-18 — M2 begun: the extraction layer
 
@@ -349,14 +422,57 @@ are visible across sessions.
 | 2026-08-18 | M1 | Fuzzy path match, literal | P95 1.23 ms | 10 ms | yes |
 | 2026-08-18 | M1 | Keystroke path | P95 5.23 ms | 10 ms | yes |
 | 2026-08-18 | M1 | `cargo test --workspace` | 225 passed, 0 failed | green | yes |
+| 2026-08-18 | M2 | Fuzzy path match, literal (tier one) | P95 1.11 ms | 10 ms | yes |
+| 2026-08-18 | M2 | Keystroke path, every prefix incl. 1–2 chars | P95 6.61 ms | 10 ms | yes |
+| 2026-08-18 | M2 | Abbreviation, full-scan tier | P95 4.75 ms | 25 ms | yes |
+| 2026-08-18 | M2 | BM25 top-100 | P95 14.74 ms | 30 ms | yes |
+| 2026-08-18 | M2 | RRF fusion + salience boost | P95 12.75 µs | 5 ms | yes |
+| 2026-08-18 | M2 | Hybrid query, both arms + salience + snippets from disk | P95 20.96 ms | (80 ms from M4) | — |
+| 2026-08-18 | M2 | Stopword query matching 120 692 of 122 137 chunks | P95 78.7 ms | — | — |
+| 2026-08-18 | M2 | Content index build, 100 000 files → 122 137 chunks | 23.5 s | — | — |
+| 2026-08-18 | M2 | Extraction of the whole corpus, live daemon, idle budget | 25.9 s busy | — | — |
+| 2026-08-18 | M2 | Re-extraction of an unchanged corpus | 0 chunks written | 0 | yes |
+| 2026-08-18 | M2 | CPU share while the user is active | 15.0 % of one core | 15 % | yes |
+| 2026-08-18 | M2 | Idle CPU, 122 137 chunks indexed | 0.100 % of one core | 0.5 % | yes |
+| 2026-08-18 | M2 | Idle RSS, 100 000 files, 122 137 chunks | 170.3 MiB | 250 MB | yes |
+| 2026-08-18 | M2 | `cargo test --workspace` | 377 passed, 0 failed | green | yes |
 
-Path-search figures come from `bench-latency` against the standard corpus, release build.
-Index, CPU and memory figures are from a live daemon; the index time is taken from the
-daemon's own log rather than from an external poller.
+Search figures come from `bench-latency` against the standard corpus, **release build**. Index,
+CPU and memory figures are from a live daemon, and the CPU share is measured from the stage's own
+busy counter against wall-clock time rather than from `top`.
 
-Measured with a **debug** build; the release build will be faster. These are hand-timed runs,
-not yet a benchmark harness — M1 must replace them with `bench/` so they become a CI gate
-rather than a note.
+**The M0 and M1 rows above were measured against a different corpus** and are not directly
+comparable with the M2 rows. The generator now writes realistic content (D23), which changed both
+the tree slightly and the work per file entirely. Where the M2 rows repeat an M1 metric, that is
+a re-measurement, not a regression: the keystroke path moved from 5.23 ms to 6.61 ms, still
+inside its 10 ms budget, and the cause is the corpus rather than the code. It also varies by a
+couple of milliseconds between runs, which is worth knowing before reading a small change in it
+as a regression.
+
+The stopword row has no budget on purpose. Nobody searches for "und", but FTS5 scores every
+match before it can rank them, so a query that matches almost the whole index costs the whole
+index. It is measured on every run so that the corpus cannot quietly hide it.
+
+### M2 acceptance so far — the half that has no models in it
+
+The full Definition of Done for M2 is in `docs/01-BUILD-PROMPT.md`; these are the items that can
+be judged before the embedder exists.
+
+| Criterion | Result |
+|---|---|
+| BM25 top-100 under 30 ms | 14.7 ms P95 |
+| RRF fusion + salience boost under 5 ms | 12.8 µs P95 |
+| Re-indexing an unchanged corpus re-embeds zero chunks | verified live over 100 000 files: 0 chunks written, every file recognised by hash |
+| Idle RSS below 250 MB with 100 k files indexed | 170.3 MiB with 122 137 chunks |
+| First index run stays inside the configured CPU share | 15.0 % of one core measured against a configured 15 % while the user is active |
+| Every result carries a score breakdown, and `cortex explain` prints it | yes, including why a file did *not* appear |
+| Content extraction only inside configured roots (R3) | verified live: a file outside them is recorded as skipped, with the reason |
+| The deny-list holds before any content access (R1) | verified live: sensitive files are absent from the index entirely |
+| Withdrawing content withdraws it from the index | verified live: renaming a file to a deny-listed name deletes its chunks |
+| Recall@10 on the goldset | **not measured** — the goldset is the second half of M2 |
+| German within 10 % of English | **not measured** — same |
+| `cortex --rebuild-index` reproduces a canonical dump | **not built** — the extraction side of it is tested (a hash without chunks re-chunks) |
+| Vector index rebuildable from `embeddings` | **not built** — no embedder yet |
 
 ### M0 acceptance, verified
 

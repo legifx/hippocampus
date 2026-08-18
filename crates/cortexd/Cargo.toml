@@ -25,6 +25,12 @@ serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+cortex-extract.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Only for `setpriority`: Rust has no portable API for scheduling priority, and the extraction
+# stage is required to run below everything else on the machine.
+libc = "0.2"
 
 [dev-dependencies]
 tempfile.workspace = true
