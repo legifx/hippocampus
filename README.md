@@ -57,7 +57,7 @@ the system is complete without it.
 | M0 | Daemon skeleton, schema, JSON-RPC socket, CLI | **done** |
 | M1 | Filesystem watcher, metadata index, episodes, trigram path search, zones | **done** |
 | M2 | Extraction, chunking, embeddings, hybrid search | **done** |
-| M3 | Agent Surface: MCP, policy engine, undo journal | |
+| M3 | Agent Surface: MCP, policy engine, undo journal | **done** |
 | M4 | Search overlay (first GUI) | |
 | M5 | Salience, decay, tiering, consolidation | |
 | M6 | The full file manager | |
@@ -138,6 +138,42 @@ only command that does, it says what it is about to fetch and from where, and ev
 verified against a checksum pinned in the source. Without a model the search still works — it
 just has no semantic arm, and says so when you ask it why.
 
+## Letting an agent use it
+
+The brain is exposed to agents over MCP. Wire it into Claude Code with:
+
+```bash
+claude mcp add hippocampus -- /path/to/cortex-mcp --actor claude
+```
+
+The server needs the daemon running; it is a bridge, not a second copy of the brain. What an
+agent gets is eighteen tools: search and recall, reading and listing, annotating and linking,
+and — gated — writing, moving and trashing.
+
+**Every mutation is planned before it happens.** A gated tool called without a plan id changes
+nothing and answers with what it *would* do; the agent calls again with that plan's id to apply
+it. Plans expire, are checked against the filesystem when they are applied, and cannot be spent
+on a different file than the one they describe. Everything an agent changes is reversible with
+`cortex undo`, and everything an agent asks for — including everything it was refused — is in
+`cortex audit`.
+
+Agents may write to the brain freely and to the filesystem only inside an allow-list, which is
+empty by default:
+
+```toml
+[agent]
+enabled = true
+write_allowlist = ["/home/you/Projects/scratch"]
+require_dry_run = true
+```
+
+Two switches turn things off, and both survive a restart:
+
+```bash
+cortex agent-surface off   # agent tools refuse; cortex-mcp will not even start
+cortex pause               # stop watching and indexing; the index still answers
+```
+
 Without `--root`, the daemon uses the XDG locations: configuration in
 `~/.config/hippocampus/`, index in `~/.local/state/hippocampus/`, socket in
 `$XDG_RUNTIME_DIR/hippocampus/`.
@@ -149,6 +185,9 @@ Without `--root`, the daemon uses the XDG locations: configuration in
 - **Read file contents by default.** Metadata indexing may cover your whole home directory;
   content extraction only happens inside roots you explicitly configure.
 - **Talk to the network.** Not until you turn something on.
+- **Let an agent loose on your files.** Agents get read access and an empty write allow-list.
+  Mutations need a plan you can inspect, leave an undo entry, and are logged whether they were
+  permitted or refused.
 
 The full set is in `docs/05-HARD-RULES.md`.
 

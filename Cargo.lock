@@ -384,6 +384,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "cortex-mcp"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "clap",
+ "cortex-core",
+ "cortex-rpc",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "cortex-query"
 version = "0.0.1"
 dependencies = [

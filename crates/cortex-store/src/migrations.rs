@@ -30,6 +30,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "embeddings_by_hash",
         sql: include_str!("schema/0003_embeddings_by_hash.sql"),
     },
+    Migration {
+        version: 4,
+        name: "annotations",
+        sql: include_str!("schema/0004_annotations.sql"),
+    },
 ];
 
 /// The schema version this build expects.

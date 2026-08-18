@@ -285,3 +285,160 @@ pub fn describe_steps(steps: &[PlanStep]) -> Vec<String> {
         })
         .collect()
 }
+
+// ---------------------------------------------------------------------------
+// The brain tools. These write to memory and never to a file, which is why they are gated by
+// the kill switch and audited but not by the write allow-list: an agent's notes about a
+// document cannot damage the document (rule R6).
+// ---------------------------------------------------------------------------
+
+/// A node, named the way the caller happens to know it.
+///
+/// Agents work in paths and the index works in ids, and forcing either side to translate makes
+/// one of them keep a mapping it will get wrong. Untagged, so `"/srv/data/a.txt"` and `42` are
+/// both valid without a wrapper object.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Target {
+    Node(i64),
+    Path(PathBuf),
+}
+
+impl Target {
+    pub fn describe(&self) -> String {
+        match self {
+            Target::Node(id) => format!("node {id}"),
+            Target::Path(p) => p.display().to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnnotateParams {
+    pub target: Target,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnnotateResult {
+    /// The annotation's own node id — it is a node, so it can be linked and found like one.
+    pub annotation_id: i64,
+    pub target_id: i64,
+    pub target_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PinParams {
+    pub target: Target,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PinResult {
+    pub target_id: i64,
+    pub pinned: bool,
+    /// What the salience engine will do with this. Honest about M5 not being built yet.
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LinkParams {
+    pub a: Target,
+    pub b: Target,
+    /// One of the edge types the schema allows. `similar_to` when the caller says nothing.
+    #[serde(default)]
+    pub edge: Option<String>,
+    /// Remove the edge instead of asserting it.
+    #[serde(default)]
+    pub remove: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LinkResult {
+    pub a_id: i64,
+    pub b_id: i64,
+    pub edge: String,
+    pub removed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NeighborsParams {
+    pub target: Target,
+    /// Which edge types to follow. Empty means all of them.
+    #[serde(default)]
+    pub edge_types: Vec<String>,
+    #[serde(default)]
+    pub depth: Option<u32>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NeighborsResult {
+    pub target_id: i64,
+    pub neighbors: Vec<crate::model::NeighborView>,
+    /// Annotations on the node itself, spelled out rather than left as ids to chase.
+    pub annotations: Vec<crate::model::AnnotationView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimelineParams {
+    /// Unix seconds, inclusive. Absent means "from the beginning".
+    #[serde(default)]
+    pub from: Option<i64>,
+    #[serde(default)]
+    pub to: Option<i64>,
+    /// Only this actor's episodes, e.g. `agent:claude`.
+    #[serde(default)]
+    pub actor: Option<String>,
+    #[serde(default)]
+    pub action: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimelineResult {
+    pub episodes: Vec<crate::model::Episode>,
+    pub total: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkingSetResult {
+    /// What has been touched recently, most recent first.
+    pub nodes: Vec<WorkingSetEntry>,
+    /// Seconds since a client last reported human activity, if one ever has.
+    pub idle_secs: Option<u64>,
+    /// How this was derived. Working memory proper arrives with salience in M5; until then
+    /// this is recent episodes, and it says so rather than implying more.
+    pub basis: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkingSetEntry {
+    pub node_id: i64,
+    pub path: Option<PathBuf>,
+    pub last_touched: i64,
+    pub actions: Vec<String>,
+    pub pinned: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiffParams {
+    /// Everything after this episode id. An agent keeps the `cursor` from the last answer and
+    /// passes it back, which is what makes this a substitute for polling.
+    #[serde(default)]
+    pub since: Option<i64>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiffResult {
+    pub changes: Vec<crate::model::Episode>,
+    /// Pass this back as `since` next time.
+    pub cursor: i64,
+    /// True when `limit` cut the answer short and another call would return more.
+    pub more: bool,
+}

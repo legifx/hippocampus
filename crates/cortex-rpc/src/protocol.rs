@@ -178,6 +178,20 @@ pub mod method {
     pub const FS_TRASH: &str = "fs.trash";
     pub const UNDO: &str = "undo";
 
+    // Memory. These write to the brain and never to a file, so they are gated by the kill
+    // switch and audited, but not by the write allow-list (R6).
+    pub const BRAIN_SEARCH: &str = "brain.search";
+    pub const BRAIN_ANNOTATE: &str = "brain.annotate";
+    pub const BRAIN_PIN: &str = "brain.pin";
+    pub const BRAIN_FORGET: &str = "brain.forget";
+    pub const BRAIN_LINK: &str = "brain.link";
+    pub const BRAIN_NEIGHBORS: &str = "brain.neighbors";
+    pub const BRAIN_TIMELINE: &str = "brain.timeline";
+    pub const BRAIN_WORKING_SET: &str = "brain.working_set";
+    pub const BRAIN_DIFF: &str = "brain.diff";
+    pub const BRAIN_RECALL: &str = "brain.recall";
+    pub const BRAIN_EXPLAIN: &str = "brain.explain";
+
     /// Every method this build serves. Used by `status` so a client can discover the surface.
     pub const ALL: &[&str] = &[
         PING,
@@ -212,6 +226,17 @@ pub mod method {
         FS_MOVE,
         FS_TRASH,
         UNDO,
+        BRAIN_SEARCH,
+        BRAIN_ANNOTATE,
+        BRAIN_PIN,
+        BRAIN_FORGET,
+        BRAIN_LINK,
+        BRAIN_NEIGHBORS,
+        BRAIN_TIMELINE,
+        BRAIN_WORKING_SET,
+        BRAIN_DIFF,
+        BRAIN_RECALL,
+        BRAIN_EXPLAIN,
     ];
 }
 
@@ -490,6 +515,14 @@ pub struct RebuildParams {
 pub struct RebuildResult {
     /// Nodes re-derived from the filesystem.
     pub indexed: u64,
+    /// Explicit assertions — annotations, links, pins — put back from the episode log. They
+    /// are not derivable from the filesystem, so a rebuild has to replay them (R10).
+    #[serde(default)]
+    pub assertions_replayed: usize,
+    /// Assertions whose target no longer exists. Dropped rather than invented, and counted so
+    /// the loss is visible.
+    #[serde(default)]
+    pub assertions_dropped: usize,
     /// Chunks still to be extracted. Extraction runs in the background, so a rebuild returns
     /// before the index is complete — poll `extract.status` to see it finish.
     pub extraction_pending: i64,
@@ -642,6 +675,45 @@ pub struct IdentifyResult {
     pub actor: String,
     /// Whether the agent tools will answer this connection at all.
     pub agent_surface_enabled: bool,
+}
+
+/// `brain.recall`: a fragment in, a context out.
+///
+/// Search answers "which files match these words". Recall answers "what belongs with this",
+/// which is search followed by a walk of the associative graph around what it found — pattern
+/// completion rather than retrieval (CA3 in the analogy the project is named after).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecallParams {
+    /// The fragment. A phrase, a filename, a half-remembered sentence.
+    pub cue: String,
+    /// How far to walk out from each hit.
+    #[serde(default)]
+    pub depth: Option<u32>,
+    /// How many hits to expand around.
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecallResult {
+    /// What the search itself found, in its own order.
+    pub hits: Vec<SearchHit>,
+    /// What the graph adds around those hits, and why each one is here.
+    pub associations: Vec<RecalledAssociation>,
+    pub mode: QueryMode,
+    pub elapsed_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecalledAssociation {
+    pub node_id: i64,
+    pub path: Option<String>,
+    /// The hit this was reached from.
+    pub via: String,
+    pub edge: String,
+    pub depth: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 #[cfg(test)]

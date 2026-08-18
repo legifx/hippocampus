@@ -12,6 +12,7 @@
 pub mod agent;
 pub mod chunks;
 pub mod embeddings;
+pub mod graph;
 pub mod error;
 pub mod migrations;
 pub mod queries;

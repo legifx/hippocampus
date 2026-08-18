@@ -17,6 +17,7 @@ use cortex_query::PathIndex;
 use cortex_rpc::protocol::SearchUpdateParams;
 use cortex_rpc::protocol::{
     method, ActivityPingResult, AgentSetEnabledParams, AgentStatusResult, AuditRecentParams,
+    RecallParams, RecallResult, RecalledAssociation,
     AuditRecentResult, IdentifyParams, IdentifyResult, IndexSetPausedParams, IndexSetPausedResult, EpisodeAppendParams, EpisodesRecentParams, EpisodesRecentResult,
     CanonicalDumpResult, ExtractRequeueResult, ExtractStatusResult, IndexPathParams,
     IndexPathResult, ModelReloadResult,
@@ -691,11 +692,25 @@ async fn dispatch(
                 }
                 store.link_parents()?;
                 store.assign_zones()?;
-                cortex_store::error::Result::Ok(indexed)
+                // Explicit assertions — annotations, links, pins — are not derivable from the
+                // filesystem, so a rebuild that stopped here would silently drop everything an
+                // agent ever recorded. They are replayed from the episode log, which is the
+                // only table a rebuild does not touch (R10).
+                let (replayed, skipped) = store.replay_assertions()?;
+                if skipped > 0 {
+                    tracing::warn!(
+                        replayed,
+                        skipped,
+                        "some assertions name files that no longer exist and were dropped"
+                    );
+                }
+                store.prune_orphan_annotations()?;
+                cortex_store::error::Result::Ok((indexed, replayed, skipped))
             })
             .await
             .map_err(|e| RpcError::internal(format!("rebuild task failed: {e}")))?
             .map_err(internal)?;
+            let (outcome, assertions_replayed, assertions_dropped) = outcome;
 
             rebuild_index(daemon).map_err(internal)?;
 
@@ -721,6 +736,8 @@ async fn dispatch(
 
             json(RebuildResult {
                 indexed: outcome,
+                assertions_replayed,
+                assertions_dropped,
                 extraction_pending: progress.pending,
                 embeddings_kept,
                 elapsed_ms: started.elapsed().as_millis() as u64,
@@ -1058,6 +1075,127 @@ async fn dispatch(
                 daemon.ingest.signal_work();
             }
             json(result)
+        }
+
+        // Memory. Same shape as the fs tools: build the surface for this actor, call the one
+        // implementation in `cortex-agent`, translate the refusal.
+        method::BRAIN_ANNOTATE => {
+            let params = parse(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            json(surface(daemon, &ctx.actor, &auditor).annotate(&params).map_err(tool_error)?)
+        }
+
+        method::BRAIN_PIN | method::BRAIN_FORGET => {
+            let params = parse(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            let pinned = method == method::BRAIN_PIN;
+            json(surface(daemon, &ctx.actor, &auditor).pin(&params, pinned).map_err(tool_error)?)
+        }
+
+        method::BRAIN_LINK => {
+            let params = parse(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            json(surface(daemon, &ctx.actor, &auditor).link(&params).map_err(tool_error)?)
+        }
+
+        method::BRAIN_NEIGHBORS => {
+            let params = parse(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            json(surface(daemon, &ctx.actor, &auditor).neighbors(&params).map_err(tool_error)?)
+        }
+
+        method::BRAIN_TIMELINE => {
+            let params = parse(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            json(surface(daemon, &ctx.actor, &auditor).timeline(&params).map_err(tool_error)?)
+        }
+
+        method::BRAIN_WORKING_SET => {
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            let idle = Some(daemon.activity.idle_for().as_secs());
+            json(surface(daemon, &ctx.actor, &auditor).working_set(idle).map_err(tool_error)?)
+        }
+
+        method::BRAIN_DIFF => {
+            let params = params
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(|e| RpcError::invalid_params(e.to_string()))?
+                .unwrap_or(cortex_core::tools::DiffParams { since: None, limit: None });
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            json(surface(daemon, &ctx.actor, &auditor).diff(&params).map_err(tool_error)?)
+        }
+
+        // `brain.search` and `brain.explain` are the same operations as `search` and
+        // `search.explain`, reached by the name an agent looks for. Aliases rather than
+        // reimplementations — a second search would be a second set of results to explain.
+        method::BRAIN_SEARCH => {
+            Box::pin(dispatch(daemon, method::SEARCH, params, refinable, ctx)).await
+        }
+
+        method::BRAIN_EXPLAIN => {
+            Box::pin(dispatch(daemon, method::SEARCH_EXPLAIN, params, refinable, ctx)).await
+        }
+
+        method::BRAIN_RECALL => {
+            let params: RecallParams = parse(params)?;
+            let started = Instant::now();
+            daemon.activity.ping();
+
+            // Pattern completion, not retrieval: search finds the way in, and the associative
+            // graph supplies what belongs with it. A cue that names one document should bring
+            // back the note somebody wrote on it and the file it was derived from, neither of
+            // which contains the words in the cue.
+            let outcome = daemon.run_search(&SearchParams {
+                query: params.cue.clone(),
+                mode: cortex_core::model::QueryMode::Auto,
+                limit: params.limit.or(Some(10)),
+                prefix: None,
+                rerank: Some(false),
+            });
+
+            let depth = params.depth.unwrap_or(1).min(3);
+            let mut associations = Vec::new();
+            let mut seen: std::collections::HashSet<i64> =
+                outcome.hits.iter().map(|h| h.node_id.0).collect();
+
+            for hit in &outcome.hits {
+                let neighbors = daemon
+                    .store
+                    .neighbors(hit.node_id, &[], depth, 20)
+                    .map_err(internal)?;
+                for neighbor in neighbors {
+                    if !seen.insert(neighbor.node_id) {
+                        continue;
+                    }
+                    associations.push(RecalledAssociation {
+                        node_id: neighbor.node_id,
+                        path: neighbor.path.map(|p| p.display().to_string()),
+                        via: hit.path.display().to_string(),
+                        edge: neighbor.edge.as_str().to_string(),
+                        depth: neighbor.depth,
+                        note: neighbor.note,
+                    });
+                }
+            }
+
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            if let Err(e) = surface(daemon, &ctx.actor, &auditor).gate("brain.recall") {
+                return Err(tool_error(e));
+            }
+            auditor.allowed(
+                indexer::unix_now(),
+                "brain.recall",
+                &serde_json::json!({ "cue": params.cue, "depth": depth }),
+                &format!("{} hits, {} associations", outcome.hits.len(), associations.len()),
+            );
+
+            json(RecallResult {
+                hits: outcome.hits,
+                associations,
+                mode: outcome.mode,
+                elapsed_ms: started.elapsed().as_millis() as u64,
+            })
         }
 
         method::SHUTDOWN => {

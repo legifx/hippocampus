@@ -7,14 +7,18 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use cortex_core::paths::Paths;
 use cortex_core::tools::{
-    FsListParams, FsListResult, FsMoveParams, FsReadParams, FsReadResult, FsStatParams,
-    FsStatResult, FsTrashParams, FsWriteParams, Mutation, UndoParams, UndoResult, WriteMode,
+    AnnotateParams, AnnotateResult, DiffParams, DiffResult, FsListParams, FsListResult,
+    FsMoveParams, FsReadParams, FsReadResult, FsStatParams, FsStatResult, FsTrashParams,
+    FsWriteParams, LinkParams, LinkResult, Mutation, NeighborsParams, NeighborsResult, PinParams,
+    PinResult, Target, TimelineParams, TimelineResult, UndoParams, UndoResult, WorkingSetResult,
+    WriteMode,
 };
 use cortex_rpc::client::Client;
 use cortex_rpc::protocol::{
     method, AgentSetEnabledParams, AgentStatusResult, AuditRecentParams, AuditRecentResult,
     EpisodesRecentParams, EpisodesRecentResult, ExtractRequeueResult, ExtractStatusResult,
-    IdentifyParams, IdentifyResult, IndexSetPausedParams, IndexSetPausedResult,
+    IdentifyParams, IdentifyResult, IndexSetPausedParams, IndexSetPausedResult, RecallParams,
+    RecallResult,
     CanonicalDumpResult, IndexPathParams, IndexPathResult, ModelReloadResult, ModelStatusResult,
     NodeGetParams, NodeGetResult, PingResult, RebuildParams, RebuildResult, ReconcileParams,
     ReconcileResult, SearchExplainParams, SearchUpdateParams,
@@ -132,6 +136,72 @@ enum Command {
     Reconcile {
         /// Reconcile only this path. Defaults to every configured root.
         path: Option<std::path::PathBuf>,
+    },
+    /// Attach a note to a file without touching the file.
+    Annotate {
+        /// A path, or a numeric node id.
+        target: String,
+        note: String,
+        /// Repeatable.
+        #[arg(short, long)]
+        tag: Vec<String>,
+    },
+    /// Mark a file as never to be forgotten.
+    Pin {
+        target: String,
+        /// Undo the pin and reset salience instead.
+        #[arg(long)]
+        forget: bool,
+    },
+    /// Assert that two nodes belong together.
+    Link {
+        a: String,
+        b: String,
+        #[arg(long, default_value = "similar_to")]
+        edge: String,
+        /// Remove the edge instead.
+        #[arg(long)]
+        remove: bool,
+    },
+    /// Show what a node is connected to.
+    Neighbors {
+        target: String,
+        #[arg(short, long, default_value_t = 1)]
+        depth: u32,
+        /// Only these edge types. Repeatable.
+        #[arg(long = "edge")]
+        edges: Vec<String>,
+    },
+    /// A fragment in, its context out — search plus the associations around what it found.
+    Recall {
+        cue: Vec<String>,
+        #[arg(short, long, default_value_t = 1)]
+        depth: u32,
+        #[arg(short, long)]
+        limit: Option<usize>,
+    },
+    /// Episodes in a time range.
+    Timeline {
+        /// Unix seconds, or a number of hours back written as e.g. `24h`.
+        #[arg(long)]
+        from: Option<String>,
+        #[arg(long)]
+        to: Option<String>,
+        #[arg(long)]
+        actor: Option<String>,
+        #[arg(long)]
+        action: Option<String>,
+        #[arg(short, long, default_value_t = 50)]
+        limit: usize,
+    },
+    /// What has been touched lately.
+    WorkingSet,
+    /// What changed since an episode id. For an agent that should not poll.
+    Diff {
+        #[arg(long)]
+        since: Option<i64>,
+        #[arg(short, long)]
+        limit: Option<usize>,
     },
     /// List a directory, the way an agent sees it.
     Ls {
@@ -789,6 +859,230 @@ async fn run(args: Args) -> Result<()> {
             }
         }
 
+        Command::Annotate { target, note, tag } => {
+            let result: AnnotateResult = client
+                .call(
+                    method::BRAIN_ANNOTATE,
+                    AnnotateParams { target: parse_target(&target), tags: tag, note },
+                )
+                .await?;
+            if args.json {
+                print_json(&result)?;
+            } else {
+                println!(
+                    "annotation {} on {}",
+                    result.annotation_id,
+                    result
+                        .target_path
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| format!("node {}", result.target_id))
+                );
+            }
+        }
+
+        Command::Pin { target, forget } => {
+            let result: PinResult = client
+                .call(
+                    if forget { method::BRAIN_FORGET } else { method::BRAIN_PIN },
+                    PinParams { target: parse_target(&target) },
+                )
+                .await?;
+            if args.json {
+                print_json(&result)?;
+            } else {
+                println!("node {} — {}", result.target_id, result.note);
+            }
+        }
+
+        Command::Link { a, b, edge, remove } => {
+            let result: LinkResult = client
+                .call(
+                    method::BRAIN_LINK,
+                    LinkParams {
+                        a: parse_target(&a),
+                        b: parse_target(&b),
+                        edge: Some(edge),
+                        remove,
+                    },
+                )
+                .await?;
+            if args.json {
+                print_json(&result)?;
+            } else {
+                println!(
+                    "{} {} --{}--> {}",
+                    if result.removed { "unlinked" } else { "linked" },
+                    result.a_id,
+                    result.edge,
+                    result.b_id
+                );
+            }
+        }
+
+        Command::Neighbors { target, depth, edges } => {
+            let result: NeighborsResult = client
+                .call(
+                    method::BRAIN_NEIGHBORS,
+                    NeighborsParams {
+                        target: parse_target(&target),
+                        edge_types: edges,
+                        depth: Some(depth),
+                        limit: None,
+                    },
+                )
+                .await?;
+            if args.json {
+                print_json(&result)?;
+            } else {
+                for annotation in &result.annotations {
+                    println!("note   [{}] {}", annotation.tags.join(", "), annotation.note);
+                }
+                for neighbor in &result.neighbors {
+                    println!(
+                        "{:<12} {:<10} {}",
+                        neighbor.edge.as_str(),
+                        format!("depth {}", neighbor.depth),
+                        neighbor
+                            .note
+                            .clone()
+                            .or_else(|| neighbor.path.as_ref().map(|p| p.display().to_string()))
+                            .unwrap_or_else(|| format!("node {}", neighbor.node_id))
+                    );
+                }
+                if result.neighbors.is_empty() && result.annotations.is_empty() {
+                    println!("nothing is connected to this yet");
+                }
+            }
+        }
+
+        Command::Recall { cue, depth, limit } => {
+            let cue = cue.join(" ");
+            if cue.trim().is_empty() {
+                bail!("nothing to recall");
+            }
+            let result: RecallResult = client
+                .call(method::BRAIN_RECALL, RecallParams { cue, depth: Some(depth), limit })
+                .await?;
+            if args.json {
+                print_json(&result)?;
+            } else {
+                for hit in &result.hits {
+                    println!("{}", hit.path.display());
+                    if let Some(snippet) = &hit.snippet {
+                        println!("    {snippet}");
+                    }
+                }
+                if !result.associations.is_empty() {
+                    println!("\nbrought back with them:");
+                    for a in &result.associations {
+                        println!(
+                            "  {:<12} {}  (via {})",
+                            a.edge,
+                            a.note.clone().unwrap_or_else(|| a
+                                .path
+                                .clone()
+                                .unwrap_or_else(|| format!("node {}", a.node_id))),
+                            a.via
+                        );
+                    }
+                }
+                println!(
+                    "\n{} hit(s), {} association(s) in {} ms",
+                    result.hits.len(),
+                    result.associations.len(),
+                    result.elapsed_ms
+                );
+            }
+        }
+
+        Command::Timeline { from, to, actor, action, limit } => {
+            let result: TimelineResult = client
+                .call(
+                    method::BRAIN_TIMELINE,
+                    TimelineParams {
+                        from: from.as_deref().map(parse_time).transpose()?,
+                        to: to.as_deref().map(parse_time).transpose()?,
+                        actor,
+                        action,
+                        limit: Some(limit),
+                    },
+                )
+                .await?;
+            if args.json {
+                print_json(&result)?;
+            } else {
+                for e in &result.episodes {
+                    println!(
+                        "{}  {:<14} {:<8} {}",
+                        format_age(e.ts),
+                        e.actor.as_str(),
+                        e.action.as_str(),
+                        e.metadata
+                            .get("path")
+                            .and_then(|p| p.as_str())
+                            .map(str::to_string)
+                            .or_else(|| e.node_id.map(|n| format!("node {n}")))
+                            .unwrap_or_default()
+                    );
+                }
+                println!("\nshowing {} of {} episodes", result.episodes.len(), result.total);
+            }
+        }
+
+        Command::WorkingSet => {
+            let result: WorkingSetResult = client
+                .call(method::BRAIN_WORKING_SET, serde_json::json!({}))
+                .await?;
+            if args.json {
+                print_json(&result)?;
+            } else {
+                for entry in &result.nodes {
+                    println!(
+                        "{}  {:<28} {}{}",
+                        format_age(entry.last_touched),
+                        entry.actions.join(","),
+                        entry
+                            .path
+                            .as_ref()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_else(|| format!("node {}", entry.node_id)),
+                        if entry.pinned { "  [pinned]" } else { "" }
+                    );
+                }
+                if result.nodes.is_empty() {
+                    println!("nothing recent");
+                }
+                println!("\n{}", result.basis);
+            }
+        }
+
+        Command::Diff { since, limit } => {
+            let result: DiffResult = client
+                .call(method::BRAIN_DIFF, DiffParams { since, limit })
+                .await?;
+            if args.json {
+                print_json(&result)?;
+            } else {
+                for e in &result.changes {
+                    println!(
+                        "{:<8} {:<14} {:<8} {}",
+                        e.id,
+                        e.actor.as_str(),
+                        e.action.as_str(),
+                        e.metadata
+                            .get("path")
+                            .and_then(|p| p.as_str())
+                            .unwrap_or_default()
+                    );
+                }
+                println!(
+                    "\ncursor {}{}",
+                    result.cursor,
+                    if result.more { " (more to come)" } else { "" }
+                );
+            }
+        }
+
         Command::Ls { path, depth, limit } => {
             let result: FsListResult = client
                 .call(
@@ -1289,6 +1583,37 @@ fn print_watch_status(status: &WatchStatusResult) {
             r.added, r.updated, r.removed, r.renamed, r.unchanged, r.skipped
         ),
     }
+}
+
+/// A CLI argument naming a node: a number is an id, anything else is a path.
+///
+/// Resolved here rather than server-side because only the client knows what the user typed;
+/// a daemon that guessed would eventually treat a file called `42` as a node id.
+fn parse_target(text: &str) -> Target {
+    match text.parse::<i64>() {
+        Ok(id) => Target::Node(id),
+        Err(_) => Target::Path(std::path::PathBuf::from(text)),
+    }
+}
+
+/// A point in time: Unix seconds, or a span back from now written as `24h`, `30m` or `7d`.
+fn parse_time(text: &str) -> Result<i64> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    let (value, unit) = text.split_at(text.len().saturating_sub(1));
+    let scale = match unit {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3600,
+        "d" => 86400,
+        // No suffix: an absolute timestamp.
+        _ => return text.parse::<i64>().context("expected a Unix timestamp or a span like 24h"),
+    };
+    let amount: i64 = value.parse().context("expected a span like 24h")?;
+    Ok(now - amount * scale)
 }
 
 fn yes_no(value: bool) -> &'static str {

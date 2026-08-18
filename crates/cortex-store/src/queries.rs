@@ -774,7 +774,7 @@ fn row_to_node(row: &Row<'_>) -> rusqlite::Result<Result<Node>> {
     })())
 }
 
-fn row_to_episode(row: &Row<'_>) -> rusqlite::Result<Result<Episode>> {
+pub(crate) fn row_to_episode(row: &Row<'_>) -> rusqlite::Result<Result<Episode>> {
     let actor: String = row.get(2)?;
     let action: String = row.get(3)?;
     let metadata: String = row.get(6)?;

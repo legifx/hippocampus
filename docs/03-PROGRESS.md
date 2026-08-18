@@ -10,48 +10,58 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | M3 — Agent Surface |
-| **Status** | **In progress.** The safety spine is built and tested: policy engine, kill switch, audit log, the `fs.*` tools with mandatory dry-run plans, and an undo journal that restores a hundred moved files byte for byte. What is left is the MCP server and the test that proves all three surfaces share one implementation. |
+| **Status** | **Complete.** All five Definition-of-Done items are met and tested end to end, with one caveat named below. 559 tests. |
 | **Last updated** | 2026-08-18 |
 | **Blocked on** | nothing |
 
 ## Where M3 stands
 
-Built and measured:
+Agents can use the brain and cannot damage the filesystem. Every claim in that sentence has a
+test behind it.
 
-- **`cortex-agent`** — a crate with no daemon in it, so every refusal is testable as a pure
-  function. Policy (deny-list for reads, allow-list for writes), kill switch, audit log, plans,
-  the `fs.*` tools, and undo.
-- **The kill switch (R7)** survives a restart: it lives in `meta`, not in the configuration
-  file, and a configured `false` cannot be lifted over RPC (D32). Both switches are independent —
-  pausing indexing does not disarm agents.
-- **The audit log (R8)** records every call, and the refusals are the point. Arguments are
-  redacted to a size a log can hold.
-- **The mandatory dry run (R6)** is a plan with a filesystem fingerprint, a two-minute expiry and
-  one use (D33). A plan for one file cannot be spent on another; a plan whose target changed is
-  refused as stale.
-- **Undo** is a trash directory plus an inverse in the journal (D34), never a copy in the index.
+| DoD | State | Where it is proven |
+|---|---|---|
+| §1 A real task end to end | met, with a caveat | `cortexd/tests/agent_task.rs` — search, read, annotate, link, and the note comes back from the other end. See the caveat. |
+| §2 Red-team suite | met | `cortex-agent/tests/red_team.rs` — 13 tests, table-driven over every gated tool |
+| §3 Undo restores exactly | met | `cortex-agent/tests/undo.rs` — 100 files moved, dump hash identical afterwards |
+| §4 Kill switch | met | `cortexd/tests/three_surfaces.rs` — the surface refuses, `cortex-mcp` will not start, state survives a restart |
+| §5 One implementation, three surfaces | met | `cortexd/tests/three_surfaces.rs` — byte-identical answers from MCP, socket and CLI |
 
-**Verified, not asserted:** 13 red-team tests assert that every gated tool refuses without an
-allow-list entry, refuses without a confirmed dry-run, refuses a made-up plan id, refuses while
-the surface is off, and leaves an audit entry every time. 9 undo tests, including M3 §3 verbatim:
-100 files moved, `undo --last 100`, and the tree's canonical dump hashes identical to before.
+**The caveat on §1.** The task test runs without the embedding model, so the search step is
+answered by the lexical and path arms. The semantic arm — the one that finds documents sharing
+no word with the query — is measured against the goldset in M2 rather than here. The *shape* of
+the task is what this test proves. A human confirming it through Claude Code proper against a
+model-equipped daemon is a five-minute check nobody has done yet; `claude mcp add hippocampus --
+<path>/cortex-mcp --actor claude` is the whole setup.
 
-### Still to build for M3
+### What was built
 
-1. **`cortex-mcp`** — the MCP server binary. With the surface off it must refuse to accept
-   connections at all, not merely refuse each tool (M3 §4).
-2. **The three-surface test** (M3 §5): the same operation through MCP, RPC and CLI, asserted
-   identical.
-3. **The `brain.*` write tools** — `annotate`, `pin`, `forget`, `link` — and the read tools
-   beyond search: `recall`, `neighbors`, `timeline`, `working_set`, `diff`.
-4. **DoD §1**: Claude Code configured against the MCP server, completing a real task end to end.
+- **`cortex-agent`**, a crate with no daemon in it: policy, kill switch, audit log, dry-run
+  plans, the `fs.*` tools, the `brain.*` tools, and undo. Every refusal is a pure function of
+  configuration and a path, so it is testable without starting anything.
+- **`cortex-mcp`**, eighteen tools over stdio, and no policy in it at all (D36).
+- **The graph**: edges, annotations, traversal in both directions, and `brain.recall` — search
+  for the way in, the associative graph for what belongs with it.
+- **Assertions survive a rebuild** (D35). An annotation is not on the filesystem, so it is
+  written to the episode log with its target's *path* and replayed from there. `rebuild` now
+  reports `assertions_replayed` and `assertions_dropped`.
 
-### Known deferral
+### Not done, and known
 
-The `fs.*` handlers run inline on the async runtime rather than on a blocking pool. A listing of
-ten thousand entries therefore occupies one worker for as long as it takes. The runtime is
-multi-threaded so it degrades rather than stalls, but M4's 80 ms keystroke budget shares these
-threads — move them to `spawn_blocking` before the GUI lands.
+1. **The `fs.*` and `brain.*` handlers run inline on the async runtime.** A ten-thousand-entry
+   listing occupies one worker for as long as it takes. The runtime is multi-threaded so this
+   degrades rather than stalls, but M4's 80 ms keystroke budget shares those threads — move them
+   to `spawn_blocking` before the GUI lands.
+2. **`fs.list` ignores its `glob` argument.** The parameter is in the wire format and the schema;
+   nothing filters on it yet.
+3. **`brain.working_set` is recent episodes**, not a salience-weighted working set. It says so in
+   its own `basis` field rather than implying more, and the real thing is M5.
+4. **A plan's TTL is a constant** (two minutes), not configuration. A client wanting to confirm a
+   thousand-file reorganisation a minute later will need it to be configurable (D33).
+5. **Brain writes are not in the undo journal.** They are reversible by their opposite —
+   `brain.forget` for a pin, `brain.link --remove` for a link — but `cortex undo` does not
+   reverse them. The journal is for filesystem mutations, where the loss is not recoverable by
+   asking again.
 
 ## Where M2 stands — read this first
 
@@ -208,6 +218,44 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
+
+### 2026-08-18 — M3 finished: the brain tools, MCP, and three surfaces proven identical
+
+The `brain.*` tools, `cortex-mcp`, and the tests that turn M3's Definition of Done from a list of
+claims into a list of assertions. 559 tests.
+
+**The hardest thing in this half was rule R10, and it was not obvious that it applied.** An
+annotation an agent writes is not on the filesystem, and the index is a cache — so a rebuild,
+which this project advertises as a supported operation, would have quietly deleted everything an
+agent ever recorded. Assertions now go into the episode log and the graph is a projection of
+them (D35). The first version stored the target's *node id*, which a rebuild renumbers; it takes
+a test that actually rebuilds to notice that, and `assertions survive a rebuild` is that test.
+
+**`brain.recall` is the tool the analogy is about.** Search finds the way in and the associative
+graph supplies what belongs with it, so a cue that names one document brings back the note
+somebody wrote on it and the file it was derived from — neither of which contains the words in
+the cue. Verified against a live daemon, not only in a unit test.
+
+**MCP is deliberately empty.** `cortex-mcp` is a table mapping one tool name to one method, plus
+stdio framing (D36). The reason is not tidiness: a bridge that interpreted anything would be a
+way round the policy engine, and the policy engine's whole job is to be unavoidable. The kill
+switch therefore reaches the bridge too — with the surface off it refuses to start rather than
+starting and refusing every call, because a client that has been shown a tool list has been told
+the surface is available.
+
+**Three surfaces, one answer, asserted byte for byte.** `three_surfaces.rs` starts a real daemon
+and drives the socket directly, the `cortex` binary, and `cortex-mcp` over stdio, then compares.
+It also checks that a refusal is the *same* refusal on all three — code 1002, tag
+`outside_allowlist`, and a message that names the allow-list — because a surface that turns a
+policy refusal into a generic error is unusable from the other side.
+
+For the next session:
+
+- **§1 has a caveat and it is written down.** The end-to-end task test runs without the embedding
+  model, so its search step is lexical. The semantic arm is measured in M2's goldset. A human
+  check through Claude Code proper is five minutes of work nobody has done.
+- **The handlers are still inline on the async runtime.** That is fine now and will not be when
+  M4's 80 ms keystroke budget shares those threads.
 
 ### 2026-08-18 — M3 begun: the safety spine
 

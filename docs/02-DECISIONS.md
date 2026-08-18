@@ -729,3 +729,43 @@ fail honestly — if something else has taken the original path in the meantime,
 failure rather than overwriting a third party's work. The rename may cross a filesystem boundary
 (a home directory on one disk, `~/.local/state` on another), so the move falls back to copy plus
 delete on `EXDEV`.
+
+---
+
+### D35 — An agent's knowledge lives in the episode log; the graph is a projection of it
+**Status:** ACCEPTED
+
+Annotations, links and pins are written to `episodes` as *assertions* carrying the **path** of
+their target, not only its node id. The annotation node, the edge and the `annotations` row are
+derived, and `cortex rebuild` replays them with `Store::replay_assertions`.
+
+**Why:** rule R10 says everything must be reconstructible from the filesystem plus the episode
+log. An annotation is not on the filesystem — the filesystem has never heard of it — so if it
+lived only in `nodes` and `edges`, a rebuild would silently delete everything an agent ever
+recorded. That is not a theoretical loss: `rebuild` is a supported operation this project
+advertises, not a repair of last resort.
+
+**Why paths and not ids:** a rebuild renumbers every node. An assertion that can only name its
+target by a number is an assertion a rebuild cannot replay, and the first version of this stored
+exactly that.
+
+**Consequence:** an assertion whose target no longer exists is dropped and *counted* —
+`rebuild` reports `assertions_dropped` — rather than resurrecting a node for a file that is gone.
+
+---
+
+### D36 — MCP is a bridge with no policy in it
+**Status:** ACCEPTED
+
+`cortex-mcp` is a table mapping one MCP tool to one RPC method, plus stdio framing. It contains
+no policy, no tool logic, and no state beyond the connection.
+
+**Why:** M3 §5 requires the three surfaces to be provably one implementation. A bridge that
+interpreted anything would be a second implementation, and the interesting case is not that it
+would drift — it is that it would be a way *round* the policy engine, which is the one component
+whose whole job is to be unavoidable.
+
+**Consequence:** the kill switch reaches the bridge too. With the surface off, `cortex-mcp`
+refuses to start rather than starting and refusing every call — a client that sees a tool list
+has been told the surface is available, and it must not be told that when it is not. There is an
+end-to-end test per claim: same operation through all three surfaces, byte-identical answers.

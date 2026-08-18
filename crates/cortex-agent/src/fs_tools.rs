@@ -86,7 +86,18 @@ impl Surface<'_> {
     /// Step 1 for every tool. Separate from the policy check so that a disabled surface refuses
     /// before it has looked at any path — an agent must not be able to probe for the existence
     /// of files through a surface that is switched off.
-    fn gate(&self, tool: &str, args: &serde_json::Value) -> ToolResult<()> {
+    /// The kill-switch check on its own, for a caller that composes several tools into one
+    /// answer and audits the result itself — `brain.recall` is that case.
+    pub fn gate(&self, tool: &str) -> ToolResult<()> {
+        self.gate_with(tool, &serde_json::json!({}))
+    }
+
+    /// The gate with the caller's own arguments, so a refusal records what was asked for.
+    pub(crate) fn gate_args(&self, tool: &str, args: &serde_json::Value) -> ToolResult<()> {
+        self.gate_with(tool, args)
+    }
+
+    fn gate_with(&self, tool: &str, args: &serde_json::Value) -> ToolResult<()> {
         if let Err(r) = self.policy.check_surface(self.enabled) {
             return Err(self.auditor.refuse(self.now, tool, args, r).into());
         }
@@ -104,7 +115,7 @@ impl Surface<'_> {
     pub fn list(&self, params: &FsListParams) -> ToolResult<FsListResult> {
         let tool = "fs.list";
         let args = serde_json::to_value(params).unwrap_or_default();
-        self.gate(tool, &args)?;
+        self.gate_with(tool, &args)?;
 
         let root = match self.policy.check_list(&params.path) {
             Ok(p) => p,
@@ -183,7 +194,7 @@ impl Surface<'_> {
     pub fn read(&self, params: &FsReadParams) -> ToolResult<FsReadResult> {
         let tool = "fs.read";
         let args = serde_json::to_value(params).unwrap_or_default();
-        self.gate(tool, &args)?;
+        self.gate_with(tool, &args)?;
 
         let path = match self.policy.check_read(&params.path) {
             Ok(p) => p,
@@ -242,7 +253,7 @@ impl Surface<'_> {
     pub fn stat(&self, params: &FsStatParams) -> ToolResult<FsStatResult> {
         let tool = "fs.stat";
         let args = serde_json::to_value(params).unwrap_or_default();
-        self.gate(tool, &args)?;
+        self.gate_with(tool, &args)?;
 
         let path = match self.policy.check_list(&params.path) {
             Ok(p) => p,
@@ -276,7 +287,7 @@ impl Surface<'_> {
     pub fn write(&self, params: &FsWriteParams) -> ToolResult<Mutation> {
         let tool = "fs.write";
         let args = serde_json::to_value(params).unwrap_or_default();
-        self.gate(tool, &args)?;
+        self.gate_with(tool, &args)?;
 
         let path = match self.policy.check_write(&params.path) {
             Ok(p) => p,
@@ -380,7 +391,7 @@ impl Surface<'_> {
     pub fn move_path(&self, params: &FsMoveParams) -> ToolResult<Mutation> {
         let tool = "fs.move";
         let args = serde_json::to_value(params).unwrap_or_default();
-        self.gate(tool, &args)?;
+        self.gate_with(tool, &args)?;
 
         // Both ends are mutations: a move removes the source as surely as it creates the
         // target, so allow-listing only the destination would let an agent empty a directory it
@@ -449,7 +460,7 @@ impl Surface<'_> {
     pub fn trash(&self, params: &FsTrashParams) -> ToolResult<Mutation> {
         let tool = "fs.trash";
         let args = serde_json::to_value(params).unwrap_or_default();
-        self.gate(tool, &args)?;
+        self.gate_with(tool, &args)?;
 
         let path = match self.policy.check_write(&params.path) {
             Ok(p) => p,
@@ -509,7 +520,7 @@ impl Surface<'_> {
     pub fn undo(&self, params: &UndoParams) -> ToolResult<UndoResult> {
         let tool = "undo";
         let args = serde_json::to_value(params).unwrap_or_default();
-        self.gate(tool, &args)?;
+        self.gate_with(tool, &args)?;
 
         let wanted = params.last.unwrap_or(1);
         let candidates = self.store.undoable(wanted.max(1).min(10_000))?;

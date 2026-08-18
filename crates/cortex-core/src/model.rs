@@ -360,6 +360,82 @@ mod tests {
     }
 }
 
+
+/// How two nodes are connected. The associative index proper — this is the part of the schema
+/// the hippocampus analogy is actually about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EdgeType {
+    /// A directory contains a file.
+    Contains,
+    /// Opened together, close in time.
+    CoAccess,
+    /// One file references another.
+    Imports,
+    /// Near-duplicate or semantically close.
+    SimilarTo,
+    /// One was produced from the other.
+    DerivedFrom,
+    /// An annotation about a node.
+    Annotates,
+}
+
+impl EdgeType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            EdgeType::Contains => "contains",
+            EdgeType::CoAccess => "co_access",
+            EdgeType::Imports => "imports",
+            EdgeType::SimilarTo => "similar_to",
+            EdgeType::DerivedFrom => "derived_from",
+            EdgeType::Annotates => "annotates",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "contains" => EdgeType::Contains,
+            "co_access" => EdgeType::CoAccess,
+            "imports" => EdgeType::Imports,
+            "similar_to" => EdgeType::SimilarTo,
+            "derived_from" => EdgeType::DerivedFrom,
+            "annotates" => EdgeType::Annotates,
+            _ => return None,
+        })
+    }
+}
+
+/// How the index came to believe an edge.
+///
+/// `Explicit` edges are user or agent assertions and must never be pruned by a process that
+/// only trusts its own inferences.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EdgeSource {
+    Observed,
+    Inferred,
+    Explicit,
+}
+
+impl EdgeSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            EdgeSource::Observed => "observed",
+            EdgeSource::Inferred => "inferred",
+            EdgeSource::Explicit => "explicit",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "observed" => EdgeSource::Observed,
+            "inferred" => EdgeSource::Inferred,
+            "explicit" => EdgeSource::Explicit,
+            _ => return None,
+        })
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Agent Surface records. Neither is derived from the filesystem: they are history about
 // callers, not about files, which is why they live beside the domain types rather than in the
@@ -394,4 +470,31 @@ pub struct UndoEntry {
     /// deleted, so `cortex undo` cannot silently run twice over the same operation.
     pub applied: bool,
     pub undone_at: Option<i64>,
+}
+
+/// One edge, as the Agent Surface reports it. Mirrors the store's own shape so that the wire
+/// format does not depend on the storage crate — the CLI must not have to link SQLite to read
+/// an answer.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct NeighborView {
+    pub node_id: i64,
+    pub path: Option<std::path::PathBuf>,
+    pub kind: String,
+    pub edge: EdgeType,
+    pub source: EdgeSource,
+    pub weight: f64,
+    pub depth: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// One annotation, as the Agent Surface reports it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AnnotationView {
+    pub node_id: i64,
+    pub target_id: i64,
+    pub tags: Vec<String>,
+    pub note: String,
+    pub actor: String,
+    pub ts: i64,
 }

@@ -11,6 +11,7 @@ members = [
     "crates/cortex-agent",
     "crates/cortexd",
     "crates/cortex-cli",
+    "crates/cortex-mcp",
     "bench/corpus-gen",
     "bench/latency",
     "bench/goldset",
