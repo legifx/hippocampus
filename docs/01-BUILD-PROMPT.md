@@ -84,7 +84,7 @@ workstation class (see `03-PROGRESS.md` §Environment).
 | BM25 top-100 | 30 ms | M2 |
 | Vector ANN top-100 | 40 ms | M2 |
 | RRF fusion + salience boost | 5 ms | M2 |
-| Cross-encoder rerank top-30 (async) | 150 ms | M2 |
+| Cross-encoder rerank top-30 (async, GPU) | 150 ms | M2 |
 | Open a directory with 10 000 entries → first row | 100 ms | M4 |
 | Daemon cold start → socket accepting | 200 ms | M0 |
 | GUI cold start → interactive | 300 ms | M4 |
@@ -281,8 +281,10 @@ Reading file contents in any form.
 - **Reranker:** cross-encoder over top-30, asynchronous, delivered as a result update. Two
   things it needs that nothing else in M2 did: a second model, and a protocol that can deliver a
   *second* answer to one request — the socket is request/response today, and server-initiated
-  updates are also what M4's progressive results will want. Its 150 ms budget assumes a GPU;
-  measured CPU cost for thirty pairs is an order of magnitude above it.
+  updates are also what M4's progressive results will want. Its 150 ms budget assumes a GPU. Its
+  ranking is *fused* with the retrieved one rather than replacing it (D29), and note before
+  measuring it that a goldset whose distractors are meaningless cannot say whether it helps
+  (D30).
 - **Query modes** (heuristically detected, forceable by prefix):
   `locate` (path/name, lexical — the 90 % case) · `recall` (semantic) · `temporal` (episodes
   only, no vectors) · `structural` (graph traversal) · `deep` (includes cold tier and peers).

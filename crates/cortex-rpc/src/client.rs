@@ -38,6 +38,8 @@ pub enum ClientError {
 pub struct Client {
     stream: BufReader<UnixStream>,
     next_id: AtomicU64,
+    /// Notifications that arrived while waiting for a response.
+    notifications: std::collections::VecDeque<serde_json::Value>,
 }
 
 impl Client {
@@ -49,6 +51,7 @@ impl Client {
         Ok(Self {
             stream: BufReader::new(stream),
             next_id: AtomicU64::new(1),
+            notifications: std::collections::VecDeque::new(),
         })
     }
 
@@ -68,10 +71,20 @@ impl Client {
 
         transport::write_message(self.stream.get_mut(), &serde_json::to_value(&request)?).await?;
 
-        let value = transport::read_message(&mut self.stream)
-            .await?
-            .ok_or(ClientError::NoResponse)?;
-        let response: Response = serde_json::from_value(value)?;
+        // The daemon may send notifications between a request and its answer — a reranked
+        // result list arriving for an *earlier* search, for instance. They are queued rather
+        // than discarded, because the caller asked for them and the alternative is a protocol
+        // where the second answer only arrives if nobody asks anything in the meantime.
+        let response = loop {
+            let value = transport::read_message(&mut self.stream)
+                .await?
+                .ok_or(ClientError::NoResponse)?;
+            if value.get("id").is_none() {
+                self.notifications.push_back(value);
+                continue;
+            }
+            break serde_json::from_value::<Response>(value)?;
+        };
 
         // A mismatched id means the stream is out of step; continuing would silently return
         // one call's answer for another.
@@ -88,5 +101,45 @@ impl Client {
 
         let result = response.result.unwrap_or(serde_json::Value::Null);
         Ok(serde_json::from_value(result)?)
+    }
+
+    /// Wait for the daemon to send an unsolicited update, up to `timeout`.
+    ///
+    /// This is how a result that improves after it was delivered reaches the client (decision
+    /// D7): the search answers immediately with what it has, and the reranked order follows on
+    /// the same connection. Returns `None` on timeout, which is not an error — the first answer
+    /// was already a complete one, and a client is free to stop waiting.
+    pub async fn next_notification(
+        &mut self,
+        method: &str,
+        timeout: std::time::Duration,
+    ) -> Result<Option<serde_json::Value>, ClientError> {
+        // Anything that arrived while an earlier call was in flight.
+        while let Some(queued) = self.notifications.pop_front() {
+            if queued.get("method").and_then(|m| m.as_str()) == Some(method) {
+                return Ok(queued.get("params").cloned());
+            }
+        }
+
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return Ok(None);
+            }
+            match tokio::time::timeout(remaining, transport::read_message(&mut self.stream)).await {
+                Err(_) => return Ok(None),
+                Ok(Ok(None)) => return Ok(None),
+                Ok(Err(e)) => return Err(e.into()),
+                Ok(Ok(Some(value))) => {
+                    if value.get("method").and_then(|m| m.as_str()) == Some(method) {
+                        return Ok(value.get("params").cloned());
+                    }
+                    // Something else — a response to a call nobody is waiting for any more.
+                    // Keep it rather than dropping it, so the stream stays interpretable.
+                    self.notifications.push_back(value);
+                }
+            }
+        }
     }
 }

@@ -2,12 +2,13 @@
 
 **A memory daemon for your filesystem — and the file manager that grew out of it.**
 
-> Status: early. The daemon watches a filesystem, keeps a rebuildable index of it, and searches
-> paths, words and **meaning**: a query finds documents that share no word with it, in German or
-> English. A fuzzy path match takes about a millisecond over a hundred thousand files, a content
-> query fifteen, and the whole hybrid query with snippets about twenty. Recall is measured
-> against a checked-in goldset rather than asserted. See `docs/03-PROGRESS.md` for exactly where
-> things stand.
+> Status: early, and the search works. The daemon watches a filesystem, keeps a rebuildable index
+> of it, and searches paths, words and **meaning** — a query finds documents that share no word
+> with it, in German or English. A fuzzy path match takes about a millisecond over a hundred
+> thousand files, a content query fifteen, the whole hybrid query about twenty, and a
+> cross-encoder reorders the top results seventeen milliseconds after they are already on screen.
+> Recall is measured against a checked-in goldset rather than asserted, including the one
+> criterion it currently fails. See `docs/03-PROGRESS.md`.
 
 ---
 
@@ -55,7 +56,7 @@ the system is complete without it.
 |---|---|---|
 | M0 | Daemon skeleton, schema, JSON-RPC socket, CLI | **done** |
 | M1 | Filesystem watcher, metadata index, episodes, trigram path search, zones | **done** |
-| M2 | Extraction, chunking, embeddings, hybrid search | **in progress** |
+| M2 | Extraction, chunking, embeddings, hybrid search | **done** |
 | M3 | Agent Surface: MCP, policy engine, undo journal | |
 | M4 | Search overlay (first GUI) | |
 | M5 | Salience, decay, tiering, consolidation | |
@@ -107,7 +108,9 @@ cargo build --release
 ./target/release/cortex --root /tmp/hippocampus-demo extract
 
 # Semantic search needs a model. Nothing is downloaded until you ask for it.
-./target/release/cortex --root /tmp/hippocampus-demo model fetch
+# --gpu fetches the CUDA build (needs a CUDA runtime and cuDNN, not just a driver);
+# --reranker adds the cross-encoder that reorders results after they are shown.
+./target/release/cortex --root /tmp/hippocampus-demo model fetch --gpu --reranker
 ./target/release/cortex --root /tmp/hippocampus-demo model
 
 # Throw the index away and derive it again from the filesystem

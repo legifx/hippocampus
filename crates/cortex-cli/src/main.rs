@@ -11,7 +11,7 @@ use cortex_rpc::protocol::{
     method, EpisodesRecentParams, EpisodesRecentResult, ExtractRequeueResult, ExtractStatusResult,
     CanonicalDumpResult, IndexPathParams, IndexPathResult, ModelReloadResult, ModelStatusResult,
     NodeGetParams, NodeGetResult, PingResult, RebuildParams, RebuildResult, ReconcileParams,
-    ReconcileResult, SearchExplainParams,
+    ReconcileResult, SearchExplainParams, SearchUpdateParams,
     SearchExplainResult, SearchParams, SearchResult, StatusResult, WatchStatusResult,
     ZoneSetColorParams, ZonesListResult,
 };
@@ -48,6 +48,9 @@ enum Command {
         /// Search paths only, skipping the content index.
         #[arg(long)]
         paths_only: bool,
+        /// Print the first answer and do not wait for the reranked one.
+        #[arg(long)]
+        no_rerank: bool,
     },
     /// Say why a file ranked where it did for a query — or why it did not appear.
     Explain {
@@ -146,6 +149,16 @@ enum ModelCommand {
         /// Only the runtime library, not the model.
         #[arg(long)]
         runtime_only: bool,
+        /// Also fetch the cross-encoder that reranks results (488 MB).
+        #[arg(long)]
+        reranker: bool,
+        /// Fetch the CUDA build of the runtime (191 MB instead of 11 MB).
+        ///
+        /// It needs a CUDA runtime and cuDNN on the machine — a driver alone is not enough. With
+        /// them it embeds roughly forty times faster; without them it falls back to the CPU and
+        /// says so, so fetching it is never wrong, only sometimes pointless.
+        #[arg(long)]
+        gpu: bool,
     },
     /// Load a model that was fetched while the daemon was already running.
     Reload,
@@ -186,10 +199,10 @@ async fn run(args: Args) -> Result<()> {
     // before there is a daemon, and it must not tie up the socket for the minutes a download
     // takes. The daemon is told afterwards, if one happens to be listening.
     if let Command::Model {
-        command: Some(ModelCommand::Fetch { yes, runtime_only }),
+        command: Some(ModelCommand::Fetch { yes, runtime_only, gpu, reranker }),
     } = &args.command
     {
-        return fetch_model(&paths, *yes, *runtime_only, args.json).await;
+        return fetch_model(&paths, *yes, *runtime_only, *gpu, *reranker, args.json).await;
     }
 
     let mut client = Client::connect(&socket).await.with_context(|| {
@@ -254,7 +267,7 @@ async fn run(args: Args) -> Result<()> {
             }
         }
 
-        Command::Search { query, limit, exact, paths_only } => {
+        Command::Search { query, limit, exact, paths_only, no_rerank } => {
             let query = query.join(" ");
             if query.trim().is_empty() {
                 bail!("nothing to search for");
@@ -271,6 +284,7 @@ async fn run(args: Args) -> Result<()> {
                         },
                         limit,
                         prefix: Some(!exact),
+                        rerank: Some(!no_rerank),
                     },
                 )
                 .await?;
@@ -299,6 +313,32 @@ async fn run(args: Args) -> Result<()> {
                     mode_name(result.mode),
                     if result.partial { ", refining…" } else { "" }
                 );
+            }
+
+            // The first answer is complete; this is the better one arriving afterwards (D7).
+            // Waiting is the client's choice, and the timeout means a reranker that is slow or
+            // absent costs a moment rather than the result.
+            if result.partial && !args.json {
+                let update = client
+                    .next_notification(
+                        method::SEARCH_UPDATE,
+                        std::time::Duration::from_millis(2000),
+                    )
+                    .await?;
+                if let Some(params) = update {
+                    let update: SearchUpdateParams = serde_json::from_value(params)?;
+                    println!("\nreranked by {} in {} ms:", update.model, update.elapsed_ms);
+                    for hit in update.hits.iter().take(limit.unwrap_or(10)) {
+                        println!(
+                            "{}  [{}]",
+                            hit.path.display(),
+                            hit.score
+                                .rerank
+                                .map(|r| format!("{r:.2}"))
+                                .unwrap_or_else(|| "-".into())
+                        );
+                    }
+                }
             }
         }
 
@@ -652,22 +692,40 @@ async fn run(args: Args) -> Result<()> {
 }
 
 /// Download the model, with the user's consent and a progress line.
-async fn fetch_model(paths: &Paths, yes: bool, runtime_only: bool, json: bool) -> Result<()> {
+async fn fetch_model(
+    paths: &Paths,
+    yes: bool,
+    runtime_only: bool,
+    gpu: bool,
+    with_reranker: bool,
+    json: bool,
+) -> Result<()> {
     use cortex_embed::fetch::{ModelStore, Progress};
-    use cortex_embed::registry::{self, RUNTIME};
+    use cortex_embed::registry::{self, RERANKER, RUNTIME_CPU, RUNTIME_CUDA};
 
     let store = ModelStore::new(paths.state_dir());
     let model = registry::model_by_id("multilingual-e5-small")
         .context("the default model is missing from the registry")?;
+    let runtime = if gpu { &RUNTIME_CUDA } else { &RUNTIME_CPU };
 
-    let total = RUNTIME.archive.bytes + if runtime_only { 0 } else { model.total_bytes() };
+    let total = runtime.archive.bytes
+        + if runtime_only { 0 } else { model.total_bytes() }
+        + if with_reranker { RERANKER.total_bytes() } else { 0 };
     if !yes {
         // Rule R5 is about consent, not only about defaults. Say what will be downloaded, from
         // where, and how big it is — then ask.
         println!("About to download {:.0} MB:", total as f64 / 1_000_000.0);
-        println!("  {} ({:.0} MB)", RUNTIME.archive.url, RUNTIME.archive.bytes as f64 / 1_000_000.0);
+        println!("  {} ({:.0} MB)", runtime.archive.url, runtime.archive.bytes as f64 / 1_000_000.0);
+        if runtime.cuda {
+            println!("  the CUDA build needs {} on this machine", runtime.requires);
+        }
         if !runtime_only {
             for file in model.files {
+                println!("  {} ({:.0} MB)", file.url, file.bytes as f64 / 1_000_000.0);
+            }
+        }
+        if with_reranker {
+            for file in RERANKER.files {
                 println!("  {} ({:.0} MB)", file.url, file.bytes as f64 / 1_000_000.0);
             }
         }
@@ -703,12 +761,17 @@ async fn fetch_model(paths: &Paths, yes: bool, runtime_only: bool, json: bool) -
     };
 
     store
-        .fetch_runtime(&RUNTIME, &mut progress)
+        .fetch_runtime(runtime, &mut progress)
         .context("could not provision the ONNX runtime")?;
     if !runtime_only {
         store
             .fetch_model(model, &mut progress)
             .context("could not provision the model")?;
+    }
+    if with_reranker {
+        store
+            .fetch_reranker(&RERANKER, &mut progress)
+            .context("could not provision the reranker")?;
     }
 
     println!("model store: {}", store.root().display());
@@ -751,9 +814,11 @@ fn print_model_status(status: &ModelStatusResult) {
     }
 
     println!(
-        "files      model {} · runtime {}",
+        "files      model {} · runtime {} ({}{})",
         if status.model_present { "present" } else { "missing" },
-        if status.runtime_present { "present" } else { "missing" }
+        if status.runtime_present { "present" } else { "missing" },
+        status.runtime_id,
+        if status.runtime_is_cuda { ", gpu build" } else { "" }
     );
     if !status.model_present || !status.runtime_present {
         println!(

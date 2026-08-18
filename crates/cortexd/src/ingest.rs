@@ -24,7 +24,7 @@ use cortex_query::PathIndex;
 use cortex_store::queries::NodeUpsert;
 use cortex_store::Store;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -53,13 +53,16 @@ pub struct IngestState {
     /// measured at minutes on the reference corpus — because the queue is drained in index
     /// order (see `Store::pending_extraction` for why it is not drained by recency).
     priority: Mutex<std::collections::VecDeque<cortex_core::ids::NodeId>>,
-    /// Raised whenever something may have become extractable.
+    /// Incremented whenever something may have become workable.
     ///
-    /// The extraction stage backs off to a long sleep when its queue is empty, and this is what
-    /// wakes it. Polling instead cost 0.65 % of one core doing nothing — over the whole daemon's
-    /// idle budget, spent asking a question whose answer only changes when the watcher already
-    /// knows it has.
-    work_available: AtomicBool,
+    /// A counter rather than a flag, because there are two consumers — extraction and embedding
+    /// — and a flag belongs to whichever of them looks first. Each stage remembers the value it
+    /// last acted on, so a signal reaches both of them or neither.
+    ///
+    /// It exists at all because polling instead cost 0.65 % of one core doing nothing, which is
+    /// more than the whole daemon's idle budget, spent asking a question whose answer only
+    /// changes when the watcher already knows it has.
+    work_generation: AtomicU64,
     /// Set by the kill switch. The loop keeps running but stops touching the index, so
     /// resuming does not mean rebuilding.
     pub paused: AtomicBool,
@@ -74,9 +77,9 @@ impl Default for IngestState {
             watch_health: Mutex::new(None),
             last_reconcile: Mutex::new(None),
             priority: Mutex::new(std::collections::VecDeque::new()),
-            // Signalled at construction: a daemon starting against an index full of pending
-            // files must not wait for a change that may never come.
-            work_available: AtomicBool::new(true),
+            // Starts at one, and every stage starts having seen zero: a daemon opening an index
+            // full of pending files must not wait for a change that may never come.
+            work_generation: AtomicU64::new(1),
             paused: AtomicBool::new(false),
             resync_requested: AtomicBool::new(false),
             stop: AtomicBool::new(false),
@@ -120,23 +123,18 @@ impl IngestState {
         self.signal_work();
     }
 
-    /// Tell the extraction stage that there may be something to do.
+    /// Tell the background stages that there may be something to do.
     pub fn signal_work(&self) {
-        self.work_available.store(true, Ordering::Relaxed);
+        self.work_generation.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Whether a signal is outstanding.
-    pub fn work_signalled(&self) -> bool {
-        self.work_available.load(Ordering::Relaxed)
-    }
-
-    /// Consume the signal.
+    /// The current signal generation.
     ///
-    /// Cleared *before* the queue is read, never after: a signal arriving while the query runs
-    /// must survive it. Clearing afterwards would drop exactly the file that was created during
-    /// the query, and it would look like the watcher had missed it.
-    pub fn clear_work_signal(&self) {
-        self.work_available.store(false, Ordering::Relaxed);
+    /// A stage reads this *before* it looks at its queue and remembers it afterwards. A signal
+    /// arriving while the query runs therefore increments past the remembered value and is acted
+    /// on next time round, rather than being consumed by the read that missed it.
+    pub fn work_generation(&self) -> u64 {
+        self.work_generation.load(Ordering::Relaxed)
     }
 
     /// Take up to `limit` files off the priority queue.

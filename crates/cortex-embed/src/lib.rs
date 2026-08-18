@@ -20,7 +20,7 @@ pub mod registry;
 #[cfg(feature = "onnx")]
 pub mod onnx;
 
-pub use registry::{ModelSpec, E5_SMALL};
+pub use registry::{ModelSpec, RerankerSpec, E5_SMALL, RERANKER};
 
 /// Text on its way to a model, and what kind of text it is.
 ///
@@ -88,6 +88,27 @@ pub trait Embedder: Send + Sync {
     }
 
     /// A short description for `cortex status`, e.g. "onnx, cpu (8 threads)".
+    fn backend(&self) -> String;
+}
+
+/// Scores a query against candidate passages, reading each pair together.
+///
+/// Separate from [`Embedder`] because the shape of the work is different, not just the model:
+/// nothing can be precomputed, so this runs at query time over a shortlist. It is the last stage
+/// of retrieval and the only one allowed to be slow.
+pub trait Reranker: Send + Sync {
+    fn model(&self) -> ModelId;
+
+    /// Score every passage against the query. Higher is more relevant; the scale is the model's
+    /// own and is not comparable with anything else in the system, which is why reranking
+    /// *reorders* results rather than contributing to fusion.
+    fn score(&self, query: &str, passages: &[&str]) -> Result<Vec<f32>>;
+
+    /// Most pairs to send in one call.
+    fn max_batch(&self) -> usize {
+        32
+    }
+
     fn backend(&self) -> String;
 }
 

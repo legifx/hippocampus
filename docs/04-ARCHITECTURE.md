@@ -86,15 +86,20 @@ binary data with large third-party libraries.
 ```
 keystroke
    │
-   ├─► [0–60 ms]   trigram path match ∥ BM25 ∥ vector ANN
-   │               → reciprocal rank fusion → salience boost
-   │               → FIRST RESULTS VISIBLE
+   ├─► [0–20 ms]   trigram path match ∥ BM25 ∥ vector ANN     measured: 1 / 15 / 1 ms
+   │               → reciprocal rank fusion → salience boost   measured: 12 µs
+   │               → FIRST RESULTS VISIBLE                     measured: 20 ms with snippets
    │
-   ├─► [~150 ms]   cross-encoder rerank of top 30 → list reorders
+   ├─► [~17 ms]    cross-encoder rerank of top 30, fused with the order above (D29)
+   │               → delivered as a `search.update` notification, never awaited
    │
    └─► [~400 ms]   (M5+, optional) small local model parses the query into
                    structured filters → list refines
 ```
+
+The reranker's arrow starts where the first one ends: the results are already on screen when it
+begins. That is the whole design (D7) — the connection is split so a background task can send a
+better answer down it while the reader loop carries on.
 
 The result is never empty and never blocked. Models *improve* the result progressively rather
 than producing it. This is the difference between a tool and a demo.

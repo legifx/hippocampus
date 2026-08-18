@@ -14,8 +14,8 @@
 use cortex_core::config::EmbeddingConfig;
 use cortex_embed::fetch::ModelStore;
 use cortex_embed::hashing::HashingEmbedder;
-use cortex_embed::registry::{self, ModelSpec};
-use cortex_embed::Embedder;
+use cortex_embed::registry::{self, ModelSpec, RuntimeSpec};
+use cortex_embed::{Embedder, Reranker};
 use cortex_store::vectors::VectorIndex;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
@@ -39,26 +39,39 @@ pub struct SemanticStatus {
     pub note: Option<String>,
     pub model_present: bool,
     pub runtime_present: bool,
+    /// Which runtime build is in use, and what it needs from the machine.
+    pub runtime_id: String,
+    pub runtime_is_cuda: bool,
     pub model_dir: String,
     pub runtime_path: String,
 }
 
 pub struct Semantics {
     loaded: RwLock<Option<Loaded>>,
+    /// The cross-encoder, if one has been fetched. Loaded separately from the embedder: it is a
+    /// second half-gigabyte download, it is useless without the first, and a machine that has
+    /// one and not the other should get the half that works rather than neither.
+    reranker: RwLock<Option<Arc<dyn Reranker>>>,
+    reranker_note: RwLock<Option<String>>,
     note: RwLock<Option<String>>,
     store: ModelStore,
     state_dir: PathBuf,
     config: EmbeddingConfig,
+    /// Whether the search configuration wants reranking at all.
+    search_rerank: bool,
 }
 
 impl Semantics {
-    pub fn new(state_dir: &std::path::Path, config: EmbeddingConfig) -> Self {
+    pub fn new(state_dir: &std::path::Path, config: EmbeddingConfig, search_rerank: bool) -> Self {
         Self {
             loaded: RwLock::new(None),
+            reranker: RwLock::new(None),
+            reranker_note: RwLock::new(None),
             note: RwLock::new(None),
             store: ModelStore::new(state_dir),
             state_dir: state_dir.to_path_buf(),
             config,
+            search_rerank,
         }
     }
 
@@ -74,16 +87,88 @@ impl Semantics {
         registry::model_by_id(&self.config.model)
     }
 
-    /// Where the runtime library should be, honouring an override.
+    /// Which runtime this configuration wants, and where it would live.
+    ///
+    /// `auto` and `cuda` prefer the GPU build; the CPU build is the fallback rather than an
+    /// alternative, because the GPU build also runs on the CPU. An explicit `runtime_path`
+    /// overrides both, for a system installation.
+    pub fn runtime_choice(&self) -> (Option<&'static RuntimeSpec>, PathBuf) {
+        if let Some(path) = &self.config.runtime_path {
+            return (None, path.clone());
+        }
+        let candidates = registry::runtimes_for(&self.config.device);
+        for runtime in candidates {
+            if self.store.runtime_present(runtime) {
+                return (Some(runtime), self.store.runtime_library(runtime));
+            }
+        }
+        // None installed: name the preferred one, so the error says what to fetch.
+        let preferred = &candidates[0];
+        (Some(preferred), self.store.runtime_library(preferred))
+    }
+
     pub fn runtime_path(&self) -> PathBuf {
-        self.config
-            .runtime_path
-            .clone()
-            .unwrap_or_else(|| self.store.runtime_library(&registry::RUNTIME))
+        self.runtime_choice().1
     }
 
     pub fn model_store(&self) -> &ModelStore {
         &self.store
+    }
+
+    pub fn reranker(&self) -> Option<Arc<dyn Reranker>> {
+        self.reranker.read().unwrap().clone()
+    }
+
+    pub fn reranker_note(&self) -> Option<String> {
+        self.reranker_note.read().unwrap().clone()
+    }
+
+    /// Load the cross-encoder, if it is there.
+    ///
+    /// Failure is quiet by design: without it the search is the same search, just in the order
+    /// retrieval produced. Every other component treats the reranker as optional, so this must
+    /// not be the one place that makes it mandatory.
+    #[cfg(feature = "onnx")]
+    pub fn load_reranker(&self) -> std::result::Result<String, String> {
+        use cortex_embed::onnx::{Device, OnnxReranker};
+        use cortex_embed::registry::RERANKER;
+
+        if !self.search_rerank {
+            let note = "reranking is switched off in the configuration".to_string();
+            *self.reranker_note.write().unwrap() = Some(note.clone());
+            return Err(note);
+        }
+
+        let device = match self.config.device.as_str() {
+            "cpu" => Device::Cpu,
+            "cuda" => Device::Cuda,
+            _ => Device::Auto,
+        };
+        match OnnxReranker::load(
+            &self.runtime_path(),
+            &self.store.reranker_dir(&RERANKER),
+            RERANKER,
+            device,
+            self.config.threads,
+            self.config.gpu_memory_mb,
+        ) {
+            Ok(reranker) => {
+                let backend = reranker.backend();
+                *self.reranker.write().unwrap() = Some(Arc::new(reranker));
+                *self.reranker_note.write().unwrap() = None;
+                Ok(backend)
+            }
+            Err(e) => {
+                let note = e.to_string();
+                *self.reranker_note.write().unwrap() = Some(note.clone());
+                Err(note)
+            }
+        }
+    }
+
+    #[cfg(not(feature = "onnx"))]
+    pub fn load_reranker(&self) -> std::result::Result<String, String> {
+        Err("this build has no ONNX support".into())
     }
 
     /// Try to load, and record why if it does not work.
@@ -155,9 +240,16 @@ impl Semantics {
             self.config.threads
         };
 
-        OnnxEmbedder::load(&runtime, &self.store.model_dir(spec), *spec, device, threads)
-            .map(|e| Arc::new(e) as Arc<dyn Embedder>)
-            .map_err(|e| e.to_string())
+        OnnxEmbedder::load(
+            &runtime,
+            &self.store.model_dir(spec),
+            *spec,
+            device,
+            threads,
+            self.config.gpu_memory_mb,
+        )
+        .map(|e| Arc::new(e) as Arc<dyn Embedder>)
+        .map_err(|e| e.to_string())
     }
 
     #[cfg(not(feature = "onnx"))]
@@ -172,7 +264,10 @@ impl Semantics {
     pub fn status(&self) -> SemanticStatus {
         let loaded = self.get();
         let spec = self.spec();
+        let (runtime, runtime_path) = self.runtime_choice();
         SemanticStatus {
+            runtime_id: runtime.map(|r| r.id.to_string()).unwrap_or_else(|| "configured path".into()),
+            runtime_is_cuda: runtime.map(|r| r.cuda).unwrap_or(false),
             enabled: self.config.enabled,
             model: self.config.model.clone(),
             loaded: loaded.is_some(),
@@ -181,11 +276,13 @@ impl Semantics {
             vectors: loaded.as_ref().map(|l| l.vectors.len()).unwrap_or(0),
             note: self.note(),
             model_present: spec.map(|s| self.store.model_present(s)).unwrap_or(false),
-            runtime_present: self.runtime_path().exists(),
+            runtime_present: runtime
+                .map(|r| self.store.runtime_present(r))
+                .unwrap_or_else(|| runtime_path.exists()),
             model_dir: spec
                 .map(|s| self.store.model_dir(s).display().to_string())
                 .unwrap_or_default(),
-            runtime_path: self.runtime_path().display().to_string(),
+            runtime_path: runtime_path.display().to_string(),
         }
     }
 }
@@ -205,7 +302,7 @@ mod tests {
     fn a_machine_with_no_model_loads_nothing_and_says_why() {
         // The default state of a fresh install, and it must not read as a failure.
         let tmp = tempfile::tempdir().unwrap();
-        let semantics = Semantics::new(tmp.path(), config("multilingual-e5-small"));
+        let semantics = Semantics::new(tmp.path(), config("multilingual-e5-small"), true);
 
         assert!(semantics.load().is_err());
         assert!(semantics.get().is_none());
@@ -223,7 +320,7 @@ mod tests {
     #[test]
     fn the_built_in_embedder_needs_nothing_at_all() {
         let tmp = tempfile::tempdir().unwrap();
-        let semantics = Semantics::new(tmp.path(), config("hashing"));
+        let semantics = Semantics::new(tmp.path(), config("hashing"), true);
 
         let backend = semantics.load().expect("the hashing embedder cannot fail to load");
         assert!(backend.contains("hashing"));
@@ -245,6 +342,7 @@ mod tests {
                 model: "hashing".to_string(),
                 ..EmbeddingConfig::default()
             },
+            true,
         );
 
         assert!(semantics.load().is_err());
@@ -255,7 +353,7 @@ mod tests {
     #[test]
     fn an_unknown_model_name_is_reported_rather_than_guessed_at() {
         let tmp = tempfile::tempdir().unwrap();
-        let semantics = Semantics::new(tmp.path(), config("mistral-embed-9000"));
+        let semantics = Semantics::new(tmp.path(), config("mistral-embed-9000"), true);
         let error = semantics.load().unwrap_err();
         assert!(error.contains("unknown embedding model"), "{error}");
     }
@@ -271,6 +369,7 @@ mod tests {
                 runtime_path: Some(elsewhere.clone()),
                 ..EmbeddingConfig::default()
             },
+            true,
         );
         assert_eq!(semantics.runtime_path(), elsewhere);
     }
@@ -279,7 +378,7 @@ mod tests {
     fn loading_twice_keeps_working_rather_than_leaving_a_gap() {
         // `model.reload` can be called at any time, including while a search is running.
         let tmp = tempfile::tempdir().unwrap();
-        let semantics = Semantics::new(tmp.path(), config("hashing"));
+        let semantics = Semantics::new(tmp.path(), config("hashing"), true);
         semantics.load().unwrap();
         let first = semantics.get().unwrap();
         semantics.load().unwrap();

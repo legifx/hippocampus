@@ -18,9 +18,16 @@
 //! - **Topics.** Each file draws most of its content from a small topic vocabulary, so terms
 //!   cluster in documents instead of being sprinkled uniformly. Without this, every document
 //!   looks alike to a retrieval system and the goldset cannot have right answers.
-//! - **Landmark sentences.** The fixed sentence list survives, but appears rarely. Those are
-//!   the phrases the M2 goldset asks for, and they are only useful as targets while they are
-//!   rare.
+//! **No landmark sentences.** An earlier version sprinkled the fixed German/English sentence list
+//! through the corpus so a goldset would have memorable phrases to search for. The goldset now
+//! brings its own documents, and the sentences turned out to be actively harmful: they are real
+//! prose on real topics, several of which the goldset also covers, so the generated "distractors"
+//! contained genuine answers that no judgement had marked relevant. A reranker that found one was
+//! then scored as having made a mistake — which is how an unjudged relevant document turns a
+//! measurement into its own opposite.
+//!
+//! Distractors must be *plausible and irrelevant*. Making them irrelevant is the part that has to
+//! be true by construction.
 
 use crate::rng::Rng;
 use crate::words;
@@ -41,9 +48,6 @@ const ZIPF_S: f64 = 1.07;
 /// in a real corpus: common enough that a query for it returns a list, rare enough that the list
 /// is not the whole index. Everything above it is function words and filler.
 const DOMAIN_RANK: usize = 1_000;
-
-/// How often a landmark sentence is used instead of generated prose, in percent.
-const LANDMARK_PERCENT: usize = 3;
 
 /// A vocabulary with a sampling distribution over it.
 ///
@@ -193,11 +197,6 @@ pub fn write_document(
         // A heading every so often, so the Markdown chunker has structure to find.
         if i % 40 == 0 {
             writeln!(out, "\n## {}\n", capitalise(topic[i % topic.len()]))?;
-        }
-
-        if rng.chance(LANDMARK_PERCENT) {
-            writeln!(out, "{}", rng.pick(words::SENTENCES))?;
-            continue;
         }
 
         let mut sentence = String::new();
@@ -353,20 +352,22 @@ mod tests {
     }
 
     #[test]
-    fn a_landmark_sentence_survives_into_the_corpus() {
-        // The goldset needs phrases that exist, are memorable, and are rare. If the landmark
-        // rate ever drops to zero this test is the only thing that would notice.
+    fn no_generated_document_states_anything_true() {
+        // Distractors have to be irrelevant *by construction*. When they were not — an earlier
+        // version planted real sentences among them — the goldset scored a reranker as wrong for
+        // finding a passage that genuinely answered the question, and the resulting number said
+        // the reranker made retrieval worse. It did not; the corpus did.
         let vocabulary = Vocabulary::build();
-        let mut found = false;
         for seed in 1..40u64 {
             let mut out = Vec::new();
             write_document(&mut out, &vocabulary, &mut Rng::new(seed)).unwrap();
             let text = String::from_utf8(out).unwrap();
-            if words::SENTENCES.iter().any(|s| text.contains(s)) {
-                found = true;
-                break;
+            for sentence in words::SENTENCES {
+                assert!(
+                    !text.contains(sentence),
+                    "a generated document contains a real sentence: {sentence:?}"
+                );
             }
         }
-        assert!(found, "no landmark sentence in forty documents");
     }
 }

@@ -22,7 +22,7 @@ use cortex_extract::snippet::{self, Location};
 use crate::fusion::{self, Arm, Ranking};
 use crate::path_index::PathIndex;
 use crate::{lexical, mode};
-use cortex_embed::{Embedder, Input};
+use cortex_embed::{Embedder, Input, Reranker};
 use cortex_store::chunks::LexicalHit;
 use cortex_store::vectors::VectorIndex;
 use cortex_store::Store;
@@ -59,6 +59,9 @@ pub struct Outcome {
     pub path_candidates: usize,
     pub lexical_candidates: usize,
     pub vector_candidates: usize,
+    /// Where the top hits' text can be read from, so a reranker can score the pairs. Only the
+    /// hits that were actually returned, in their order.
+    pub rerankable: Vec<Rerankable>,
     /// Why the vector arm did not run, when it did not. Shown by `cortex explain`, because
     /// "semantic search found nothing" and "semantic search is not running" look identical from
     /// the outside and have entirely different fixes.
@@ -200,7 +203,7 @@ pub fn run(params: Params<'_>) -> Outcome {
             .then(a.0.node_id.0.cmp(&b.0.node_id.0))
     });
 
-    let hits = boosted
+    let hits: Vec<SearchHit> = boosted
         .iter()
         .take(params.limit)
         .map(|(f, boost, final_score)| {
@@ -232,8 +235,36 @@ pub fn run(params: Params<'_>) -> Outcome {
         })
         .collect();
 
+    let rerankable: Vec<Rerankable> = hits
+        .iter()
+        .map(|hit| match chunks.get(&hit.node_id) {
+            Some(chunk) => Rerankable {
+                node_id: hit.node_id,
+                path: chunk.path.clone(),
+                byte_start: chunk.byte_start,
+                byte_end: chunk.byte_end,
+                hash: chunk.hash.clone(),
+                preview: chunk.preview.clone(),
+            },
+            // A path-only hit has no chunk at all. It is still rerankable — against its own
+            // name, which is what the user matched on.
+            None => Rerankable {
+                node_id: hit.node_id,
+                path: hit.path.clone(),
+                byte_start: 0,
+                byte_end: 0,
+                hash: String::new(),
+                preview: hit
+                    .path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned()),
+            },
+        })
+        .collect();
+
     Outcome {
         hits,
+        rerankable,
         mode: effective,
         query: query.to_string(),
         expression,
@@ -242,6 +273,19 @@ pub fn run(params: Params<'_>) -> Outcome {
         vector_candidates: vector_order.len(),
         vector_note,
     }
+}
+
+/// Enough to re-read one result's text for reranking.
+#[derive(Debug, Clone)]
+pub struct Rerankable {
+    pub node_id: NodeId,
+    pub path: PathBuf,
+    pub byte_start: i64,
+    pub byte_end: i64,
+    pub hash: String,
+    /// The stored excerpt, used when the file has moved on. Weaker than the chunk but better
+    /// than dropping the candidate, which would let a stale file quietly lose its ranking.
+    pub preview: Option<String>,
 }
 
 /// A chunk that matched, whichever arm found it.
@@ -359,6 +403,116 @@ fn snippet_for(hit: &ChunkMatch, terms: &[String]) -> Option<String> {
             .map(|preview| snippet::excerpt(preview, terms, SNIPPET_CHARS))
     })
 }
+
+/// Reorder the top results by asking a cross-encoder to read each one against the query.
+///
+/// This is the last stage and the only one that reads a query and a passage *together*, which is
+/// why it is also the only one that can tell "storage costs went up" from "storage costs were
+/// discussed" — and why it cannot run over the whole corpus. It reorders; it never adds. A
+/// document that retrieval did not surface cannot be rescued here, which is the honest limit of
+/// reranking and worth knowing before reaching for it as a fix.
+///
+/// Failure is not fatal: the fused order stands and the caller keeps what it had.
+pub fn rerank(
+    outcome: &Outcome,
+    reranker: &dyn Reranker,
+    top_n: usize,
+    snippet_chars: usize,
+) -> std::result::Result<Vec<SearchHit>, String> {
+    let considered = top_n.min(outcome.hits.len());
+    if considered == 0 {
+        return Ok(outcome.hits.clone());
+    }
+
+    // Read each candidate's text. The chunk, when it is still what the index says it is; the
+    // stored preview otherwise; the file name for a hit that has no content at all.
+    let mut texts: Vec<String> = Vec::with_capacity(considered);
+    for candidate in outcome.rerankable.iter().take(considered) {
+        let text = if candidate.byte_end > candidate.byte_start {
+            snippet::chunk_text(Location {
+                path: &candidate.path,
+                byte_start: candidate.byte_start as usize,
+                byte_end: candidate.byte_end as usize,
+                hash: &candidate.hash,
+            })
+        } else {
+            None
+        };
+        texts.push(
+            text.or_else(|| candidate.preview.clone())
+                .unwrap_or_else(|| candidate.path.display().to_string()),
+        );
+    }
+
+    // In batches, not all at once. Attention is quadratic in sequence length and linear in batch
+    // size, so thirty long pairs in one call asked for 377 MB of GPU memory and failed on a card
+    // that was busy with something else — measured, on a machine where a language model held
+    // most of the card. Several smaller calls cost a little more wall-clock and a great deal
+    // less peak memory.
+    let passages: Vec<&str> = texts.iter().map(|t| t.as_str()).collect();
+    let mut scores = Vec::with_capacity(passages.len());
+    for group in passages.chunks(reranker.max_batch()) {
+        scores.extend(
+            reranker
+                .score(&outcome.query, group)
+                .map_err(|e| e.to_string())?,
+        );
+    }
+
+    // Fused with the order retrieval already produced, not substituted for it.
+    //
+    // Substituting was the first implementation and the goldset rejected it: MRR fell from 0.882
+    // to 0.746 and top-1 from 86 % to 72 %, because when a cross-encoder finds nothing it likes,
+    // its scores collapse into a narrow negative band where the ordering is noise — and replacing
+    // a good order with noise is worse than leaving it alone. Measured on this corpus it ranked
+    // word-salad distractors above the right answer.
+    //
+    // Reciprocal rank fusion is the mechanism this project already uses for exactly this
+    // situation: two opinions on incomparable scales, combined on ranks. A document the reranker
+    // loves rises; one it dislikes falls; neither can be thrown away by a model having a bad day.
+    let mut by_rerank: Vec<(usize, f32)> = scores.iter().copied().enumerate().collect();
+    by_rerank.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut rerank_position = vec![considered; considered];
+    for (position, (index, _)) in by_rerank.iter().enumerate() {
+        rerank_position[*index] = position;
+    }
+
+    let mut reordered: Vec<SearchHit> = outcome.hits.clone();
+    let mut fused: Vec<(usize, f64)> = Vec::with_capacity(considered);
+    for index in 0..considered {
+        reordered[index].score.rerank = Some(scores[index] as f64);
+        let retrieval_rank = index + 1;
+        let reranked_rank = rerank_position[index] + 1;
+        let combined = 1.0 / (RERANK_RRF_K + retrieval_rank as f64)
+            + 1.0 / (RERANK_RRF_K + reranked_rank as f64);
+        reordered[index].score.final_score = combined;
+        fused.push((index, combined));
+    }
+
+    fused.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.0.cmp(&b.0))
+    });
+    let head: Vec<SearchHit> = fused
+        .iter()
+        .map(|(index, _)| reordered[*index].clone())
+        .collect();
+    let tail: Vec<SearchHit> = reordered.into_iter().skip(considered).collect();
+
+    let _ = snippet_chars;
+    Ok(head.into_iter().chain(tail).collect())
+}
+
+/// `k` for fusing the reranked order with the retrieved one.
+///
+/// Deliberately smaller than the `k` used across retrieval arms (60). There the arms are peers;
+/// here the two orders are opinions about the *same* short list, and a large `k` would flatten
+/// the difference between rank one and rank thirty into nothing. Ten lets the reranker actually
+/// move things while still requiring it to disagree strongly before it can bury a result that
+/// retrieval put first.
+const RERANK_RRF_K: f64 = 10.0;
 
 /// Explain one node's position in a result list.
 pub fn explain(outcome: &Outcome, node_id: NodeId) -> (Option<u32>, Option<ScoreBreakdown>) {

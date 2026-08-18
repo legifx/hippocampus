@@ -12,6 +12,7 @@ use cortex_core::model::{Action, Actor, QueryMode};
 use cortex_ingest::throttle;
 use cortex_query::search;
 use cortex_query::PathIndex;
+use cortex_rpc::protocol::SearchUpdateParams;
 use cortex_rpc::protocol::{
     method, ActivityPingResult, EpisodeAppendParams, EpisodesRecentParams, EpisodesRecentResult,
     CanonicalDumpResult, ExtractRequeueResult, ExtractStatusResult, IndexPathParams,
@@ -184,6 +185,8 @@ impl Daemon {
             note: status.note,
             model_present: status.model_present,
             runtime_present: status.runtime_present,
+            runtime_id: status.runtime_id,
+            runtime_is_cuda: status.runtime_is_cuda,
             model_dir: status.model_dir,
             runtime_path: status.runtime_path,
             download_bytes: cortex_embed::registry::model_by_id(&self.config.embedding.model)
@@ -307,7 +310,13 @@ async fn handle_connection(
     stream: UnixStream,
     daemon: Arc<Daemon>,
 ) -> Result<(), transport::TransportError> {
-    let mut reader = BufReader::new(stream);
+    // Split, so that a task spawned to finish a search can write its answer while this loop is
+    // still reading the next request. Without the split, a reranked result could only be sent by
+    // blocking the connection until it was ready — which is precisely what "first results are
+    // never blocked" (D7) is supposed to prevent.
+    let (reader, writer) = tokio::io::split(stream);
+    let mut reader = BufReader::new(reader);
+    let writer = Arc::new(tokio::sync::Mutex::new(writer));
 
     loop {
         let value = match transport::read_message(&mut reader).await {
@@ -320,11 +329,9 @@ async fn handle_connection(
                     serde_json::Value::Null,
                     RpcError::new(RpcError::PARSE_ERROR, e.to_string()),
                 );
-                let _ = transport::write_message(
-                    reader.get_mut(),
-                    &serde_json::to_value(&response).unwrap(),
-                )
-                .await;
+                let mut guard = writer.lock().await;
+                let _ = transport::write_message(&mut *guard, &serde_json::to_value(&response).unwrap())
+                    .await;
                 return Err(e);
             }
         };
@@ -336,35 +343,98 @@ async fn handle_connection(
                     serde_json::Value::Null,
                     RpcError::new(RpcError::INVALID_REQUEST, e.to_string()),
                 );
-                transport::write_message(
-                    reader.get_mut(),
-                    &serde_json::to_value(&response).unwrap(),
-                )
-                .await?;
+                let mut guard = writer.lock().await;
+                transport::write_message(&mut *guard, &serde_json::to_value(&response).unwrap())
+                    .await?;
                 continue;
             }
         };
 
         let id = request.id.clone();
-        let outcome = dispatch(&daemon, &request.method, request.params).await;
+        let method = request.method.clone();
+        // A search keeps its outcome here so the reranker can reuse it. Re-running the search in
+        // the background task would be simpler and would double every query's retrieval work.
+        let mut refinable: Option<search::Outcome> = None;
+        let outcome = dispatch(&daemon, &method, request.params, &mut refinable).await;
 
         // A request without an id is a notification: the caller expects no answer, and sending
         // one would desynchronise its stream.
         let Some(id) = id else { continue };
 
         let response = match outcome {
-            Ok(result) => Response::ok(id, result),
-            Err(error) => Response::err(id, error),
+            Ok(result) => Response::ok(id.clone(), result),
+            Err(error) => Response::err(id.clone(), error),
         };
-        transport::write_message(reader.get_mut(), &serde_json::to_value(&response).unwrap())
-            .await?;
+        {
+            let mut guard = writer.lock().await;
+            transport::write_message(&mut *guard, &serde_json::to_value(&response).unwrap()).await?;
+        }
+
+        // The answer is out. Anything better than it arrives separately.
+        if let Some(outcome) = refinable {
+            spawn_rerank(daemon.clone(), writer.clone(), id, outcome);
+        }
     }
+}
+
+/// Rerank a search that has already been answered, and send the better order as a notification.
+///
+/// Everything about this is deliberately after the fact: the reranker is a second model, it reads
+/// each candidate together with the query, and it takes long enough that waiting for it would
+/// undo the point of having fast retrieval at all (D7).
+fn spawn_rerank(
+    daemon: Arc<Daemon>,
+    writer: Arc<tokio::sync::Mutex<tokio::io::WriteHalf<UnixStream>>>,
+    id: serde_json::Value,
+    outcome: search::Outcome,
+) {
+    let Some(reranker) = daemon.semantics.reranker() else {
+        return;
+    };
+
+    tokio::spawn(async move {
+        let started = Instant::now();
+        let top_n = daemon.config.search.rerank_top_n;
+
+        // Inference is blocking and long by this crate's standards; it does not belong on the
+        // runtime that serves every other client.
+        let reranked = tokio::task::spawn_blocking(move || {
+            let model = reranker.model().id.clone();
+            match search::rerank(&outcome, reranker.as_ref(), top_n, 200) {
+                Ok(hits) => Some((hits, model)),
+                Err(e) => {
+                    tracing::warn!(error = %e, "reranking failed; the fused order stands");
+                    None
+                }
+            }
+        })
+        .await;
+
+        let Ok(Some((hits, model))) = reranked else {
+            return;
+        };
+        let notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": method::SEARCH_UPDATE,
+            "params": SearchUpdateParams {
+                request_id: id,
+                hits,
+                elapsed_ms: started.elapsed().as_millis() as u64,
+                model,
+            },
+        });
+
+        let mut guard = writer.lock().await;
+        // The client may have gone; that is not an error worth logging loudly.
+        let _ = transport::write_message(&mut *guard, &notification).await;
+    });
 }
 
 async fn dispatch(
     daemon: &Arc<Daemon>,
     method: &str,
     params: Option<serde_json::Value>,
+    refinable: &mut Option<search::Outcome>,
 ) -> Result<serde_json::Value, RpcError> {
     match method {
         method::PING => json(PingResult {
@@ -419,14 +489,22 @@ async fn dispatch(
                 }),
             );
 
-            json(SearchResult {
-                hits: outcome.hits,
+            let refining = params.rerank.unwrap_or(daemon.config.search.rerank)
+                && daemon.semantics.reranker().is_some()
+                && !outcome.hits.is_empty();
+
+            let result = SearchResult {
+                hits: outcome.hits.clone(),
                 mode: outcome.mode,
                 elapsed_ms: started.elapsed().as_millis() as u64,
-                // The cross-encoder is the only thing that would arrive later, and it belongs
-                // to M2's second half.
-                partial: false,
-            })
+                // True means a better order is on its way as a `search.update` notification.
+                // A client that does not wait for it still has a complete answer.
+                partial: refining,
+            };
+            if refining {
+                *refinable = Some(outcome);
+            }
+            json(result)
         }
 
         method::SEARCH_EXPLAIN => {
@@ -451,6 +529,9 @@ async fn dispatch(
                 // "not in the top ten" is not an explanation.
                 limit: Some(daemon.config.search.candidates_per_arm),
                 prefix: params.prefix,
+                // Explaining shows the ranking the search produced, not one a second model
+                // would produce afterwards.
+                rerank: Some(false),
             });
 
             let (rank, score) = match &node {

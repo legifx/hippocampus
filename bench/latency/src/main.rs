@@ -256,6 +256,36 @@ fn main() {
             println!("query embedding not measured: set HIPPOCAMPUS_TEST_RUNTIME and HIPPOCAMPUS_TEST_MODEL");
         }
 
+        // ---- Cross-encoder rerank of the top 30 -------------------------------------------
+        // The one gate that only exists when the model does. Measured over thirty realistic
+        // pairs, which is what `search.rerank_top_n` defaults to.
+        if let Some(reranker) = real_reranker() {
+            let passages: Vec<String> = (0..30)
+                .map(|i| {
+                    format!(
+                        "Abschnitt {i}. {}",
+                        "Ein Absatz von der Laenge eines echten Chunks, der ueber mehrere Saetze \
+                         geht und daher realistisch tokenisiert wird. "
+                            .repeat(6)
+                    )
+                })
+                .collect();
+            let refs: Vec<&str> = passages.iter().map(|p| p.as_str()).collect();
+            let queries = ["warum sind die kosten gestiegen", "camera mounting comparison"];
+            let (r50, r95, r99) = measure(&queries, args.reps.min(20), |q| {
+                let scores = reranker.score(q, &refs).unwrap();
+                std::hint::black_box(scores.len());
+            });
+            gates.push(Gate {
+                name: "cross-encoder rerank, top 30",
+                budget: Duration::from_millis(150),
+                measured: r95,
+                detail: format!("P50 {r50:?}, P95 {r95:?}, P99 {r99:?}, {}", reranker.backend()),
+            });
+        } else {
+            println!("reranking not measured: set HIPPOCAMPUS_TEST_RERANKER");
+        }
+
         // ---- The case the budget does not cover -------------------------------------------
         // A query for a word that is in a third of the corpus. FTS5 scores every match before
         // it can rank them, so this is linear in matches and no top-k trick avoids it. It is
@@ -423,9 +453,26 @@ fn real_embedder() -> Option<Box<dyn Embedder>> {
         cortex_embed::E5_SMALL,
         cortex_embed::onnx::Device::Cpu,
         8,
+        1024,
     )
     .ok()
     .map(|e| Box::new(e) as Box<dyn Embedder>)
+}
+
+/// The cross-encoder, when the machine has one.
+fn real_reranker() -> Option<Box<dyn cortex_embed::Reranker>> {
+    let runtime = PathBuf::from(std::env::var("HIPPOCAMPUS_TEST_RUNTIME").ok()?);
+    let model = PathBuf::from(std::env::var("HIPPOCAMPUS_TEST_RERANKER").ok()?);
+    cortex_embed::onnx::OnnxReranker::load(
+        &runtime,
+        &model,
+        cortex_embed::RERANKER,
+        cortex_embed::onnx::Device::Auto,
+        8,
+        1024,
+    )
+    .ok()
+    .map(|r| Box::new(r) as Box<dyn cortex_embed::Reranker>)
 }
 
 /// Open the cached content index, building it first if it is missing or stale.

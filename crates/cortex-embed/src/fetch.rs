@@ -16,7 +16,7 @@
 //!   downloaded again, so the command can be re-run after a failure without paying for what
 //!   already worked.
 
-use crate::registry::{FileSpec, ModelSpec, RuntimeSpec};
+use crate::registry::{FileSpec, ModelSpec, RerankerSpec, RuntimeSpec};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{Read, Write};
@@ -91,8 +91,40 @@ impl ModelStore {
         self.model_dir(model).join(name)
     }
 
+    /// Where a reranker lives. Beside the models, versioned the same way.
+    pub fn reranker_dir(&self, spec: &RerankerSpec) -> PathBuf {
+        self.root.join(spec.id).join(spec.version)
+    }
+
+    pub fn reranker_present(&self, spec: &RerankerSpec) -> bool {
+        spec.files.iter().all(|file| {
+            fs::metadata(self.reranker_dir(spec).join(file.name))
+                .map(|m| m.len() == file.bytes)
+                .unwrap_or(false)
+        })
+    }
+
+    /// Fetch a reranker's files.
+    pub fn fetch_reranker(
+        &self,
+        spec: &RerankerSpec,
+        mut progress: impl FnMut(Progress<'_>),
+    ) -> Result<()> {
+        let dir = self.reranker_dir(spec);
+        fs::create_dir_all(&dir)?;
+        for file in spec.files {
+            let target = dir.join(file.name);
+            if is_complete(&target, file) {
+                progress(Progress::AlreadyPresent { name: file.name });
+                continue;
+            }
+            download_verified(file, &target, &mut progress)?;
+        }
+        Ok(())
+    }
+
     pub fn runtime_dir(&self, runtime: &RuntimeSpec) -> PathBuf {
-        self.root.join("onnxruntime").join(runtime.version)
+        self.root.join(runtime.id).join(runtime.version)
     }
 
     pub fn runtime_library(&self, runtime: &RuntimeSpec) -> PathBuf {
@@ -112,8 +144,16 @@ impl ModelStore {
         })
     }
 
+    /// Whether every library of this runtime is installed.
+    ///
+    /// Every one, not just the main library: a GPU build missing its provider loads without an
+    /// error and silently has no GPU, which is the worst of both outcomes.
     pub fn runtime_present(&self, runtime: &RuntimeSpec) -> bool {
-        self.runtime_library(runtime).exists()
+        let dir = self.runtime_dir(runtime);
+        runtime
+            .libraries
+            .iter()
+            .all(|(_, installed)| dir.join(installed).exists())
     }
 
     /// Fetch every file of a model that is not already there.
@@ -144,7 +184,7 @@ impl ModelStore {
         let dir = self.runtime_dir(runtime);
         fs::create_dir_all(&dir)?;
         let library = self.runtime_library(runtime);
-        if library.exists() {
+        if self.runtime_present(runtime) {
             progress(Progress::AlreadyPresent {
                 name: runtime.library,
             });
@@ -156,7 +196,9 @@ impl ModelStore {
             download_verified(&runtime.archive, &archive, &mut progress)?;
         }
 
-        extract_library(&archive, runtime.library_in_archive, &library)?;
+        for (inside, installed) in runtime.libraries {
+            extract_library(&archive, inside, &dir.join(installed))?;
+        }
         // The archive is a hundred times the size of what was wanted from it, and it is
         // re-downloadable. Keeping it would be keeping a cache of a cache.
         let _ = fs::remove_file(&archive);
@@ -297,7 +339,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let store = ModelStore::new(tmp.path());
         assert!(!store.model_present(&E5_SMALL));
-        assert!(!store.runtime_present(&crate::registry::RUNTIME));
+        assert!(!store.runtime_present(&crate::registry::RUNTIME_CPU));
+        assert!(!store.runtime_present(&crate::registry::RUNTIME_CUDA));
     }
 
     #[test]
@@ -328,6 +371,29 @@ mod tests {
             !store.model_present(&E5_SMALL),
             "a truncated download must not look like a model"
         );
+    }
+
+    #[test]
+    fn a_runtime_missing_one_of_its_libraries_does_not_count_as_present() {
+        // The GPU build is three files. With only the main library installed, ONNX Runtime loads,
+        // reports nothing, and silently has no GPU — which is the worst of the possible outcomes,
+        // because everything appears to work and only the speed says otherwise.
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ModelStore::new(tmp.path());
+        let runtime = crate::registry::RUNTIME_CUDA;
+        let dir = store.runtime_dir(&runtime);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(dir.join(runtime.library), b"main library only").unwrap();
+        assert!(
+            !store.runtime_present(&runtime),
+            "a GPU runtime without its provider must not count as installed"
+        );
+
+        for (_, installed) in runtime.libraries {
+            fs::write(dir.join(installed), b"x").unwrap();
+        }
+        assert!(store.runtime_present(&runtime));
     }
 
     #[test]

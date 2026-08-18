@@ -29,7 +29,7 @@ fn embedder() -> Option<OnnxEmbedder> {
         eprintln!("skipped: no model at {}", model.display());
         return None;
     }
-    match OnnxEmbedder::load(&runtime, &model, E5_SMALL, Device::Cpu, 4) {
+    match OnnxEmbedder::load(&runtime, &model, E5_SMALL, Device::Cpu, 4, 1024) {
         Ok(embedder) => Some(embedder),
         Err(e) => panic!("the model is present but would not load: {e}"),
     }

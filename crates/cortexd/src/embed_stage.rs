@@ -126,6 +126,7 @@ impl Embedding {
         // The chunk table as it was when the queue last came back empty. While it is unchanged
         // there is provably nothing to embed, and asking again costs a scan of every chunk.
         let mut settled_at: Option<(i64, i64)> = None;
+        let mut seen_generation = 0u64;
 
         while !self.state.stop_requested() {
             if self.state.is_paused() {
@@ -153,6 +154,17 @@ impl Embedding {
 
             // Cheap first: two indexed aggregates. Only when they differ from the last settled
             // state is the expensive queue query worth running.
+            //
+            // They are not sufficient on their own. A rebuild deletes every chunk and re-creates
+            // it, and SQLite hands out the same row ids again — so the count and the highest id
+            // come back identical while every vector in the table has just been dropped. That is
+            // what the signal is for, and why it is a generation rather than a flag: extraction
+            // and embedding both have to see it.
+            let generation = self.state.work_generation();
+            if generation != seen_generation {
+                settled_at = None;
+                seen_generation = generation;
+            }
             let watermark = self.store.chunk_watermark().ok();
             if settled_at.is_some() && watermark == settled_at {
                 self.sleep(idle_wait);
@@ -348,7 +360,7 @@ impl Embedding {
 
         let mut batch: Vec<(cortex_core::ids::ChunkId, Vec<f32>)> = Vec::with_capacity(1024);
         let mut added = 0usize;
-        let mut flush = |batch: &mut Vec<(cortex_core::ids::ChunkId, Vec<f32>)>| {
+        let flush = |batch: &mut Vec<(cortex_core::ids::ChunkId, Vec<f32>)>| {
             if batch.is_empty() {
                 return;
             }
@@ -444,7 +456,7 @@ mod tests {
             // The built-in embedder, through the same path the real one takes: no model files,
             // no download, and every other line of this stage exercised exactly as it ships.
             config.embedding.model = HashingEmbedder::ID.to_string();
-            let semantics = Semantics::new(&root, config.embedding.clone());
+            let semantics = Semantics::new(&root, config.embedding.clone(), false);
             semantics.load().expect("the hashing embedder always loads");
 
             Self {
@@ -728,6 +740,40 @@ mod tests {
             counter.texts.load(Ordering::Relaxed),
             first,
             "a re-index called the model again"
+        );
+    }
+
+    #[test]
+    fn a_rebuild_is_noticed_even_though_the_chunk_ids_come_back_the_same() {
+        // The bug this prevents took a live rebuild to find. Dropping every chunk and
+        // re-creating it gives the new rows the same SQLite row ids, so the cheap watermark —
+        // count and highest id — is byte for byte what it was. Left to that alone, the stage
+        // concluded there was nothing to do while 1 721 chunks sat there with no vectors.
+        let harness = Harness::new();
+        harness.add("wird-neu-gebaut.txt", "Inhalt der wiederkommt.\n");
+        harness.drain();
+        let before = harness.store.chunk_watermark().unwrap();
+        assert_eq!(harness.vectors().len(), 1);
+
+        // Exactly what `cortex rebuild --drop-embeddings` does.
+        harness.store.clear_derived(false).unwrap();
+        harness.add("wird-neu-gebaut.txt", "Inhalt der wiederkommt.\n");
+        assert_eq!(
+            harness.store.chunk_watermark().unwrap(),
+            before,
+            "the fixture is wrong: the watermark did change, so this proves nothing"
+        );
+
+        // The rebuild signals; the stage must act on that rather than on the watermark.
+        let generation = harness.state.work_generation();
+        harness.state.signal_work();
+        assert!(harness.state.work_generation() > generation);
+
+        harness.drain();
+        assert_eq!(
+            harness.store.embedding_count(harness.model_ref()).unwrap(),
+            1,
+            "the chunk must have been embedded again"
         );
     }
 

@@ -109,8 +109,13 @@ pub struct SearchConfig {
     /// makes the search feel arbitrary, so this is bounded.
     pub max_salience_boost: f64,
     /// Run the cross-encoder reranker over the top results, asynchronously.
+    ///
+    /// On by default, but it does nothing until the reranker model has been fetched — the first
+    /// results are never delayed by it either way (D7).
     pub rerank: bool,
     pub rerank_top_n: usize,
+    /// Which cross-encoder to use. Empty means the built-in default.
+    pub reranker_model: String,
 }
 
 impl Default for SearchConfig {
@@ -122,6 +127,7 @@ impl Default for SearchConfig {
             max_salience_boost: 1.5,
             rerank: true,
             rerank_top_n: 30,
+            reranker_model: "mmarco-mMiniLMv2-L12-H384-v1".to_string(),
         }
     }
 }
@@ -161,6 +167,15 @@ pub struct EmbeddingConfig {
     /// whichever chunk in it happens to be longest.
     pub batch_size: usize,
 
+    /// Ceiling on GPU memory, in megabytes.
+    ///
+    /// **The card is not ours.** Measured on the reference workstation while a local language
+    /// model held 11.7 GB of a 16 GB card: without a cap, a batch of 32 chunks asked for 273 MB
+    /// it could not get and the whole pass failed. With a cap the arena stays inside what was
+    /// asked for, and everything else on the machine keeps running. This is the "GPU memory cap"
+    /// the build prompt lists among M2's hard resource budgets.
+    pub gpu_memory_mb: usize,
+
     /// Use this ONNX Runtime library instead of the one in the state directory. For a system
     /// installation, or for a build of the runtime with different providers.
     pub runtime_path: Option<PathBuf>,
@@ -174,6 +189,7 @@ impl Default for EmbeddingConfig {
             device: "auto".to_string(),
             threads: 8,
             batch_size: 16,
+            gpu_memory_mb: 1024,
             runtime_path: None,
         }
     }
@@ -310,6 +326,11 @@ impl Config {
         }
         if self.embedding.batch_size == 0 {
             return bad("embedding.batch_size must be at least 1".into());
+        }
+        if self.embedding.gpu_memory_mb < 64 {
+            return bad(
+                "embedding.gpu_memory_mb below 64 cannot hold the model's working set".into(),
+            );
         }
         if !(0.0..=1.0).contains(&self.resources.cpu_share_active) {
             return bad("resources.cpu_share_active must be between 0.0 and 1.0".into());

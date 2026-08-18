@@ -96,6 +96,7 @@ fn main() -> Result<()> {
     let semantics = Arc::new(semantics::Semantics::new(
         paths.state_dir(),
         config.embedding.clone(),
+        config.search.rerank,
     ));
     match semantics.load() {
         Ok(backend) => tracing::info!(backend = %backend, "embedding model ready"),
@@ -103,6 +104,12 @@ fn main() -> Result<()> {
             reason = %note,
             "no embedding model; path and lexical search are unaffected"
         ),
+    }
+    // The reranker is a separate download and a separate failure: a machine with one and not the
+    // other gets the half it has.
+    match semantics.load_reranker() {
+        Ok(backend) => tracing::info!(backend = %backend, "reranker ready"),
+        Err(note) => tracing::info!(reason = %note, "no reranker; results are shown as retrieved"),
     }
 
     // The ingest loop gets its own thread: its work is blocking by nature, and running it on

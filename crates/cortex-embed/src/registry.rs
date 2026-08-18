@@ -86,6 +86,57 @@ pub const E5_SMALL: ModelSpec = ModelSpec {
     ],
 };
 
+/// A cross-encoder: it reads a query and a passage *together* and scores the pair.
+///
+/// That is the whole difference from an embedder, and it is why it goes last rather than first.
+/// An embedder turns a passage into a vector once, offline, and a search compares vectors; a
+/// cross-encoder cannot precompute anything, so it costs one forward pass per candidate at query
+/// time. Thirty of those is affordable; thirty thousand is not, which is exactly why it reranks
+/// what retrieval already narrowed down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RerankerSpec {
+    pub id: &'static str,
+    pub version: &'static str,
+    pub max_tokens: usize,
+    /// XLM-RoBERTa's padding token. Padding with the wrong id is not an error and not visible;
+    /// it just quietly scores the padding.
+    pub pad_token: i64,
+    pub files: &'static [FileSpec],
+}
+
+impl RerankerSpec {
+    pub fn total_bytes(&self) -> u64 {
+        self.files.iter().map(|f| f.bytes).sum()
+    }
+}
+
+/// `mmarco-mMiniLMv2-L12-H384-v1`.
+///
+/// Chosen to match the embedder rather than to beat it: the same twelve layers and 384 hidden
+/// units, trained on mMARCO in fourteen languages. A larger reranker (bge-reranker-base is
+/// 1.1 GB) scores better on English benchmarks and costs three times as much for a corpus that
+/// is half German.
+pub const RERANKER: RerankerSpec = RerankerSpec {
+    id: "mmarco-mMiniLMv2-L12-H384-v1",
+    version: "1",
+    max_tokens: 512,
+    pad_token: 1,
+    files: &[
+        FileSpec {
+            name: "model.onnx",
+            url: "https://huggingface.co/cross-encoder/mmarco-mMiniLMv2-L12-H384-v1/resolve/main/onnx/model.onnx",
+            sha256: "3e9a03ed1e966f7c5288dd4230e3d6a9bf5e3a170a06f1f4241c5bca12c6487c",
+            bytes: 470_883_696,
+        },
+        FileSpec {
+            name: "tokenizer.json",
+            url: "https://huggingface.co/cross-encoder/mmarco-mMiniLMv2-L12-H384-v1/resolve/main/tokenizer.json",
+            sha256: "62c24cdc13d4c9952d63718d6c9fa4c287974249e16b7ade6d5a85e7bbb75626",
+            bytes: 17_082_660,
+        },
+    ],
+};
+
 /// Every model this build knows how to run.
 pub const MODELS: &[ModelSpec] = &[E5_SMALL];
 
@@ -93,15 +144,37 @@ pub fn model_by_id(id: &str) -> Option<&'static ModelSpec> {
     MODELS.iter().find(|m| m.id == id)
 }
 
-/// The ONNX Runtime shared library.
+/// The ONNX Runtime, in the two builds this project knows how to use.
 ///
 /// Fetched like a model rather than required as a system package, for three reasons: it keeps
 /// `cargo build` free of network access, it avoids asking anybody for root to try this project,
-/// and it puts the runtime under the same checksum discipline as the model it loads.
+/// and it puts the runtime under the same checksum discipline as the model it loads (D25).
 ///
 /// The library is loaded by path at startup, so a system installation can be used instead by
 /// pointing `embedding.runtime_path` at it.
-pub const RUNTIME: RuntimeSpec = RuntimeSpec {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeSpec {
+    /// Short name, and the directory it installs into.
+    pub id: &'static str,
+    pub version: &'static str,
+    pub archive: FileSpec,
+    /// Files to take out of the archive, as `(path inside, name installed)`.
+    ///
+    /// More than one for the GPU build: the execution provider is a separate shared object that
+    /// ONNX Runtime opens *by name, from the directory of the main library*. Installing it
+    /// anywhere else produces a runtime that loads and then quietly has no CUDA.
+    pub libraries: &'static [(&'static str, &'static str)],
+    /// The one the daemon opens.
+    pub library: &'static str,
+    /// Whether this build can use the GPU at all.
+    pub cuda: bool,
+    /// What has to be installed on the machine for it to work.
+    pub requires: &'static str,
+}
+
+/// The CPU build. 11 MB, works anywhere.
+pub const RUNTIME_CPU: RuntimeSpec = RuntimeSpec {
+    id: "onnxruntime",
     version: "1.29.0",
     archive: FileSpec {
         name: "onnxruntime-linux-x64-1.29.0.tgz",
@@ -109,19 +182,56 @@ pub const RUNTIME: RuntimeSpec = RuntimeSpec {
         sha256: "c3fddc4f139a045b0c4902c57410f0694f1c2fdf9b6939fbe38b1aeae7cd14ba",
         bytes: 11_082_880,
     },
-    // Path of the library inside the archive.
-    library_in_archive: "onnxruntime-linux-x64-1.29.0/lib/libonnxruntime.so.1.29.0",
+    libraries: &[(
+        "onnxruntime-linux-x64-1.29.0/lib/libonnxruntime.so.1.29.0",
+        "libonnxruntime.so",
+    )],
     library: "libonnxruntime.so",
+    cuda: false,
+    requires: "nothing",
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RuntimeSpec {
-    pub version: &'static str,
-    pub archive: FileSpec,
-    /// Path of the shared library inside the archive.
-    pub library_in_archive: &'static str,
-    /// Name it is installed under, which is also what the daemon loads by path.
-    pub library: &'static str,
+/// The CUDA build (D6). 191 MB, and it needs a CUDA runtime and cuDNN on the machine — a driver
+/// alone is not enough, which is the failure everybody hits first.
+pub const RUNTIME_CUDA: RuntimeSpec = RuntimeSpec {
+    id: "onnxruntime-cuda13",
+    version: "1.29.0",
+    archive: FileSpec {
+        name: "onnxruntime-linux-x64-gpu_cuda13-1.29.0.tgz",
+        url: "https://github.com/microsoft/onnxruntime/releases/download/v1.29.0/onnxruntime-linux-x64-gpu_cuda13-1.29.0.tgz",
+        sha256: "844c64acfc43ab9423215c26493055ea229268e28283146cc644ecef0bdae048",
+        bytes: 191_380_186,
+    },
+    libraries: &[
+        (
+            "onnxruntime-linux-x64-gpu_cuda13-1.29.0/lib/libonnxruntime.so.1.29.0",
+            "libonnxruntime.so",
+        ),
+        (
+            "onnxruntime-linux-x64-gpu_cuda13-1.29.0/lib/libonnxruntime_providers_cuda.so",
+            "libonnxruntime_providers_cuda.so",
+        ),
+        (
+            "onnxruntime-linux-x64-gpu_cuda13-1.29.0/lib/libonnxruntime_providers_shared.so",
+            "libonnxruntime_providers_shared.so",
+        ),
+    ],
+    library: "libonnxruntime.so",
+    cuda: true,
+    requires: "CUDA 13 runtime and cuDNN 9",
+};
+
+pub const RUNTIMES: &[RuntimeSpec] = &[RUNTIME_CPU, RUNTIME_CUDA];
+
+/// The runtime a given device setting wants, best first.
+///
+/// `auto` and `cuda` prefer the GPU build and accept the CPU one, because a GPU build that
+/// cannot find CUDA still runs on the CPU — it is a superset, not an alternative.
+pub fn runtimes_for(device: &str) -> &'static [RuntimeSpec] {
+    match device {
+        "cpu" => &[RUNTIME_CPU],
+        _ => &[RUNTIME_CUDA, RUNTIME_CPU],
+    }
 }
 
 #[cfg(test)]
@@ -133,7 +243,8 @@ mod tests {
         // A truncated or placeholder hash would pass a naive comparison against a prefix and
         // silently disable the only integrity check this project has.
         let mut files: Vec<&FileSpec> = MODELS.iter().flat_map(|m| m.files.iter()).collect();
-        files.push(&RUNTIME.archive);
+        files.extend(RUNTIMES.iter().map(|r| &r.archive));
+        files.extend(RERANKER.files.iter());
 
         for file in files {
             assert_eq!(
@@ -157,7 +268,8 @@ mod tests {
         // Rule R9: nothing in this repository may point at a private host, and rule R5 means
         // the one connection it does make must at least be authenticated transport.
         let mut urls: Vec<&str> = MODELS.iter().flat_map(|m| m.files.iter().map(|f| f.url)).collect();
-        urls.push(RUNTIME.archive.url);
+        urls.extend(RUNTIMES.iter().map(|r| r.archive.url));
+        urls.extend(RERANKER.files.iter().map(|f| f.url));
 
         for url in urls {
             assert!(url.starts_with("https://"), "{url} is not https");
@@ -185,6 +297,37 @@ mod tests {
         assert_eq!(E5_SMALL.dim, 384);
         assert!(E5_SMALL.file("model.onnx").is_some());
         assert!(E5_SMALL.file("tokenizer.json").is_some());
+    }
+
+    #[test]
+    fn the_gpu_runtime_installs_its_provider_beside_the_library() {
+        // ONNX Runtime opens the CUDA provider by name from the directory of the main library.
+        // Installed anywhere else, the runtime loads, reports no error, and simply has no GPU.
+        assert!(RUNTIME_CUDA.cuda);
+        assert!(RUNTIME_CUDA
+            .libraries
+            .iter()
+            .any(|(_, installed)| *installed == "libonnxruntime_providers_cuda.so"));
+        assert_eq!(RUNTIME_CUDA.library, "libonnxruntime.so");
+        assert!(RUNTIME_CUDA.libraries.iter().any(|(_, i)| *i == RUNTIME_CUDA.library));
+    }
+
+    #[test]
+    fn the_two_runtimes_install_into_different_directories() {
+        // Switching between them is a configuration change plus a fetch, not an overwrite: a
+        // machine that loses its CUDA installation must still have the CPU build to fall back on.
+        assert_ne!(RUNTIME_CPU.id, RUNTIME_CUDA.id);
+    }
+
+    #[test]
+    fn a_cpu_only_setting_never_asks_for_the_gpu_build() {
+        assert_eq!(runtimes_for("cpu").len(), 1);
+        assert!(!runtimes_for("cpu")[0].cuda);
+        // Everything else prefers the GPU build and accepts the CPU one, because the GPU build
+        // runs on the CPU too.
+        assert!(runtimes_for("auto")[0].cuda);
+        assert_eq!(runtimes_for("auto").len(), 2);
+        assert!(runtimes_for("cuda")[0].cuda);
     }
 
     #[test]

@@ -55,10 +55,13 @@ pub const TOP_LEVEL: &[&str] = &[
 
 pub const CODE_DIRS: &[&str] = &["src", "tests", "docs", "examples", "scripts", "assets"];
 
-/// Sentence fragments used to fill text files.
+/// Real sentences, kept only so that tests can assert they are **not** in the corpus.
 ///
-/// Mixed language within a single corpus, and sometimes within a single file — which is the
-/// realistic case and the hard one for retrieval.
+/// They used to be sprinkled through generated documents. That made the distractors relevant to
+/// several goldset queries without any judgement saying so, and a measurement whose distractors
+/// contain unjudged answers measures the opposite of what it claims. Content is now generated
+/// from the vocabulary alone (see `prose`).
+#[allow(dead_code)]
 pub const SENTENCES: &[&str] = &[
     "The camera angles were compared across three different mounting positions.",
     "Die Kamerawinkel wurden an drei verschiedenen Montagepositionen verglichen.",

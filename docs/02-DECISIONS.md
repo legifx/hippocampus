@@ -592,3 +592,79 @@ first install is exactly that situation.
 
 **Revisit if:** embeddings ever become cheap enough that the two stages have comparable cost —
 a GPU changes the ratio by one to two orders of magnitude, but not the direction.
+
+---
+
+### D29 — The reranked order is fused with the retrieved one, never substituted for it
+**Status:** ACCEPTED
+
+The cross-encoder scores the top thirty results, and its ranking is combined with retrieval's by
+reciprocal rank fusion (`k = 10`) rather than replacing it.
+
+**Why:** substituting was the first implementation, and the goldset rejected it — MRR fell from
+0.882 to 0.746 and top-1 from 86 % to 72 %. The cause is visible in `goldset --explain`: when a
+cross-encoder finds nothing it likes, its scores collapse into a narrow negative band where the
+ordering carries no signal. Replacing a good order with that is strictly worse than leaving it
+alone, and it happens exactly when the query is hard — which is when the ranking matters most.
+
+Fusing keeps both opinions. A result the reranker loves rises, one it dislikes falls, and neither
+can be discarded by a model having a bad day. It is also the mechanism this project already uses
+for scores on incomparable scales, which is precisely what a BM25 score, a cosine similarity and
+a cross-encoder logit are.
+
+`k = 10` rather than the 60 used across retrieval arms: there the arms are peers, here the two
+orders are opinions about the same short list, and a large `k` would flatten the difference
+between rank one and rank thirty into nothing.
+
+**Revisit if:** a goldset with plausible distractors shows the reranker's own order to be
+reliably better. See D30 — the current one cannot show that either way.
+
+---
+
+### D30 — Generated distractors must be irrelevant by construction
+**Status:** ACCEPTED
+
+The corpus generator writes no real sentences. Earlier it sprinkled sixteen genuine German and
+English sentences through generated documents so that a goldset would have memorable phrases to
+search for.
+
+**Why it had to go:** the goldset now brings its own documents, and several of its topics were
+built on those very sentences. So the "distractors" contained real answers that no judgement had
+marked relevant — and a measurement whose distractors contain unjudged answers measures the
+opposite of what it claims. It did exactly that: the reranker was scored as having *made
+retrieval worse*, when what it had actually done was find a passage that answered the question.
+Diagnosing it took `goldset --explain` and reading the file it had promoted.
+
+**Consequence, and the limit it creates:** the distractors are now Zipfian nonsense — plausible
+in shape, empty in meaning. That makes recall measurable and reranking *unmeasurable*: a
+cross-encoder earns its keep against documents that are plausible **and** irrelevant, and there
+are none. Measured on this goldset the reranker changes nothing at all (MRR 0.878 either way),
+which is a statement about the corpus rather than about the model.
+
+**Revisit when:** somebody writes a few hundred real distractor documents. That is what would
+turn "the reranker changes nothing here" into a fact about the reranker.
+
+---
+
+### D31 — The GPU is shared, so every model runs under a memory cap
+**Status:** ACCEPTED
+
+The CUDA execution provider is configured with `embedding.gpu_memory_mb` (1 GB by default), and
+the reranker batches eight pairs at a time rather than thirty.
+
+**Why:** the reference workstation has a 16 GB card of which a local language model held 11.7 GB
+during this work. Without a cap, a batch of 32 chunks asked for 273 MB it could not get and the
+whole pass failed; the reranker later failed the same way at 377 MB. A background indexer that
+takes whatever the card has, and dies when it cannot, is a bad neighbour twice over.
+
+Batching is the other half: attention is quadratic in sequence length, and a cross-encoder's
+sequences are roughly twice an embedder's because query and passage share one. Eight pairs is
+about 100 MB of working set.
+
+**Consequence:** measured throughput on a busy card — 1.85 ms per chunk against 75 ms on the CPU,
+and 16.5 ms for thirty reranked pairs against a 150 ms budget. An idle card would be faster; the
+point is that these numbers hold while somebody else is using it.
+
+**Revisit if:** the daemon ever needs to *reserve* rather than borrow. It should not: indexing is
+background work by construction (D22), and background work that evicts a foreground application
+from the GPU has misunderstood what it is.

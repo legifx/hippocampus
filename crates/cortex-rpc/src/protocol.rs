@@ -140,6 +140,9 @@ pub mod method {
     pub const EPISODES_RECENT: &str = "episodes.recent";
     pub const INDEX_PATH: &str = "index.path";
     pub const SEARCH_EXPLAIN: &str = "search.explain";
+    /// Sent by the daemon, unsolicited, when a search's results improve after they were
+    /// delivered. Never called by a client (D7).
+    pub const SEARCH_UPDATE: &str = "search.update";
     pub const EXTRACT_STATUS: &str = "extract.status";
     pub const REBUILD_INDEX: &str = "rebuild.index";
     pub const CANONICAL_DUMP: &str = "canonical.dump";
@@ -293,6 +296,24 @@ pub struct SearchParams {
     /// exact matching.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefix: Option<bool>,
+    /// Follow up with a reranked list. Defaults to the daemon's configuration; a client that
+    /// will not wait for it should turn it off so the daemon does not spend the inference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rerank: Option<bool>,
+}
+
+/// A better answer to a search that has already been answered.
+///
+/// Sent as a JSON-RPC notification, so it has no id of its own and carries the id of the request
+/// it refines. A client that does not wait for it loses nothing: the first answer was complete.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchUpdateParams {
+    /// The `id` of the `search` request these results replace.
+    pub request_id: serde_json::Value,
+    pub hits: Vec<SearchHit>,
+    /// Milliseconds the reranker took, measured from when the first answer was sent.
+    pub elapsed_ms: u64,
+    pub model: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -398,6 +419,9 @@ pub struct ModelStatusResult {
     pub note: Option<String>,
     pub model_present: bool,
     pub runtime_present: bool,
+    /// Which runtime build is installed — the CPU one or the CUDA one.
+    pub runtime_id: String,
+    pub runtime_is_cuda: bool,
     pub model_dir: String,
     pub runtime_path: String,
     /// Bytes the model would take to download, for a client that wants to warn first.

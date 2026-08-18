@@ -144,15 +144,16 @@ impl Extraction {
         );
 
         let mut idle_wait = QUEUE_EMPTY_POLL;
+        let mut seen_generation = 0u64;
         while !self.state.stop_requested() {
             if self.state.is_paused() {
                 self.sleep(QUEUE_EMPTY_POLL);
                 continue;
             }
 
-            // Cleared before the queue is read, so a file created during the read is not lost
-            // between the two.
-            self.state.clear_work_signal();
+            // Read before the queue is, so a file created during the read is acted on next time
+            // round rather than being lost between the two.
+            seen_generation = self.state.work_generation();
 
             // Timing starts *before* the queue query, because that query is work too. Measuring
             // only the extraction meant the duty cycle throttled a fraction of what the stage
@@ -161,7 +162,7 @@ impl Extraction {
             let slice_started = Instant::now();
             match self.next_batch() {
                 Ok(batch) if batch.is_empty() => {
-                    self.wait_for_work(idle_wait);
+                    self.wait_for_work(idle_wait, seen_generation);
                     idle_wait = (idle_wait * 2).min(MAX_QUEUE_POLL);
                 }
                 Ok(batch) => {
@@ -388,11 +389,11 @@ impl Extraction {
     ///
     /// The signal is what keeps a file saved on an idle machine from waiting half a minute:
     /// the backoff exists to stop the database being asked pointlessly, not to delay work.
-    fn wait_for_work(&self, total: Duration) {
+    fn wait_for_work(&self, total: Duration, seen_generation: u64) {
         let deadline = Instant::now() + total;
         while Instant::now() < deadline
             && !self.state.stop_requested()
-            && !self.state.work_signalled()
+            && self.state.work_generation() == seen_generation
         {
             let remaining = deadline.saturating_duration_since(Instant::now());
             std::thread::sleep(remaining.min(SLEEP_GRANULARITY));
@@ -765,10 +766,9 @@ mod tests {
         // has to end on a signal, not on a poll.
         let harness = Harness::new();
         let stage = harness.stage();
-        harness.state.clear_work_signal();
-
         let started = Instant::now();
-        stage.wait_for_work(Duration::from_millis(600));
+        let generation = harness.state.work_generation();
+        stage.wait_for_work(Duration::from_millis(600), generation);
         assert!(
             started.elapsed() >= Duration::from_millis(500),
             "an unsignalled wait must actually wait"
@@ -776,7 +776,7 @@ mod tests {
 
         harness.state.signal_work();
         let started = Instant::now();
-        stage.wait_for_work(Duration::from_secs(30));
+        stage.wait_for_work(Duration::from_secs(30), generation);
         assert!(
             started.elapsed() < Duration::from_millis(300),
             "a signalled wait must return at once, not after the backoff"
@@ -786,12 +786,30 @@ mod tests {
     #[test]
     fn a_new_file_signals_the_stage_awake() {
         let harness = Harness::new();
-        harness.state.clear_work_signal();
+        let before = harness.state.work_generation();
         let (node, _) = harness.add("gerade-erst.md", "Inhalt\n");
         harness.state.prioritise(node);
         assert!(
-            harness.state.work_signalled(),
+            harness.state.work_generation() > before,
             "prioritising a file must also wake whatever is going to extract it"
+        );
+    }
+
+    #[test]
+    fn one_signal_reaches_both_stages() {
+        // A boolean flag belongs to whichever stage looks first, and the other one sleeps through
+        // it. That is not hypothetical: a rebuild dropped every vector, the extraction stage
+        // consumed the signal, and the embedding stage stayed asleep with 1 721 chunks waiting.
+        let harness = Harness::new();
+        let extraction_saw = harness.state.work_generation();
+        let embedding_saw = harness.state.work_generation();
+
+        harness.state.signal_work();
+
+        assert!(harness.state.work_generation() > extraction_saw);
+        assert!(
+            harness.state.work_generation() > embedding_saw,
+            "the second stage must see the signal too"
         );
     }
 

@@ -10,129 +10,101 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | M2 — Meaning |
-| **Status** | Everything in M2 except the cross-encoder reranker. Content is extracted, chunked, embedded and searchable by meaning; recall is measured against a checked-in goldset; the index rebuilds itself. |
+| **Status** | **Complete.** Every component built, every gate green, recall measured against a checked-in goldset. One Definition-of-Done item is measured as *not met* and says so — see below. |
 | **Last updated** | 2026-08-18 |
-| **Blocked on** | nothing — but see "One question for the owner" below |
+| **Blocked on** | nothing |
 
 ## Where M2 stands — read this first
 
-M2 was built in two halves: meaning without models, then the models. **Both are done.** What is
-left of the milestone is one component, one protocol change, and one hardware question.
+Everything M2 asked for exists and is measured: extraction, chunking, a lexical index, embeddings
+on the GPU, a vector index, three-arm fusion, snippets, explainability, a cross-encoder reranker
+delivered as a result update, a goldset, and a rebuild that reproduces the index from the
+filesystem.
 
-A query now finds documents that share no word with it, in either language. Verified live on the
-reference corpus: the English query *"how fast did storage expenses grow after moving the
-archive"* returns a German document — zero candidates from the path arm, zero from the lexical
-arm, vector rank 3.
+A query finds documents that share no word with it, in either language. The proof is in
+`cortex explain`, not in a claim: for *"how fast did storage expenses grow after moving the
+archive"* the German answer comes back with **0 path candidates, 0 lexical candidates, vector
+rank 3**.
 
-### One question for the owner
+### The one criterion that is not met
 
-**Should CUDA be installed?** This machine has an RTX-class GPU and its driver, but no CUDA
-runtime and no cuDNN, so the embedder falls back to the CPU and says so. That costs:
+**German queries are 14.8 % behind English ones** (85.2 % against 100.0 % recall@10), where the
+Definition of Done allows 10 %. The build prompt names the consequence: *"the embedding model is
+wrong and D6 must be revisited"*.
 
-- 75 ms per chunk instead of the one to two milliseconds a GPU would take. Embedding the
-  reference corpus is ~2.5 hours of CPU where it would be a couple of minutes.
-- The **cross-encoder reranker**, which is the last M2 component, has a 150 ms budget for thirty
-  pairs. On this CPU that is an order of magnitude out of reach. The reranker is therefore
-  waiting on this answer rather than on anything in the code.
+Before revisiting it, know what the number is made of. **The entire gap is three queries out of
+twenty-seven**, and all three are German questions whose answer is an English document:
 
-Installing CUDA plus cuDNN is several gigabytes and needs root, which is why it has not been
-done. Everything else works without it.
+| direction | queries | found |
+|---|---|---|
+| German → German | 24 | 24 |
+| German → English | 3 | 0 |
+| English → English | 20 | 20 |
+| English → German | 3 | 3 |
 
-### Done, tested, and green (466 tests across the workspace)
+So it is not that German is handled worse. It is that **German → English retrieval fails while
+English → German works**, and the cause is measured: same-language similarity carries an offset
+of roughly 0.08–0.12 over cross-language similarity for this model, which is more than the gap
+content opens up on short texts. `goldset --explain q43` shows a German query returning twenty
+German *noise* documents ahead of the English document that answers it.
 
-The first half, from the previous session: `cortex-extract`, chunk storage that diffs rather than
-replaces, BM25, RRF fusion, snippets, `cortex explain`, the extraction stage.
+Three things could close it, none of them tried, all measurable with the instrument that now
+exists:
 
-This session:
-
-- **`cortex-embed`** — the model registry (everything this project will ever download, pinned by
-  SHA-256), provisioning with verification, `multilingual-e5-small` through ONNX Runtime with
-  mean pooling and L2 normalisation, and a hashing embedder that needs no download at all.
-- **Vectors in the store** — keyed by content hash (D26), plus a usearch HNSW index that is
-  memory-mapped (D27) and rebuildable from the table without the model.
-- **The embedding stage** — its own thread, its own queue, the same duty cycle and kill switch as
-  extraction (D28).
-- **The vector arm** — a third `Ranking` into the same fusion. `cortex explain` reports why it did
-  not run, when it did not.
-- **`cortex model fetch` / `status` / `reload`** — provisioning without a daemon, and a model that
-  can arrive while one is running.
-- **`cortex rebuild` and `cortex dump`** — rule R10 as a command and as a comparison.
-- **The goldset** — 29 judged documents, 50 judged queries, a runner that reports recall@10 by
-  arm and by what each query tests, and a checked-in baseline that fails the run on a drop of
-  more than three points.
+1. **Per-language score normalisation** in the vector arm — needs a language guess per document.
+2. **Query-side expansion**: embed the query in both languages. Doubles query embedding cost
+   (1.1 ms on the GPU, so affordable) and needs translation, which needs a model.
+3. **A different model.** `bge-m3` and `jina-embeddings-v3` are both stronger cross-lingually and
+   both several times the size. This is what "revisit D6" would mean in practice.
 
 ### What the goldset says
 
 Measured with the real model against 1 029 documents (29 judged, 1 000 generated distractors):
 
-| arm | overall | German | English | by name | lexical | semantic | cross-language |
-|---|---|---|---|---|---|---|---|
-| **fused** | **91.0 %** | 87.0 % | 95.7 % | 100 % | 100 % | 98 % | 33 % |
-| lexical only | 36.0 % | 33.3 % | 39.1 % | 100 % | 86 % | 0 % | 0 % |
-| vector only | 91.0 % | 87.0 % | 95.7 % | 100 % | 100 % | 98 % | 33 % |
+| arm | recall@10 | German | English | MRR | top-1 | by name | lexical | semantic | cross-language |
+|---|---|---|---|---|---|---|---|---|---|
+| **fused** | **92.0 %** | 85.2 % | 100.0 % | 0.878 | 86.0 % | 100 % | 100 % | 96 % | 50 % |
+| fused + rerank | 92.0 % | 85.2 % | 100.0 % | 0.878 | 86.0 % | 100 % | 100 % | 96 % | 50 % |
+| lexical only | 36.0 % | 33.3 % | 39.1 % | 0.360 | 36.0 % | 100 % | 86 % | 0 % | 0 % |
 
-Four things worth taking from that table:
+**The model is worth 56 points.** Without it every query whose answer does not repeat its words
+fails, which is the case this project exists for.
 
-1. **The model buys 55 points.** Without it, every query whose answer does not repeat its words
-   fails. That is the case this project exists for.
-2. **German is 9 % behind English**, inside the 10 % Definition-of-Done §3 allows — but only
-   just, and the whole gap is cross-language queries.
-3. **Cross-language retrieval is the weak spot at 33 %**, and the cause is measured rather than
-   guessed: same-language similarity carries an offset of roughly 0.08–0.12 over cross-language
-   similarity for this model. `goldset --explain q43` shows a German query returning twenty
-   German *noise* documents ahead of the English document that answers it. Candidate mitigations,
-   none of them tried: per-language score normalisation, query-side translation, or a reranker
-   (which cannot help — it reorders candidates and this failure is that the candidate never
-   appears).
-4. **The lexical arm adds nothing the vector arm does not already find**, at recall@10 on this
-   goldset. It is still worth its 15 ms: it answers with no model at all, it is what a fresh
-   install has, and precision at rank 1 is not what recall@10 measures.
-
-A caveat that belongs with the number: the distractors are semantically empty but linguistically
-German, which is the worst case for cross-language retrieval. On a corpus of real documents the
-33 % would be better. Fixing that means writing a thousand meaningful distractors.
+**The reranker changes nothing, and that is a fact about the goldset rather than about the
+reranker** (D30). Its distractors are Zipfian nonsense: plausible in shape, empty in meaning. A
+cross-encoder earns its keep against documents that are plausible *and* irrelevant, and there are
+none here. Verified separately that the model itself works — on clean pairs it separates the
+right answer from the wrong one by eighteen points of logit, in both languages.
 
 ### Not done
 
-1. **The cross-encoder reranker.** See the question above. It also needs the protocol to deliver
-   a second answer to one request — the socket is request/response today. That same mechanism is
-   what M4 wants for progressive results, so it is worth designing once.
-2. **PDF extraction.** `Handling::Pdf` is classified and skipped. When it lands, note that
+1. **PDF extraction.** `Handling::Pdf` is classified and skipped. When it lands, note that
    `snippet` re-runs the *text* reader for every handler; a PDF's byte offsets are into extracted
    text that no plain read reproduces, so the handling will have to be stored per node.
-3. **Tree-sitter chunking**, still staged behind the heuristic.
-4. **A wall-clock cap per extractor.** The byte budget bounds memory and the stage's own thread
+2. **Tree-sitter chunking**, still staged behind the heuristic.
+3. **A wall-clock cap per extractor.** The byte budget bounds memory and the stage's own thread
    bounds latency for everything else, but one file on a stalled network mount can hold the stage
    indefinitely.
-5. **A reader pool.** `Store` is still one connection behind a mutex.
-6. **The 24-hour soak test**, deferred by the owner since M1 and still the only thing that would
-   catch a descriptor leak in the watcher.
+4. **A reader pool.** `Store` is still one connection behind a mutex.
+5. **The 24-hour soak test**, deferred by the owner since M1.
+6. **Real distractors for the goldset** — a few hundred written documents. It is the only thing
+   that would make reranking measurable, and it would make every other number more trustworthy.
 
 ### Open questions the goldset can now answer
 
-It is built, so these stop being opinions the moment somebody spends an afternoon on them:
-
 - **Ties in fusion are broken by node id.** Should a path hit beat a content hit at equal score?
-- **Arm weights are all 1.0.** Is the vector arm worth more than the lexical arm for `recall`?
-- **`rrf_k` is 60**, the value from the paper, never measured here.
-- **Prefix matching is on by default** for interactive queries and off for the goldset.
+- **Arm weights are all 1.0**; `rrf_k` is 60 for retrieval and 10 for the reranked order (D29).
+- **Prefix matching** is on for interactive queries and off for the goldset.
 - **The mode heuristic** (D24) may mislabel queries.
 
-### A limitation worth knowing before extending the goldset
+### Limitations worth knowing
 
-FTS5's `remove_diacritics 2` folds `ä` to `a`, so a query typed without umlauts matches. It does
-**not** fold `ß` to `ss`, because ß carries no diacritic. There is a test asserting the gap.
-Separately, and now visible in the goldset: FTS5 has **no stemmer configured**, so
-"verworfen" does not match "verwirft" and two of the lexical queries fail on the lexical arm
-alone. Both are query-side expansion problems and both would show up as a recall change.
+FTS5 folds `ä` to `a` but not `ß` to `ss`, and has **no stemmer configured**, so "verworfen" does
+not match "verwirft" — two of the goldset's lexical queries fail on the lexical arm for exactly
+that reason. Both are query-side expansion problems.
 
-### Things earlier milestones deliberately left rough
-
-- The path index is rebuilt wholesale after any bulk change. Correct and simple.
-- `assign_zones` runs one `UPDATE ... LIKE` per zone over the whole index, which is why the zone
-  budget exists.
-- The ingest loop polls on a 250 ms timer rather than blocking on the inotify descriptor.
-  Measured idle cost is 0.033 % of one core.
+The GPU is shared with whatever else the machine is running (D31). Every number here was measured
+while a local language model held 11.7 GB of the 16 GB card.
 
 ---
 
@@ -180,6 +152,9 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 - Embeddings are keyed by the hash of the text, not by the chunk row (D26)
 - The vector index is memory-mapped; the memory budget is read as anonymous memory (D27)
 - Embedding is a separate stage from extraction (D28)
+- The reranked order is fused with the retrieved one, never substituted (D29)
+- Generated distractors must be irrelevant by construction (D30)
+- The GPU is shared, so every model runs under a memory cap (D31)
 
 ## Still open
 
@@ -194,6 +169,68 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
+
+### 2026-08-18 — M2 finished: the GPU, the reranker, and a goldset that lied twice
+
+CUDA installed at the owner's request, the cross-encoder built and delivered as a progressive
+result update, and every M2 gate green. 472 tests.
+
+**The GPU.** The machine had the card and the driver but no CUDA runtime; `cuda-libraries-13-3`
+and `libcudnn9-cuda-13` fixed that, and the CUDA build of ONNX Runtime is now a second entry in
+the registry (`cortex model fetch --gpu`, 191 MB instead of 11 MB). Measured in the running
+daemon: **3.11 ms per chunk against 89 ms on the CPU** — a corpus that took two and a half hours
+now takes six minutes. Query embedding fell from 3.9 ms to 1.1 ms.
+
+The card is shared, and that turned out to matter more than the speed (D31). A local language
+model held 11.7 GB of the 16 GB throughout, and without a memory cap a batch of 32 chunks asked
+for 273 MB it could not get and the whole pass failed. Every model now runs under
+`embedding.gpu_memory_mb`, and the reranker batches eight pairs rather than thirty.
+
+**The reranker.** `mmarco-mMiniLMv2-L12-H384-v1`, the same twelve layers and 384 hidden units as
+the embedder, chosen to match it rather than to beat it. Thirty pairs in **16.5 ms against a
+150 ms budget**.
+
+It is delivered the way the build prompt asks: the search answers immediately with what retrieval
+found, and the reranked order follows on the same connection as a `search.update` notification
+(D7). That needed the connection handler split into a reader and a writer so a spawned task can
+answer while the loop keeps reading — the mechanism M4 will want for progressive results, built
+once here.
+
+**The goldset was wrong twice, and both times it was worth catching.**
+
+1. *It measured the reranker as harmful.* MRR fell from 0.882 to 0.746 and top-1 from 86 % to
+   72 %. The first cause was mine: I had substituted the reranked order for the retrieved one, and
+   when a cross-encoder finds nothing it likes its scores collapse into a narrow negative band
+   where the ordering is noise. Fusing the two orders instead (D29) recovered most of it.
+
+2. *The rest was the corpus.* `goldset --explain q21` showed the reranker promoting a distractor
+   over the judged answer — so I read the file. It contained the sentence *"Die Speicherkosten
+   stiegen nach der Archivmigration schneller als erwartet"*, which answers the question. The
+   corpus generator had been sprinkling sixteen real sentences through its documents, and I had
+   built goldset topics on those very sentences, then judged every copy irrelevant. **The reranker
+   had been right and the measurement wrong.** Generated distractors are now irrelevant by
+   construction, with a test that asserts no real sentence appears in generated text (D30).
+
+With that fixed, the reranker changes nothing at all: MRR 0.878 either way. That is now a
+statement about the goldset rather than the model — its distractors are nonsense, and a
+cross-encoder earns its keep against documents that are plausible *and* irrelevant. On clean
+pairs the model separates right from wrong by eighteen points of logit, in both languages.
+
+**One Definition-of-Done item is not met, and it is recorded rather than argued away.** German
+queries are 14.8 % behind English against a 10 % allowance. The whole gap is three queries:
+German → English retrieval fails (0 of 3) while English → German works (3 of 3). The cause is the
+language bias measured earlier; the candidate fixes and what "revisit D6" would mean are at the
+top of this file.
+
+Two other things worth knowing:
+
+- **A rebuild gives the new chunks the same row ids**, so the cheap watermark the embedding stage
+  uses to avoid scanning every chunk saw no change and the stage slept through it — with 1 721
+  chunks waiting and their vectors just dropped. The wake-up signal was a boolean, which the
+  extraction stage consumed first; it is now a generation counter, so one signal reaches both
+  stages.
+- **usearch refuses a duplicate key** rather than replacing it, which crashed a goldset run over
+  a leftover index. Adding a vector is now idempotent.
 
 ### 2026-08-18 — M2, second half: the model, and what it is worth
 
@@ -546,7 +583,14 @@ are visible across sessions.
 | 2026-08-18 | M2 | Idle CPU, 122 137 vectors indexed | 0.067 % of one core | 0.5 % | yes |
 | 2026-08-18 | M2 | Idle anonymous memory, 100 k files + 122 137 vectors | 182 MiB | 250 MB | yes |
 | 2026-08-18 | M2 | Idle total RSS, same daemon after searching | 299 MiB (107 MiB mapped) | see D27 | — |
-| 2026-08-18 | M2 | `cargo test --workspace` | 466 passed, 0 failed | green | yes |
+| 2026-08-18 | M2 | Cross-encoder rerank, top 30 (GPU) | P95 17.48 ms | 150 ms | yes |
+| 2026-08-18 | M2 | Embedding one chunk (GPU / CPU 8 threads) | 1.85 ms / 75 ms | — | — |
+| 2026-08-18 | M2 | Embedding one chunk, whole daemon (GPU / CPU) | 3.11 ms / 89 ms | — | — |
+| 2026-08-18 | M2 | Embedding one query (GPU / CPU) | 1.1 ms / 3.9 ms | — | — |
+| 2026-08-18 | M2 | Recall@10, goldset, fused | 92.0 % | recorded | — |
+| 2026-08-18 | M2 | Recall@10, goldset, with reranking | 92.0 % (MRR 0.878 either way) | recorded | — |
+| 2026-08-18 | M2 | Recall@10, German against English | 85.2 % / 100.0 % | within 10 % | **no** |
+| 2026-08-18 | M2 | `cargo test --workspace` | 472 passed, 0 failed | green | yes |
 
 Search figures come from `bench-latency` against the standard corpus, **release build**. Index,
 CPU and memory figures are from a live daemon, and the CPU share is measured from the stage's own
@@ -566,8 +610,8 @@ index. It is measured on every run so that the corpus cannot quietly hide it.
 
 ### M2 acceptance
 
-The Definition of Done is in `docs/01-BUILD-PROMPT.md`. Every item except the reranker's budget is
-now measurable, and the one that is not says why.
+The Definition of Done is in `docs/01-BUILD-PROMPT.md`. Every item is now measured, and the one
+that fails says so rather than being reworded until it passes.
 
 | Criterion | Result |
 |---|---|
@@ -581,12 +625,13 @@ now measurable, and the one that is not says why.
 | The deny-list holds before any content access (R1) | verified live: sensitive files are absent from the index entirely |
 | Withdrawing content withdraws it from the index | verified live: renaming a file to a deny-listed name deletes its chunks |
 | Vector ANN top-100 under 40 ms | 1.01 ms P95 over 122 137 vectors |
-| Recall@10 on the goldset, measured and gated | 91.0 % fused, recorded in `baseline.toml`, a 3-point drop fails the run |
-| German within 10 % of English | 87.0 % against 95.7 % — 9 % behind, inside the allowance |
+| Recall@10 on the goldset, measured and gated | 92.0 % fused, MRR 0.878, top-1 86 % |
 | Re-indexing re-embeds zero chunks, by call counter | yes — `re_indexing_an_unchanged_corpus_asks_the_model_for_nothing` |
 | `cortex --rebuild-index` reproduces a canonical dump | yes — byte-identical over 1 005 lines, live, with every vector kept |
 | Vector index rebuildable from `embeddings` without the model | yes — 122 137 vectors in 152 ms, live |
-| Cross-encoder rerank of the top 30 under 150 ms | **not built** — needs a second model and a protocol that can send a second answer; the budget assumes a GPU this machine cannot use yet |
+| Cross-encoder rerank of the top 30 under 150 ms | 17.5 ms P95 on the GPU, delivered as a `search.update` notification after the first answer |
+| Recall@10 gated against regression | `bench/goldset/baseline.toml`, a 3-point drop on any breakdown fails the run |
+| German within 10 % of English | **not met** — 14.8 % behind. Recorded rather than argued away; see the top of this file |
 
 ### M0 acceptance, verified
 
@@ -626,11 +671,16 @@ more than three points against any row of the breakdown.
 
 | Date | Model | Recall@10 (EN) | Recall@10 (DE) | Notes |
 |---|---|---|---|---|
-| 2026-08-18 | multilingual-e5-small, CPU | 95.7 % | 87.0 % | fused 91.0 % overall; by-name 100 %, lexical 100 %, semantic 98 %, cross-language 33 % |
+| 2026-08-18 | multilingual-e5-small, GPU | 100.0 % | 85.2 % | fused 92.0 % overall, MRR 0.878, top-1 86 %; by-name 100 %, lexical 100 %, semantic 96 %, cross-language 50 % |
+| 2026-08-18 | the same, plus the cross-encoder | 100.0 % | 85.2 % | identical — see D30 for why this goldset cannot measure a reranker |
 | 2026-08-18 | lexical arm alone (control) | 39.1 % | 33.3 % | 36.0 % overall — what the index answers with no model at all |
 | 2026-08-18 | hashing embedder (control) | — | — | run `goldset` without `--model` to reproduce; it is a control, not a result |
 
-German is 9 % behind English, inside the 10 % Definition-of-Done §3 allows, and the entire gap is
-cross-language queries. See "What the goldset says" at the top for why, and for the caveat that
-the distractors are linguistically German and semantically empty — the worst case for exactly
-that measurement.
+**German is 14.8 % behind English, outside the 10 % Definition-of-Done §3 allows.** The whole gap
+is three queries out of twenty-seven, all of them German questions with English answers; the
+reverse direction is perfect. See "The one criterion that is not met" at the top.
+
+An earlier run of this table reported 91.0 % with a 9 % gap. It was measured against a corpus
+whose distractors contained real sentences, several of which answered goldset queries without
+being judged relevant (D30). The numbers are not comparable and the older ones are not
+trustworthy.

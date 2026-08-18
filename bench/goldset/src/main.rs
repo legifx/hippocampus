@@ -63,6 +63,11 @@ struct Args {
     #[arg(long, env = "HIPPOCAMPUS_TEST_MODEL")]
     model: Option<PathBuf>,
 
+    /// Directory holding the cross-encoder. With it, a fourth arm is measured: the fused results
+    /// reordered by reading each candidate together with the query.
+    #[arg(long, env = "HIPPOCAMPUS_TEST_RERANKER")]
+    reranker: Option<PathBuf>,
+
     /// Results considered. The Definition of Done says ten.
     #[arg(long, default_value_t = 10)]
     at: usize,
@@ -198,24 +203,43 @@ fn main() {
     );
     println!();
 
+    let reranker = load_reranker(&args);
+
     if let Some(id) = &args.explain {
         let query = queries
             .query
             .iter()
             .find(|q| &q.id == id)
             .unwrap_or_else(|| panic!("no query {id}"));
-        explain_query(query, &node_of, &store, &index, embedder.as_ref(), &vectors, args.at);
+        explain_query(
+            query,
+            &node_of,
+            &store,
+            &index,
+            embedder.as_ref(),
+            &vectors,
+            args.at,
+            reranker.as_deref(),
+        );
         return;
     }
 
-    let arms: [(&str, Option<&VectorIndex>, bool); 3] = [
-        ("fused", Some(&vectors), true),
-        ("lexical only", None, true),
-        ("vector only", Some(&vectors), false),
+    if reranker.is_some() {
+        println!("reranker: {}", cortex_embed::RERANKER.id);
+    }
+
+    let arms: [(&str, Option<&VectorIndex>, bool, bool); 4] = [
+        ("fused", Some(&vectors), true, false),
+        ("fused+rerank", Some(&vectors), true, true),
+        ("lexical only", None, true, false),
+        ("vector only", Some(&vectors), false, false),
     ];
 
     let mut measured = BTreeMap::new();
-    for (name, vector_index, lexical) in arms {
+    for (name, vector_index, lexical, rerank) in arms {
+        if rerank && reranker.is_none() {
+            continue;
+        }
         let report = run_arm(
             &queries.query,
             &node_of,
@@ -225,6 +249,7 @@ fn main() {
             vector_index,
             lexical,
             args.at,
+            rerank.then(|| reranker.as_deref()).flatten(),
         );
         print_report(name, &report, &queries.query);
         for (key, value) in report.by_kind {
@@ -233,12 +258,25 @@ fn main() {
         measured.insert(format!("{name}/overall"), report.overall);
         measured.insert(format!("{name}/de"), report.german);
         measured.insert(format!("{name}/en"), report.english);
+        measured.insert(format!("{name}/mrr"), report.mrr);
+        measured.insert(format!("{name}/top1"), report.top1);
         println!();
     }
 
     let fused = measured["fused/overall"];
     let lexical_only = measured["lexical only/overall"];
     println!("what the model buys: {:+.1} points over lexical alone", (fused - lexical_only) * 100.0);
+    if let Some(reranked) = measured.get("fused+rerank/mrr") {
+        // The number the reranker exists to move. Recall is unchanged by construction: it
+        // reorders a shortlist and cannot add to it.
+        println!(
+            "what the reranker buys: MRR {:.3} → {:.3}, top-1 {:.1} % → {:.1} %",
+            measured["fused/mrr"],
+            reranked,
+            measured["fused/top1"] * 100.0,
+            measured["fused+rerank/top1"] * 100.0
+        );
+    }
 
     let german = measured["fused/de"];
     let english = measured["fused/en"];
@@ -292,7 +330,28 @@ fn main() {
     }
 }
 
+/// The cross-encoder, when a directory for it was given.
+fn load_reranker(args: &Args) -> Option<Box<dyn cortex_embed::Reranker>> {
+    let runtime = args.runtime.as_ref()?;
+    let dir = args.reranker.as_ref()?;
+    match cortex_embed::onnx::OnnxReranker::load(
+        runtime,
+        dir,
+        cortex_embed::RERANKER,
+        cortex_embed::onnx::Device::Auto,
+        8,
+        1024,
+    ) {
+        Ok(reranker) => Some(Box::new(reranker)),
+        Err(e) => {
+            eprintln!("could not load the reranker: {e}");
+            None
+        }
+    }
+}
+
 /// Show what one query actually returned.
+#[allow(clippy::too_many_arguments)]
 fn explain_query(
     query: &Query,
     node_of: &BTreeMap<String, NodeId>,
@@ -301,6 +360,7 @@ fn explain_query(
     embedder: &dyn Embedder,
     vectors: &VectorIndex,
     at: usize,
+    reranker: Option<&dyn cortex_embed::Reranker>,
 ) {
     let outcome = search::run(search::Params {
         store,
@@ -327,22 +387,47 @@ fn explain_query(
     if let Some(note) = &outcome.vector_note {
         println!("  vector arm: {note}");
     }
+    let reranked = reranker.and_then(|r| search::rerank(&outcome, r, 30, 200).ok());
+
     println!();
     for (rank, hit) in outcome.hits.iter().enumerate() {
         let marker = match wanted.get(&hit.node_id) {
             Some(id) => format!(" <-- relevant: {id}"),
             None => String::new(),
         };
+        let rerank_score = reranked.as_ref().and_then(|hits| {
+            hits.iter()
+                .find(|h| h.node_id == hit.node_id)
+                .and_then(|h| h.score.rerank)
+        });
         println!(
-            "  {:>2}. p{:<4} l{:<4} v{:<4} {:.5}  {}{}",
+            "  {:>2}. p{:<4} l{:<4} v{:<4} {:.5}  rr {:>8}  {}{}",
             rank + 1,
             hit.score.path_rank.map(|r| r.to_string()).unwrap_or_else(|| "-".into()),
             hit.score.lexical_rank.map(|r| r.to_string()).unwrap_or_else(|| "-".into()),
             hit.score.vector_rank.map(|r| r.to_string()).unwrap_or_else(|| "-".into()),
             hit.score.final_score,
+            rerank_score.map(|s| format!("{s:.2}")).unwrap_or_else(|| "-".into()),
             hit.path.file_name().unwrap_or_default().to_string_lossy(),
             marker
         );
+    }
+
+    if let Some(hits) = &reranked {
+        println!("\n  after reranking:");
+        for (rank, hit) in hits.iter().take(5).enumerate() {
+            let marker = match wanted.get(&hit.node_id) {
+                Some(id) => format!(" <-- relevant: {id}"),
+                None => String::new(),
+            };
+            println!(
+                "  {:>2}. rr {:>8}  {}{}",
+                rank + 1,
+                hit.score.rerank.map(|s| format!("{s:.2}")).unwrap_or_else(|| "-".into()),
+                hit.path.file_name().unwrap_or_default().to_string_lossy(),
+                marker
+            );
+        }
     }
 
     let missing: Vec<&str> = wanted
@@ -361,6 +446,15 @@ struct Report {
     overall: f64,
     german: f64,
     english: f64,
+    /// Mean reciprocal rank of the first relevant result.
+    ///
+    /// Recall@10 asks whether the answer is on the page; this asks how far down it is. They are
+    /// different questions, and reranking only moves the second one — it reorders a shortlist it
+    /// cannot add to, so a document that retrieval missed stays missed however good the
+    /// cross-encoder is. Measuring a reranker by recall alone would conclude it does nothing.
+    mrr: f64,
+    /// How often the first result is a relevant one.
+    top1: f64,
     by_kind: BTreeMap<String, f64>,
     misses: Vec<(String, String)>,
 }
@@ -375,18 +469,24 @@ fn run_arm(
     vectors: Option<&VectorIndex>,
     lexical: bool,
     at: usize,
+    reranker: Option<&dyn cortex_embed::Reranker>,
 ) -> Report {
     let mut per_query = Vec::new();
     let mut misses = Vec::new();
+    let mut reciprocal = Vec::new();
+    let mut first_is_relevant = Vec::new();
 
     for query in queries {
+        // Reranking reorders a shortlist, so it is only measurable if the shortlist is longer
+        // than the cut: retrieving ten and reordering ten cannot change recall@10 at all.
+        let retrieved = if reranker.is_some() { at.max(30) } else { at };
         let outcome = search::run(search::Params {
             store,
             index,
             semantic: vectors.map(|v| search::Semantic { embedder, vectors: v }),
             requested_mode: QueryMode::Auto,
             raw_query: &query.text,
-            limit: at,
+            limit: retrieved,
             // Exact matching: a goldset measures retrieval, not what happens halfway through
             // typing a word.
             prefix: false,
@@ -395,7 +495,17 @@ fn run_arm(
             max_salience_boost: 1.5,
         });
 
-        let found: Vec<NodeId> = outcome.hits.iter().map(|h| h.node_id).collect();
+        let hits = match reranker {
+            Some(reranker) => match search::rerank(&outcome, reranker, 30, 200) {
+                Ok(hits) => hits,
+                Err(e) => {
+                    eprintln!("reranking failed for {}: {e}", query.id);
+                    outcome.hits.clone()
+                }
+            },
+            None => outcome.hits.clone(),
+        };
+        let found: Vec<NodeId> = hits.iter().take(at).map(|h| h.node_id).collect();
         let wanted: Vec<NodeId> = query
             .relevant
             .iter()
@@ -407,7 +517,7 @@ fn run_arm(
             .iter()
             .filter(|node| {
                 found.iter().enumerate().any(|(rank, candidate)| {
-                    candidate == *node && arm_allowed(&outcome, rank, lexical, vectors.is_some())
+                    candidate == *node && arm_allowed(&hits, rank, lexical, vectors.is_some())
                 })
             })
             .count();
@@ -417,6 +527,16 @@ fn run_arm(
             misses.push((query.id.clone(), query.text.clone()));
         }
         per_query.push((query, recall));
+
+        let best_rank = found
+            .iter()
+            .enumerate()
+            .find(|(rank, node)| {
+                wanted.contains(node) && arm_allowed(&hits, *rank, lexical, vectors.is_some())
+            })
+            .map(|(rank, _)| rank + 1);
+        reciprocal.push(best_rank.map(|r| 1.0 / r as f64).unwrap_or(0.0));
+        first_is_relevant.push(if best_rank == Some(1) { 1.0 } else { 0.0 });
     }
 
     let mean = |rows: &[(&Query, f64)]| -> f64 {
@@ -441,10 +561,20 @@ fn run_arm(
     let german: Vec<(&Query, f64)> = per_query.iter().filter(|(q, _)| q.lang == "de").copied().collect();
     let english: Vec<(&Query, f64)> = per_query.iter().filter(|(q, _)| q.lang == "en").copied().collect();
 
+    let average = |values: &[f64]| -> f64 {
+        if values.is_empty() {
+            0.0
+        } else {
+            values.iter().sum::<f64>() / values.len() as f64
+        }
+    };
+
     Report {
         overall: mean(&per_query),
         german: mean(&german),
         english: mean(&english),
+        mrr: average(&reciprocal),
+        top1: average(&first_is_relevant),
         by_kind,
         misses,
     }
@@ -455,8 +585,8 @@ fn run_arm(
 /// "Lexical only" and "vector only" are measured by ignoring the other arm's contribution rather
 /// than by re-running the search without it, because fusion changes the ranks: a comparison
 /// between two differently-ranked lists would measure the fusion, not the arm.
-fn arm_allowed(outcome: &search::Outcome, rank: usize, lexical: bool, vector: bool) -> bool {
-    let score = &outcome.hits[rank].score;
+fn arm_allowed(hits: &[cortex_core::model::SearchHit], rank: usize, lexical: bool, vector: bool) -> bool {
+    let score = &hits[rank].score;
     let by_path = score.path_rank.is_some();
     let by_lexical = score.lexical_rank.is_some();
     let by_vector = score.vector_rank.is_some();
@@ -468,10 +598,12 @@ fn arm_allowed(outcome: &search::Outcome, rank: usize, lexical: bool, vector: bo
 
 fn print_report(name: &str, report: &Report, queries: &[Query]) {
     println!(
-        "{name:<14} recall@10  overall {:.1} %   de {:.1} %   en {:.1} %",
+        "{name:<14} recall@10  overall {:.1} %   de {:.1} %   en {:.1} %   MRR {:.3}   top-1 {:.1} %",
         report.overall * 100.0,
         report.german * 100.0,
-        report.english * 100.0
+        report.english * 100.0,
+        report.mrr,
+        report.top1 * 100.0
     );
     let kinds: Vec<String> = report
         .by_kind
@@ -523,6 +655,7 @@ fn load_embedder(args: &Args) -> Box<dyn Embedder> {
                 cortex_embed::E5_SMALL,
                 cortex_embed::onnx::Device::Auto,
                 8,
+                1024,
             ) {
                 Ok(embedder) => Box::new(embedder),
                 Err(e) => {
