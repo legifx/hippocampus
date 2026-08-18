@@ -5,6 +5,14 @@
 //! keep answering queries while the new ones are computed, and the switch happens when the new
 //! set is complete. A table keyed only by chunk id would force a corpus-wide outage instead.
 //!
+//! ## Keyed by the text, not by the row
+//!
+//! The primary key is the chunk *hash* (migration 0003). An embedding is a pure function of the
+//! text and the model, so tying it to a row id meant losing every vector whenever the rows were
+//! re-derived — which is exactly what `--rebuild-index` does, and it turned a supported
+//! operation into hours of inference nobody would spend. It also meant embedding the same
+//! boilerplate once per file that contained it.
+//!
 //! ## What is stored, and what is not
 //!
 //! The vector here is `f32`, full precision, and it is the authoritative copy. The usearch index
@@ -34,7 +42,11 @@ pub struct ModelRef<'a> {
 /// One vector on its way into the store.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EmbeddingWrite {
+    /// Which chunk this came from. Not the key — it is what the vector index needs in order to
+    /// point back at a place in a file.
     pub chunk_id: ChunkId,
+    /// The hash of the text that was embedded. This *is* the key.
+    pub chunk_hash: String,
     pub vector: Vec<f32>,
 }
 
@@ -96,14 +108,14 @@ impl crate::queries::Batch<'_> {
                 )));
             }
             self.tx().execute(
-                "INSERT INTO embeddings (chunk_id, model_id, model_version, dim, vector, created_at)
+                "INSERT INTO embeddings (chunk_hash, model_id, model_version, dim, vector, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                 ON CONFLICT(chunk_id, model_id, model_version) DO UPDATE SET
+                 ON CONFLICT(chunk_hash, model_id, model_version) DO UPDATE SET
                      dim = excluded.dim,
                      vector = excluded.vector,
                      created_at = excluded.created_at",
                 params![
-                    row.chunk_id.0,
+                    row.chunk_hash,
                     model.id,
                     model.version,
                     model.dim as i64,
@@ -152,8 +164,8 @@ impl Store {
              FROM chunks c
              JOIN nodes n ON n.id = c.node_id
              LEFT JOIN embeddings e
-                 ON e.chunk_id = c.id AND e.model_id = ?1 AND e.model_version = ?2
-             WHERE e.chunk_id IS NULL AND n.path IS NOT NULL
+                 ON e.chunk_hash = c.hash AND e.model_id = ?1 AND e.model_version = ?2
+             WHERE e.chunk_hash IS NULL AND n.path IS NOT NULL
              ORDER BY c.id
              LIMIT ?3",
         )?;
@@ -172,21 +184,40 @@ impl Store {
         Ok(rows)
     }
 
-    /// Every vector this model produced, handed to `f` one at a time.
+    /// How many chunks have a vector this model produced.
     ///
-    /// Streamed rather than returned: a hundred thousand chunks at 384 dimensions is 150 MB of
-    /// `f32`, and materialising that to hand it to a consumer that writes it straight into an
-    /// index would double the peak for no reason.
-    pub fn for_each_embedding(
+    /// The number the ANN index must contain. Compared against it to notice when the two have
+    /// drifted apart — which happens whenever chunks are re-derived, because the index keys by
+    /// chunk id and the vectors key by content.
+    pub fn indexable_vector_count(&self, model: ModelRef<'_>) -> Result<usize> {
+        let conn = self.conn();
+        let count: i64 = conn.query_row(
+            "SELECT count(*) FROM chunks c
+             JOIN embeddings e ON e.chunk_hash = c.hash
+             WHERE e.model_id = ?1 AND e.model_version = ?2",
+            params![model.id, model.version],
+            |r| r.get(0),
+        )?;
+        Ok(count as usize)
+    }
+
+    /// Every chunk that has a vector, with the vector, handed to `f` one at a time.
+    ///
+    /// Joined back to `chunks` rather than read straight from `embeddings`, because the vector
+    /// index points at chunks: one vector can serve several identical chunks, and every one of
+    /// them has to be findable.
+    pub fn for_each_indexable_vector(
         &self,
         model: ModelRef<'_>,
         mut f: impl FnMut(ChunkId, &[f32]),
     ) -> Result<usize> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
-            "SELECT chunk_id, dim, vector FROM embeddings
-             WHERE model_id = ?1 AND model_version = ?2
-             ORDER BY chunk_id",
+            "SELECT c.id, e.dim, e.vector
+             FROM chunks c
+             JOIN embeddings e ON e.chunk_hash = c.hash
+             WHERE e.model_id = ?1 AND e.model_version = ?2
+             ORDER BY c.id",
         )?;
         let mut rows = stmt.query(params![model.id, model.version])?;
 
@@ -197,6 +228,36 @@ impl Store {
             let blob: Vec<u8> = row.get(2)?;
             let vector = decode_vector(&blob, dim as usize)?;
             f(chunk, &vector);
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    /// Every vector this model produced, handed to `f` one at a time.
+    ///
+    /// Streamed rather than returned: a hundred thousand chunks at 384 dimensions is 150 MB of
+    /// `f32`, and materialising that to hand it to a consumer that writes it straight into an
+    /// index would double the peak for no reason.
+    pub fn for_each_embedding(
+        &self,
+        model: ModelRef<'_>,
+        mut f: impl FnMut(&str, &[f32]),
+    ) -> Result<usize> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT chunk_hash, dim, vector FROM embeddings
+             WHERE model_id = ?1 AND model_version = ?2
+             ORDER BY chunk_hash",
+        )?;
+        let mut rows = stmt.query(params![model.id, model.version])?;
+
+        let mut count = 0;
+        while let Some(row) = rows.next()? {
+            let hash: String = row.get(0)?;
+            let dim: i64 = row.get(1)?;
+            let blob: Vec<u8> = row.get(2)?;
+            let vector = decode_vector(&blob, dim as usize)?;
+            f(&hash, &vector);
             count += 1;
         }
         Ok(count)
@@ -238,7 +299,7 @@ mod tests {
         dim: 4,
     };
 
-    fn store_with_chunks(count: usize) -> (Store, Vec<ChunkId>) {
+    fn store_with_chunks(count: usize) -> (Store, Vec<crate::chunks::StoredChunk>) {
         let store = Store::open_in_memory().unwrap();
         let node = store
             .upsert_node(
@@ -270,13 +331,16 @@ mod tests {
             .collect();
         store.replace_chunks(node, &writes).unwrap();
 
-        let ids = store
-            .chunks_for_node(node)
-            .unwrap()
-            .into_iter()
-            .map(|c| c.id)
-            .collect();
-        (store, ids)
+        let chunks = store.chunks_for_node(node).unwrap();
+        (store, chunks)
+    }
+
+    fn write(chunk: &crate::chunks::StoredChunk, value: f32) -> EmbeddingWrite {
+        EmbeddingWrite {
+            chunk_id: chunk.id,
+            chunk_hash: chunk.hash.clone(),
+            vector: vec![value, 0.0, 0.0, 1.0],
+        }
     }
 
     #[test]
@@ -301,17 +365,14 @@ mod tests {
         let rows: Vec<EmbeddingWrite> = chunks
             .iter()
             .enumerate()
-            .map(|(i, id)| EmbeddingWrite {
-                chunk_id: *id,
-                vector: vec![i as f32, 0.0, 0.0, 1.0],
-            })
+            .map(|(i, chunk)| write(chunk, i as f32))
             .collect();
         assert_eq!(store.upsert_embeddings(MODEL, &rows, 1).unwrap(), 3);
         assert_eq!(store.embedding_count(MODEL).unwrap(), 3);
 
         let mut seen = Vec::new();
         store
-            .for_each_embedding(MODEL, |id, v| seen.push((id, v.to_vec())))
+            .for_each_indexable_vector(MODEL, |id, v| seen.push((id, v.to_vec())))
             .unwrap();
         assert_eq!(seen.len(), 3);
         assert_eq!(seen[0].1, vec![0.0, 0.0, 0.0, 1.0]);
@@ -320,12 +381,12 @@ mod tests {
     #[test]
     fn a_second_run_of_the_same_model_replaces_rather_than_duplicates() {
         let (store, chunks) = store_with_chunks(1);
-        let write = |value: f32| EmbeddingWrite {
-            chunk_id: chunks[0],
-            vector: vec![value, 0.0, 0.0, 0.0],
-        };
-        store.upsert_embeddings(MODEL, &[write(1.0)], 1).unwrap();
-        store.upsert_embeddings(MODEL, &[write(2.0)], 2).unwrap();
+        store
+            .upsert_embeddings(MODEL, &[write(&chunks[0], 1.0)], 1)
+            .unwrap();
+        store
+            .upsert_embeddings(MODEL, &[write(&chunks[0], 2.0)], 2)
+            .unwrap();
 
         assert_eq!(store.embedding_count(MODEL).unwrap(), 1);
         let mut seen = Vec::new();
@@ -341,10 +402,7 @@ mod tests {
         // answering while the new ones are computed.
         let (store, chunks) = store_with_chunks(2);
         let other = ModelRef { id: "next-model", version: "1", dim: 4 };
-        let rows: Vec<EmbeddingWrite> = chunks
-            .iter()
-            .map(|id| EmbeddingWrite { chunk_id: *id, vector: vec![1.0, 0.0, 0.0, 0.0] })
-            .collect();
+        let rows: Vec<EmbeddingWrite> = chunks.iter().map(|c| write(c, 1.0)).collect();
 
         store.upsert_embeddings(MODEL, &rows, 1).unwrap();
         store.upsert_embeddings(other, &rows[..1], 1).unwrap();
@@ -364,7 +422,8 @@ mod tests {
         // vectors that only fail much later, inside the ANN library.
         let (store, chunks) = store_with_chunks(1);
         let bad = EmbeddingWrite {
-            chunk_id: chunks[0],
+            chunk_id: chunks[0].id,
+            chunk_hash: chunks[0].hash.clone(),
             vector: vec![1.0, 2.0],
         };
         assert!(store.upsert_embeddings(MODEL, &bad_rows(&bad), 1).is_err());
@@ -380,41 +439,136 @@ mod tests {
         let (store, chunks) = store_with_chunks(2);
         let pending = store.chunks_without_embedding(MODEL, 10).unwrap();
         assert_eq!(pending.len(), 2);
-        assert_eq!(pending[0].chunk_id, chunks[0]);
+        assert_eq!(pending[0].chunk_id, chunks[0].id);
         assert_eq!(pending[0].path, PathBuf::from("/tmp/corpus/notes.md"));
         assert_eq!(pending[0].hash, "hash-0");
         assert_eq!(pending[0].byte_end - pending[0].byte_start, 50);
     }
 
     #[test]
-    fn deleting_a_chunk_takes_its_vector_with_it() {
-        // Cascade, not cleanup: an embedding for a chunk that no longer exists would be a
-        // result pointing at nothing.
+    fn deleting_a_chunk_leaves_its_vector_for_next_time() {
         let (store, chunks) = store_with_chunks(1);
         store
-            .upsert_embeddings(
-                MODEL,
-                &[EmbeddingWrite { chunk_id: chunks[0], vector: vec![1.0, 0.0, 0.0, 0.0] }],
-                1,
-            )
+            .upsert_embeddings(MODEL, &[write(&chunks[0], 1.0)], 1)
             .unwrap();
         let node = store
             .node_by_path(&PathBuf::from("/tmp/corpus/notes.md"))
             .unwrap()
             .unwrap();
         store.delete_chunks(node.id).unwrap();
-        assert_eq!(store.embedding_count(MODEL).unwrap(), 0);
+
+        // The vector *survives* the chunk now, on purpose: it describes the text, not the row.
+        // Re-chunking the same file recovers it without touching the model, which is what makes
+        // `--rebuild-index` affordable (migration 0003).
+        assert_eq!(store.embedding_count(MODEL).unwrap(), 1);
+        assert_eq!(
+            store.for_each_indexable_vector(MODEL, |_, _| {}).unwrap(),
+            0,
+            "but nothing points at it any more, so nothing can be found through it"
+        );
+    }
+
+    #[test]
+    fn identical_text_in_two_files_is_embedded_once() {
+        // Boilerplate — a licence header, a shared footer, an exported template — is the same
+        // chunk in many files. Keying by hash means the model runs once for all of them, and it
+        // is the same property that lets a rebuild keep its vectors.
+        let store = Store::open_in_memory().unwrap();
+        let mut ids = Vec::new();
+        for name in ["a.md", "b.md"] {
+            let node = store
+                .upsert_node(
+                    &NodeUpsert {
+                        kind: NodeKind::File,
+                        path: PathBuf::from("/tmp/corpus").join(name),
+                        parent_id: None,
+                        mime: None,
+                        size: 10,
+                        mtime: 1,
+                        ctime: 1,
+                        inode: 1,
+                        dev: 1,
+                        zone_id: None,
+                    },
+                    1000,
+                )
+                .unwrap();
+            store
+                .replace_chunks(
+                    node,
+                    &[ChunkWrite {
+                        ordinal: 0,
+                        byte_start: 0,
+                        byte_end: 20,
+                        hash: "shared-boilerplate".into(),
+                        preview: None,
+                        text: "the same paragraph".into(),
+                    }],
+                )
+                .unwrap();
+            ids.push(store.chunks_for_node(node).unwrap().remove(0));
+        }
+
+        assert_eq!(
+            store.chunks_without_embedding(MODEL, 10).unwrap().len(),
+            2,
+            "both chunks start out needing a vector"
+        );
+
+        store
+            .upsert_embeddings(MODEL, &[write(&ids[0], 1.0)], 1)
+            .unwrap();
+
+        assert_eq!(store.embedding_count(MODEL).unwrap(), 1);
+        assert!(
+            store.chunks_without_embedding(MODEL, 10).unwrap().is_empty(),
+            "the second chunk must be covered by the first one's vector"
+        );
+        assert_eq!(
+            store.for_each_indexable_vector(MODEL, |_, _| {}).unwrap(),
+            2,
+            "and both must still be findable through the index"
+        );
+    }
+
+    #[test]
+    fn re_chunking_a_file_recovers_its_vectors_without_the_model() {
+        // Definition of Done §7: `--rebuild-index` re-derives every chunk from the filesystem.
+        // With row-keyed embeddings that meant hours of inference; keyed by hash it means none.
+        let (store, chunks) = store_with_chunks(2);
+        let rows: Vec<EmbeddingWrite> = chunks.iter().map(|c| write(c, 1.0)).collect();
+        store.upsert_embeddings(MODEL, &rows, 1).unwrap();
+
+        let node = store
+            .node_by_path(&PathBuf::from("/tmp/corpus/notes.md"))
+            .unwrap()
+            .unwrap();
+        let same_again: Vec<ChunkWrite> = chunks
+            .iter()
+            .map(|c| ChunkWrite {
+                ordinal: c.ordinal,
+                byte_start: c.byte_start,
+                byte_end: c.byte_end,
+                hash: c.hash.clone(),
+                preview: c.preview.clone(),
+                text: format!("text of {}", c.ordinal),
+            })
+            .collect();
+
+        store.delete_chunks(node.id).unwrap();
+        store.replace_chunks(node.id, &same_again).unwrap();
+
+        assert!(
+            store.chunks_without_embedding(MODEL, 10).unwrap().is_empty(),
+            "a rebuild must not ask the model for anything it has already computed"
+        );
     }
 
     #[test]
     fn the_models_present_can_be_listed() {
         let (store, chunks) = store_with_chunks(1);
         store
-            .upsert_embeddings(
-                MODEL,
-                &[EmbeddingWrite { chunk_id: chunks[0], vector: vec![1.0, 0.0, 0.0, 0.0] }],
-                1,
-            )
+            .upsert_embeddings(MODEL, &[write(&chunks[0], 1.0)], 1)
             .unwrap();
         let models = store.embedding_models().unwrap();
         assert_eq!(models.len(), 1);

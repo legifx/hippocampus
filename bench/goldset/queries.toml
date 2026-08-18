@@ -1,0 +1,399 @@
+# Fifty judged queries. The Definition of Done for M2 §2 and §3.
+#
+# Each query names the documents that answer it. Recall@10 is the fraction of those that appear
+# in the first ten results, averaged over queries — so a query with one right answer scores 1 or
+# 0, and one with two scores 0, 0.5 or 1.
+#
+# `kind` is what the query is *testing*, and it is why this file is worth more than a number:
+#
+# - `name`      the file is asked for by its name. The path arm should answer without help.
+# - `lexical`   the words of the query are in the document. BM25 territory.
+# - `semantic`  the answer shares few or no content words with the question. Only the vector arm
+#               can find these, and their score is what the model is worth.
+# - `crosslang` the question is in one language and the answer in the other. This is the whole
+#               reason D6 chose a multilingual model, and the number that decides whether it was
+#               the right call.
+#
+# `lang` is the language the **query** is written in, never the document's. That distinction is
+# the whole comparison: "German queries perform within ten per cent of English queries" is about
+# what the person typed. For a cross-language query the target's language is implied by `kind`.
+#
+# The German and English halves are deliberately parallel in difficulty — the same kinds of
+# question in the same proportions — because M2 §3 requires German to stay within ten per cent of
+# English, and that comparison is meaningless if one half is harder than the other.
+
+# ---------------------------------------------------------------------------
+# Asked for by name
+# ---------------------------------------------------------------------------
+
+[[query]]
+id = "q01"
+lang = "de"
+kind = "name"
+text = "speicherkosten-2026.md"
+relevant = ["speicherkosten"]
+
+[[query]]
+id = "q02"
+lang = "en"
+kind = "name"
+text = "onboarding-checklist"
+relevant = ["onboarding"]
+
+[[query]]
+id = "q03"
+lang = "de"
+kind = "name"
+text = "uebergabeprotokoll"
+relevant = ["wohnungsuebergabe"]
+
+[[query]]
+id = "q04"
+lang = "en"
+kind = "name"
+text = "restore-drill"
+relevant = ["backup-restore"]
+
+[[query]]
+id = "q05"
+lang = "de"
+kind = "name"
+text = "notizen/garten"
+relevant = ["gartenbewaesserung"]
+
+[[query]]
+id = "q06"
+lang = "en"
+kind = "name"
+text = "pagination-design.md"
+relevant = ["api-pagination"]
+
+# ---------------------------------------------------------------------------
+# The words are in the document
+# ---------------------------------------------------------------------------
+
+[[query]]
+id = "q07"
+lang = "de"
+kind = "lexical"
+text = "montagepositionen blickachse"
+relevant = ["kamerawinkel"]
+
+[[query]]
+id = "q08"
+lang = "en"
+kind = "lexical"
+text = "mounting positions line of sight"
+relevant = ["camera-angles"]
+
+[[query]]
+id = "q09"
+lang = "de"
+kind = "lexical"
+text = "aufbewahrungsfrist verkürzen"
+relevant = ["speicherkosten"]
+
+[[query]]
+id = "q10"
+lang = "en"
+kind = "lexical"
+text = "retention period shorten"
+relevant = ["storage-costs"]
+
+[[query]]
+id = "q11"
+lang = "de"
+kind = "lexical"
+text = "belege reisekosten erstattung"
+relevant = ["reisekosten"]
+
+[[query]]
+id = "q12"
+lang = "en"
+kind = "lexical"
+text = "keyset paging offset"
+relevant = ["api-pagination"]
+
+[[query]]
+id = "q13"
+lang = "de"
+kind = "lexical"
+text = "kaution nebenkostenabrechnung"
+relevant = ["wohnungsuebergabe"]
+
+[[query]]
+id = "q14"
+lang = "en"
+kind = "lexical"
+text = "borrow checker await point"
+relevant = ["rust-lifetimes"]
+
+[[query]]
+id = "q15"
+lang = "de"
+kind = "lexical"
+text = "sauerteig temperatur"
+relevant = ["sauerteig"]
+
+[[query]]
+id = "q16"
+lang = "en"
+kind = "lexical"
+text = "flaky test timestamp threads"
+relevant = ["unit-test-flake"]
+
+[[query]]
+id = "q17"
+lang = "de"
+kind = "lexical"
+text = "zwischenspeicher bilder verworfen"
+relevant = ["puffer"]
+
+[[query]]
+id = "q18"
+lang = "en"
+kind = "lexical"
+text = "alerts nobody looked at"
+relevant = ["monitoring-alerts"]
+
+[[query]]
+id = "q19"
+lang = "de"
+kind = "lexical"
+text = "kündigung drei monate vor ablauf"
+relevant = ["kuendigung-vertrag"]
+
+[[query]]
+id = "q20"
+lang = "en"
+kind = "lexical"
+text = "index sort column scan"
+relevant = ["sql-index"]
+
+# ---------------------------------------------------------------------------
+# The answer does not repeat the question
+# ---------------------------------------------------------------------------
+
+[[query]]
+id = "q21"
+lang = "de"
+kind = "semantic"
+text = "warum ist die ablage plötzlich teurer"
+relevant = ["speicherkosten"]
+
+[[query]]
+id = "q22"
+lang = "en"
+kind = "semantic"
+text = "why did keeping files get more expensive"
+relevant = ["storage-costs"]
+
+[[query]]
+id = "q23"
+lang = "de"
+kind = "semantic"
+text = "welche befestigung wackelt am wenigsten"
+relevant = ["kamerawinkel"]
+
+[[query]]
+id = "q24"
+lang = "en"
+kind = "semantic"
+text = "which mount shakes the least"
+relevant = ["camera-angles"]
+
+[[query]]
+id = "q25"
+lang = "de"
+kind = "semantic"
+text = "warum gehen aufnahmen verloren wenn die platte langsam ist"
+relevant = ["puffer"]
+
+[[query]]
+id = "q26"
+lang = "en"
+kind = "semantic"
+text = "our copies were never tested"
+relevant = ["backup-restore"]
+
+[[query]]
+id = "q27"
+lang = "de"
+kind = "semantic"
+text = "wer kümmert sich am ersten arbeitstag um neue leute"
+relevant = ["einarbeitung"]
+
+[[query]]
+id = "q28"
+lang = "en"
+kind = "semantic"
+text = "who looks after somebody on their first day"
+relevant = ["onboarding"]
+
+[[query]]
+id = "q29"
+lang = "de"
+kind = "semantic"
+text = "wie oft muss ich im sommer gießen"
+relevant = ["gartenbewaesserung"]
+
+[[query]]
+id = "q30"
+lang = "en"
+kind = "semantic"
+text = "the database read every row before sorting"
+relevant = ["sql-index"]
+
+[[query]]
+id = "q31"
+lang = "de"
+kind = "semantic"
+text = "die kette rutscht wenn ich fest trete"
+relevant = ["fahrradkette"]
+
+[[query]]
+id = "q32"
+lang = "en"
+kind = "semantic"
+text = "too many warnings so nobody reacts"
+relevant = ["monitoring-alerts"]
+
+[[query]]
+id = "q33"
+lang = "de"
+kind = "semantic"
+text = "zahlt die versicherung den schaden hinter der wand"
+relevant = ["wasserschaden"]
+
+[[query]]
+id = "q34"
+lang = "en"
+kind = "semantic"
+text = "copy the card twice before erasing it"
+relevant = ["photo-backup-workflow"]
+
+[[query]]
+id = "q35"
+lang = "de"
+kind = "semantic"
+text = "raum wird nicht schneller warm wenn ich voll aufdrehe"
+relevant = ["heizung-thermostat"]
+
+[[query]]
+id = "q36"
+lang = "en"
+kind = "semantic"
+text = "which part of a search is actually slow"
+relevant = ["latency-budget"]
+
+[[query]]
+id = "q37"
+lang = "de"
+kind = "semantic"
+text = "im august ist fast niemand da"
+relevant = ["urlaubsplanung"]
+
+[[query]]
+id = "q38"
+lang = "de"
+kind = "semantic"
+text = "warum war der handwerker am sonntag so teuer"
+relevant = ["schluesseldienst"]
+
+[[query]]
+id = "q39"
+lang = "de"
+kind = "semantic"
+text = "wie viele aussagen passen in einen kurzen vortrag"
+relevant = ["vortrag-vorbereitung"]
+
+[[query]]
+id = "q40"
+lang = "de"
+kind = "semantic"
+text = "der kaffee schmeckt komisch nach der reinigung"
+relevant = ["kaffeemaschine-entkalken"]
+
+[[query]]
+id = "q41"
+lang = "en"
+kind = "semantic"
+text = "we should finish the move before redesigning anything"
+relevant = ["meeting-notes-roadmap"]
+
+[[query]]
+id = "q42"
+lang = "de"
+kind = "semantic"
+text = "was fehlt noch damit der haushalt freigegeben wird"
+relevant = ["quartalspruefung"]
+
+# ---------------------------------------------------------------------------
+# The question and the answer are in different languages
+#
+# Every target here exists in **one** language only. That is deliberate and it took a wrong
+# version of this file to see why: when the same document exists in both languages, a German
+# query has a perfect German answer sitting next to the English one, and demanding the English
+# copy measures obedience rather than retrieval. The parallel pairs are still tested — as
+# `semantic` queries where both copies count (q49, q50).
+# ---------------------------------------------------------------------------
+
+[[query]]
+id = "q43"
+lang = "de"
+kind = "crosslang"
+text = "wurde die sicherung jemals zurückgespielt"
+relevant = ["backup-restore"]
+
+[[query]]
+id = "q44"
+lang = "en"
+kind = "crosslang"
+text = "does the insurance pay for the pipe behind the wall"
+relevant = ["wasserschaden"]
+
+[[query]]
+id = "q45"
+lang = "de"
+kind = "crosslang"
+text = "blättern ohne dass zeilen doppelt erscheinen"
+relevant = ["api-pagination"]
+
+[[query]]
+id = "q46"
+lang = "en"
+kind = "crosslang"
+text = "does opening the valve fully heat the room faster"
+relevant = ["heizung-thermostat"]
+
+[[query]]
+id = "q47"
+lang = "de"
+kind = "crosslang"
+text = "zu viele meldungen die niemand mehr liest"
+relevant = ["monitoring-alerts"]
+
+[[query]]
+id = "q48"
+lang = "en"
+kind = "crosslang"
+text = "the chain slips when I pedal hard"
+relevant = ["fahrradkette"]
+
+# ---------------------------------------------------------------------------
+# More than one document answers
+# ---------------------------------------------------------------------------
+
+[[query]]
+id = "q49"
+lang = "de"
+kind = "semantic"
+text = "unterlagen zur archivmigration"
+relevant = ["speicherkosten", "storage-costs"]
+
+[[query]]
+id = "q50"
+lang = "en"
+kind = "semantic"
+text = "everything about the camera mounting comparison"
+relevant = ["camera-angles", "kamerawinkel"]

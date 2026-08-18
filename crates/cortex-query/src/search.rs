@@ -485,6 +485,7 @@ mod tests {
                         .remove(0);
                     rows.push(cortex_store::embeddings::EmbeddingWrite {
                         chunk_id: chunk.chunk_id,
+                        chunk_hash: chunk.hash.clone(),
                         vector,
                     });
                 }

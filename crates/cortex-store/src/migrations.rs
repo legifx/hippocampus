@@ -25,6 +25,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "fts_contentless_delete",
         sql: include_str!("schema/0002_fts_contentless_delete.sql"),
     },
+    Migration {
+        version: 3,
+        name: "embeddings_by_hash",
+        sql: include_str!("schema/0003_embeddings_by_hash.sql"),
+    },
 ];
 
 /// The schema version this build expects.

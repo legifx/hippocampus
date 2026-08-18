@@ -51,9 +51,10 @@ moves as the system grows.
 |---|---|
 | Watcher, coalescing, reconciliation, resource throttling | `cortex-ingest` |
 | Classifier, extractor, chunker, snippets | `cortex-extract` |
+| Embedding models: registry, provisioning, inference | `cortex-embed` |
 | Query engine, RRF fusion, query modes, the search orchestrator | `cortex-query` |
-| SQLite, FTS5, chunk and episode storage | `cortex-store` |
-| Ingest loop, extraction stage, activity signal, RPC server | `cortexd` |
+| SQLite, FTS5, chunk and episode storage, the usearch vector index | `cortex-store` |
+| Ingest loop, extraction stage, embedding stage, activity signal, RPC server | `cortexd` |
 
 The search orchestrator lives in `cortex-query` rather than in the daemon on purpose: a binary
 cannot be depended on, and a benchmark that reimplements the search it measures eventually
@@ -115,7 +116,14 @@ inotify event                                    (D20: inotify, not fanotify)
                  ├─► text hash unchanged? → nothing to do at all
                  └─► changed? → chunk → hash per chunk
                         ├─► chunk hash unchanged? → keep the row, keep the embedding
-                        └─► new? → FTS5 (+ embed → usearch, M2 second half)
+                        └─► new? → FTS5
+
+embedding stage (separate thread, D28)
+   │  claims chunks whose *hash* has no vector for the current model
+   ├─► re-reads the text through the stored offsets, refusing a stale hash
+   ├─► embeds in batches → `embeddings`, keyed by hash (D26)
+   └─► adds to the usearch index, keyed by chunk id
+          └─► index disagrees with the table? → refilled from it, no model needed
 ```
 
 The two hashes do different jobs. The **text** hash decides whether the file is worth chunking;

@@ -141,6 +141,8 @@ pub mod method {
     pub const INDEX_PATH: &str = "index.path";
     pub const SEARCH_EXPLAIN: &str = "search.explain";
     pub const EXTRACT_STATUS: &str = "extract.status";
+    pub const REBUILD_INDEX: &str = "rebuild.index";
+    pub const CANONICAL_DUMP: &str = "canonical.dump";
     pub const MODEL_STATUS: &str = "model.status";
     pub const MODEL_RELOAD: &str = "model.reload";
     pub const EXTRACT_REQUEUE: &str = "extract.requeue";
@@ -163,6 +165,8 @@ pub mod method {
         SEARCH_EXPLAIN,
         EXTRACT_STATUS,
         EXTRACT_REQUEUE,
+        REBUILD_INDEX,
+        CANONICAL_DUMP,
         MODEL_STATUS,
         MODEL_RELOAD,
         ACTIVITY_PING,
@@ -412,6 +416,35 @@ pub struct ModelStatusResult {
     pub stale: u64,
     pub failures: u64,
     pub busy_ms: u64,
+}
+
+/// Throw the index away and derive it again from the filesystem (rule R10).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RebuildParams {
+    /// Also drop the vectors. They are keyed by content hash and survive a rebuild by default,
+    /// which is what makes it affordable — dropping them means re-running the model over the
+    /// whole corpus.
+    #[serde(default)]
+    pub drop_embeddings: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RebuildResult {
+    /// Nodes re-derived from the filesystem.
+    pub indexed: u64,
+    /// Chunks still to be extracted. Extraction runs in the background, so a rebuild returns
+    /// before the index is complete — poll `extract.status` to see it finish.
+    pub extraction_pending: i64,
+    pub embeddings_kept: i64,
+    pub elapsed_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CanonicalDumpResult {
+    /// One line per indexed path: stat, content hash, extraction state and every chunk hash.
+    /// Stable across rebuilds by construction — ids and discovery times are left out.
+    pub dump: String,
+    pub lines: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

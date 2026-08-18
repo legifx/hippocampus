@@ -14,11 +14,12 @@ use cortex_query::search;
 use cortex_query::PathIndex;
 use cortex_rpc::protocol::{
     method, ActivityPingResult, EpisodeAppendParams, EpisodesRecentParams, EpisodesRecentResult,
-    ExtractRequeueResult, ExtractStatusResult, IndexPathParams, IndexPathResult, ModelReloadResult,
+    CanonicalDumpResult, ExtractRequeueResult, ExtractStatusResult, IndexPathParams,
+    IndexPathResult, ModelReloadResult,
     ModelStatusResult, NodeGetParams, NodeGetResult, PingResult, ReconcileParams, ReconcileResult,
     ReconcileSummary, Request, Response, RpcError, SearchExplainParams, SearchExplainResult,
-    SearchParams, SearchResult, StatusResult, WatchStatusResult, ZoneInfo, ZoneSetColorParams,
-    ZonesListResult,
+    RebuildParams, RebuildResult, SearchParams, SearchResult, StatusResult, WatchStatusResult,
+    ZoneInfo, ZoneSetColorParams, ZonesListResult,
 };
 use cortex_rpc::transport;
 use cortex_store::Store;
@@ -506,6 +507,87 @@ async fn dispatch(
         }
 
         method::EXTRACT_STATUS => json(daemon.extract_status()?),
+
+        method::CANONICAL_DUMP => {
+            let dump = daemon.store.canonical_dump().map_err(internal)?;
+            json(CanonicalDumpResult {
+                lines: dump.lines().count(),
+                dump,
+            })
+        }
+
+        method::REBUILD_INDEX => {
+            let params: RebuildParams = params
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(|e| RpcError::invalid_params(e.to_string()))?
+                .unwrap_or(RebuildParams { drop_embeddings: false });
+
+            let started = Instant::now();
+            let roots = daemon.config.index.metadata_roots.clone();
+            if roots.is_empty() {
+                return Err(RpcError::invalid_params(
+                    "no metadata_roots configured; there would be nothing to rebuild from",
+                ));
+            }
+
+            // Paused for the whole operation. The alternative is the watcher inserting rows into
+            // a table that is being emptied, which is a race with no upside.
+            let was_paused = daemon.ingest.is_paused();
+            daemon.ingest.set_paused(true);
+
+            let store = daemon.store.clone();
+            let extra_deny = daemon.config.index.extra_deny.clone();
+            let drop_embeddings = params.drop_embeddings;
+            let outcome = tokio::task::spawn_blocking(move || {
+                store.clear_derived(!drop_embeddings)?;
+                let mut indexed = 0u64;
+                for root in &roots {
+                    let report = cortex_ingest::reconcile::reconcile(
+                        &store,
+                        root,
+                        &extra_deny,
+                        indexer::unix_now(),
+                    );
+                    indexed += report.added;
+                }
+                store.link_parents()?;
+                store.assign_zones()?;
+                cortex_store::error::Result::Ok(indexed)
+            })
+            .await
+            .map_err(|e| RpcError::internal(format!("rebuild task failed: {e}")))?
+            .map_err(internal)?;
+
+            rebuild_index(daemon).map_err(internal)?;
+
+            // The vector index is *not* refilled here, and the first attempt at this was the bug
+            // that made the point: at this moment the chunks do not exist yet, so there is
+            // nothing to point at and the refill silently wrote an empty index. The embedding
+            // stage does it once extraction has caught up, where the chunks are back.
+            let embeddings_kept = daemon.semantics.get().map_or(0, |loaded| {
+                let model = loaded.embedder.model();
+                daemon
+                    .store
+                    .embedding_count(cortex_store::embeddings::ModelRef {
+                        id: &model.id,
+                        version: &model.version,
+                        dim: model.dim,
+                    })
+                    .unwrap_or(0)
+            });
+
+            daemon.ingest.set_paused(was_paused);
+            daemon.ingest.signal_work();
+            let progress = daemon.store.extract_progress().map_err(internal)?;
+
+            json(RebuildResult {
+                indexed: outcome,
+                extraction_pending: progress.pending,
+                embeddings_kept,
+                elapsed_ms: started.elapsed().as_millis() as u64,
+            })
+        }
 
         method::MODEL_STATUS => json(daemon.model_status()?),
 

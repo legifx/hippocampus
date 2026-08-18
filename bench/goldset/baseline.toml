@@ -1,0 +1,30 @@
+# Recall@10 as last measured, by arm and by what the query tests.
+#
+# Written by `goldset --write-baseline`. A drop of more than three points against any of
+# these fails the run — which is the point: a ranking change that helps one kind of query
+# and quietly ruins another is the failure mode this file exists to catch.
+#
+# Update it only together with the reason it changed.
+
+[recall]
+"fused/crosslang" = 0.3333
+"fused/de" = 0.8704
+"fused/en" = 0.9565
+"fused/lexical" = 1.0000
+"fused/name" = 1.0000
+"fused/overall" = 0.9100
+"fused/semantic" = 0.9792
+"lexical only/crosslang" = 0.0000
+"lexical only/de" = 0.3333
+"lexical only/en" = 0.3913
+"lexical only/lexical" = 0.8571
+"lexical only/name" = 1.0000
+"lexical only/overall" = 0.3600
+"lexical only/semantic" = 0.0000
+"vector only/crosslang" = 0.3333
+"vector only/de" = 0.8704
+"vector only/en" = 0.9565
+"vector only/lexical" = 1.0000
+"vector only/name" = 1.0000
+"vector only/overall" = 0.9100
+"vector only/semantic" = 0.9792

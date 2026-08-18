@@ -3,10 +3,11 @@
 **A memory daemon for your filesystem — and the file manager that grew out of it.**
 
 > Status: early. The daemon watches a filesystem, keeps a rebuildable index of it, and searches
-> both paths and file *contents* — a fuzzy path match takes about a millisecond over a hundred
-> thousand files, and a content query about fifteen. Extraction runs as background work that
-> holds itself to a measured share of one core. Embeddings and semantic search are next.
-> See `docs/03-PROGRESS.md` for exactly where things stand.
+> paths, words and **meaning**: a query finds documents that share no word with it, in German or
+> English. A fuzzy path match takes about a millisecond over a hundred thousand files, a content
+> query fifteen, and the whole hybrid query with snippets about twenty. Recall is measured
+> against a checked-in goldset rather than asserted. See `docs/03-PROGRESS.md` for exactly where
+> things stand.
 
 ---
 
@@ -105,6 +106,13 @@ cargo build --release
 # See how far content extraction has got
 ./target/release/cortex --root /tmp/hippocampus-demo extract
 
+# Semantic search needs a model. Nothing is downloaded until you ask for it.
+./target/release/cortex --root /tmp/hippocampus-demo model fetch
+./target/release/cortex --root /tmp/hippocampus-demo model
+
+# Throw the index away and derive it again from the filesystem
+./target/release/cortex --root /tmp/hippocampus-demo rebuild
+
 # See what it knows
 ./target/release/cortex --root /tmp/hippocampus-demo status
 ```
@@ -121,6 +129,11 @@ content_roots  = ["/home/you/Documents", "/home/you/Projects"]
 
 Metadata indexing may span a whole home directory; reading what is *inside* a file is opt-in and
 empty by default (hard rule R3). The deny-list applies before either, and cannot be shrunk.
+
+**Downloads.** A fresh install makes no outbound connection at all. `cortex model fetch` is the
+only command that does, it says what it is about to fetch and from where, and every file is
+verified against a checksum pinned in the source. Without a model the search still works — it
+just has no semantic arm, and says so when you ask it why.
 
 Without `--root`, the daemon uses the XDG locations: configuration in
 `~/.config/hippocampus/`, index in `~/.local/state/hippocampus/`, socket in

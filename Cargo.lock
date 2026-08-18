@@ -810,6 +810,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "goldset"
+version = "0.0.1"
+dependencies = [
+ "clap",
+ "cortex-core",
+ "cortex-embed",
+ "cortex-extract",
+ "cortex-query",
+ "cortex-store",
+ "serde",
+ "toml",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"

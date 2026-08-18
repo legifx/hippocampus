@@ -123,6 +123,9 @@ impl Embedding {
         let mut idle_wait = QUEUE_EMPTY_POLL;
         let mut since_save = 0usize;
         let mut announced = false;
+        // The chunk table as it was when the queue last came back empty. While it is unchanged
+        // there is provably nothing to embed, and asking again costs a scan of every chunk.
+        let mut settled_at: Option<(i64, i64)> = None;
 
         while !self.state.stop_requested() {
             if self.state.is_paused() {
@@ -148,6 +151,15 @@ impl Embedding {
                 );
             }
 
+            // Cheap first: two indexed aggregates. Only when they differ from the last settled
+            // state is the expensive queue query worth running.
+            let watermark = self.store.chunk_watermark().ok();
+            if settled_at.is_some() && watermark == settled_at {
+                self.sleep(idle_wait);
+                idle_wait = (idle_wait * 2).min(MAX_QUEUE_POLL);
+                continue;
+            }
+
             let started = Instant::now();
             let batch = match self.store.chunks_without_embedding(session.reference(), CLAIM) {
                 Ok(batch) => batch,
@@ -159,9 +171,20 @@ impl Embedding {
             };
 
             if batch.is_empty() {
+                settled_at = watermark;
+                // Nothing left to compute does not mean everything is findable. The ANN index
+                // keys by chunk id while the vectors key by content, so re-deriving chunks —
+                // which is what `--rebuild-index` does — leaves the table complete and the index
+                // empty. Checking here is what makes that self-healing, and it is the same path
+                // that rebuilds the index when its file is deleted (Definition of Done §8).
+                self.reconcile_index(&session);
                 if !self.stats.caught_up.swap(true, Ordering::Relaxed) {
-                    // First time the backlog is empty: the index is complete, so persist it.
-                    self.save_index(&session);
+                    // Nothing left to add, so the index goes back to being a mapping: its pages
+                    // become file-backed and the daemon stops holding a hundred megabytes of
+                    // heap it will never write to again.
+                    if let Err(e) = session.loaded.vectors.demote() {
+                        tracing::warn!(error = %e, "could not map the vector index");
+                    }
                     tracing::info!(
                         vectors = session.loaded.vectors.len(),
                         "embedding caught up with the corpus"
@@ -172,6 +195,7 @@ impl Embedding {
                 continue;
             }
             idle_wait = QUEUE_EMPTY_POLL;
+            settled_at = None;
 
             let embedded = self.run_batch(&session, batch, started);
             if embedded == 0 {
@@ -258,6 +282,7 @@ impl Embedding {
                 .zip(&vectors)
                 .map(|(chunk, vector)| EmbeddingWrite {
                     chunk_id: chunk.chunk_id,
+                    chunk_hash: chunk.hash.clone(),
                     vector: vector.clone(),
                 })
                 .collect();
@@ -293,6 +318,68 @@ impl Embedding {
         }
 
         embedded
+    }
+
+    /// Make the ANN index agree with the table, refilling it if it does not.
+    ///
+    /// Cheap in the normal case: one count against one number already in memory. Expensive
+    /// exactly when it needs to be.
+    fn reconcile_index(&self, session: &Session) {
+        let expected = match self.store.indexable_vector_count(session.reference()) {
+            Ok(count) => count,
+            Err(e) => {
+                tracing::warn!(error = %e, "could not count indexable vectors");
+                return;
+            }
+        };
+        if expected == session.loaded.vectors.len() {
+            return;
+        }
+
+        tracing::info!(
+            expected,
+            present = session.loaded.vectors.len(),
+            "rebuilding the vector index from the store"
+        );
+        if let Err(e) = session.loaded.vectors.clear() {
+            tracing::warn!(error = %e, "could not clear the vector index");
+            return;
+        }
+
+        let mut batch: Vec<(cortex_core::ids::ChunkId, Vec<f32>)> = Vec::with_capacity(1024);
+        let mut added = 0usize;
+        let mut flush = |batch: &mut Vec<(cortex_core::ids::ChunkId, Vec<f32>)>| {
+            if batch.is_empty() {
+                return;
+            }
+            if let Err(e) = session
+                .loaded
+                .vectors
+                .add_many(batch.iter().map(|(id, v)| (*id, v.as_slice())))
+            {
+                tracing::warn!(error = %e, "could not refill the vector index");
+            }
+            batch.clear();
+        };
+
+        let result = self
+            .store
+            .for_each_indexable_vector(session.reference(), |chunk, vector| {
+                batch.push((chunk, vector.to_vec()));
+                added += 1;
+                if batch.len() == 1024 {
+                    flush(&mut batch);
+                }
+            });
+        flush(&mut batch);
+
+        match result {
+            Ok(_) => {
+                self.save_index(session);
+                tracing::info!(vectors = added, "vector index rebuilt without the model");
+            }
+            Err(e) => tracing::warn!(error = %e, "could not read embeddings back"),
+        }
     }
 
     fn save_index(&self, session: &Session) {
@@ -549,6 +636,146 @@ mod tests {
             "the nearest vector was {}",
             best.path.display()
         );
+    }
+
+    /// An embedder that counts what it was asked to do.
+    ///
+    /// Definition of Done §4 says re-indexing an unchanged corpus re-embeds zero chunks and asks
+    /// for it to be asserted by a call counter. Counting stored vectors would not do: it would
+    /// pass just as well if the model ran and produced the same numbers again, which is the
+    /// expensive failure this is about.
+    #[derive(Default)]
+    struct CountingEmbedder {
+        inner: HashingEmbedder,
+        texts: std::sync::atomic::AtomicUsize,
+    }
+
+    impl cortex_embed::Embedder for CountingEmbedder {
+        fn model(&self) -> cortex_embed::ModelId {
+            self.inner.model()
+        }
+        fn embed(&self, inputs: &[Input<'_>]) -> cortex_embed::Result<Vec<Vec<f32>>> {
+            self.texts.fetch_add(inputs.len(), Ordering::Relaxed);
+            self.inner.embed(inputs)
+        }
+        fn backend(&self) -> String {
+            self.inner.backend()
+        }
+    }
+
+    #[test]
+    fn re_indexing_an_unchanged_corpus_asks_the_model_for_nothing() {
+        let harness = Harness::new();
+        for i in 0..6 {
+            harness.add(&format!("doc{i}.txt"), &format!("Inhalt Nummer {i} mit etwas Text.\n"));
+        }
+
+        let counter = Arc::new(CountingEmbedder::default());
+        let drain_counting = || {
+            let stage = Embedding::new(
+                harness.store.clone(),
+                harness.semantics.clone(),
+                harness.state.clone(),
+                Arc::new(Activity::default()),
+                harness.stats.clone(),
+                harness.config.clone(),
+            );
+            let session = Session {
+                loaded: Loaded {
+                    embedder: counter.clone(),
+                    vectors: harness.semantics.get().unwrap().vectors,
+                },
+                model: counter.model(),
+            };
+            for _ in 0..10 {
+                let batch = harness
+                    .store
+                    .chunks_without_embedding(session.reference(), CLAIM)
+                    .unwrap();
+                if batch.is_empty() {
+                    break;
+                }
+                if stage.run_batch(&session, batch, Instant::now()) == 0 {
+                    break;
+                }
+            }
+        };
+
+        drain_counting();
+        let first = counter.texts.load(Ordering::Relaxed);
+        assert_eq!(first, 6, "the first pass must embed every chunk exactly once");
+
+        // Re-derive the chunks, exactly as `--rebuild-index` does: same text, new rows.
+        for node in harness.store.all_paths_with_ids().unwrap() {
+            let existing = harness.store.chunks_for_node(node.0).unwrap();
+            let again: Vec<cortex_store::chunks::ChunkWrite> = existing
+                .iter()
+                .map(|c| cortex_store::chunks::ChunkWrite {
+                    ordinal: c.ordinal,
+                    byte_start: c.byte_start,
+                    byte_end: c.byte_end,
+                    hash: c.hash.clone(),
+                    preview: c.preview.clone(),
+                    text: "not read again".into(),
+                })
+                .collect();
+            harness.store.delete_chunks(node.0).unwrap();
+            harness.store.replace_chunks(node.0, &again).unwrap();
+        }
+
+        drain_counting();
+        assert_eq!(
+            counter.texts.load(Ordering::Relaxed),
+            first,
+            "a re-index called the model again"
+        );
+    }
+
+    #[test]
+    fn the_vector_index_is_refilled_when_it_disagrees_with_the_table() {
+        // Definition of Done §8, and the bug a live rebuild found: the vectors are keyed by
+        // content and survive, the index keys by chunk id and does not. Nothing else notices,
+        // because the embedding queue is empty — every hash already has a vector — so semantic
+        // search simply stops returning anything.
+        let harness = Harness::new();
+        harness.add("bleibt.txt", "Inhalt der erhalten bleibt.\n");
+        harness.drain();
+        assert_eq!(harness.vectors().len(), 1);
+
+        harness.vectors().clear().unwrap();
+        assert_eq!(harness.vectors().len(), 0);
+
+        let stage = harness.stage();
+        let session = stage.session().unwrap();
+        assert!(
+            harness
+                .store
+                .chunks_without_embedding(session.reference(), 10)
+                .unwrap()
+                .is_empty(),
+            "the fixture is wrong: there is still embedding work, so this would not be the case"
+        );
+
+        stage.reconcile_index(&session);
+        assert_eq!(
+            harness.vectors().len(),
+            1,
+            "the index must be refilled from the table, without the model"
+        );
+    }
+
+    #[test]
+    fn a_matching_index_is_left_alone() {
+        // The check runs every time the queue drains, so it has to be cheap and quiet when
+        // there is nothing to do.
+        let harness = Harness::new();
+        harness.add("unveraendert.txt", "Inhalt.\n");
+        harness.drain();
+
+        let stage = harness.stage();
+        let session = stage.session().unwrap();
+        stage.reconcile_index(&session);
+        assert_eq!(harness.vectors().len(), 1);
     }
 
     #[test]

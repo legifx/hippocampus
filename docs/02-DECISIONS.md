@@ -481,3 +481,114 @@ normally gives up.
 
 **Revisit if:** the M2 goldset shows the heuristic mislabelling queries. It is one function with
 its own tests, and the goldset is the instrument that would show it.
+
+---
+
+### D25 — The model and the ONNX runtime are provisioned like data, not like dependencies
+**Status:** ACCEPTED
+
+`multilingual-e5-small` and `libonnxruntime.so` are both fetched by an explicit user action
+(`cortex model fetch`), verified against a SHA-256 pinned in `cortex_embed::registry`, and stored
+under the state directory. The daemon loads the runtime *by path* at startup (`ort` built with
+`load-dynamic`, without `download-binaries`).
+
+**Why not a build-time download:** `ort`'s default feature fetches prebuilt binaries while
+compiling, through a client that needs system OpenSSL. That makes `cargo build` require the
+network and `libssl-dev`, which is a second user's first failure. Nothing in this project
+downloads anything at build time now.
+
+**Why not a system package:** Ubuntu has `libonnxruntime-dev`, and requiring it means asking for
+root before somebody can try the project. A 10 MB tarball into the state directory asks for
+nothing.
+
+**Why the same treatment for both:** the runtime loads the model into the process. If one is
+checksum-verified and the other is whatever happened to be on the machine, the verification is
+decoration. `embedding.runtime_path` still points at a system library for anyone who wants that.
+
+**Consequence:** a fresh install has no vector arm and says so, which is rule R5 working rather
+than a fault. The hashing embedder covers the pipeline in the meantime.
+
+**Revisit if:** a distribution ships an ONNX Runtime whose ABI this project can rely on across
+releases, or if `ort` gains a build mode that neither downloads nor links a system library.
+
+---
+
+### D26 — Embeddings are keyed by the hash of the text, not by the chunk row
+**Status:** ACCEPTED
+
+`embeddings` has primary key `(chunk_hash, model_id, model_version)` (migration 0003). The usearch
+index still keys by chunk id, because a search must come back to a place in a file, and it is
+derived from the table by joining on the hash.
+
+**Why:** an embedding is a pure function of the text and the model. Keying it by row id tied it
+to a particular `chunks` row, and three things follow from that, all discovered by building it
+the other way first:
+
+1. `--rebuild-index` re-derives chunks from the filesystem, so every vector cascaded away with
+   the old rows. On the reference corpus that is hours of inference to recover something that had
+   not changed — which makes a supported operation one nobody would run (rule R10).
+2. Identical text was embedded once per copy. Boilerplate is the same chunk in dozens of files.
+3. Any operation that recreated chunks lost their vectors.
+
+**Consequence:** the ANN index and the table can now disagree — the table survives a rebuild, the
+index does not. The embedding stage checks and refills it whenever its queue drains, which is the
+same path that satisfies Definition-of-Done §8 (delete the index file, restart, no model needed).
+That check has to be cheap, which is what `Store::chunk_watermark` is for.
+
+**Revisit if:** vectors ever become large enough that storing one per distinct text rather than
+one per chunk is the wrong trade. At 384 dimensions and `f32` it is 1.5 kB.
+
+---
+
+### D27 — The vector index is memory-mapped, and the memory budget is read as anonymous memory
+**Status:** ACCEPTED
+
+The usearch index is opened with `view` (mmap, read-only) and promoted to a heap copy only while
+something is writing to it; the embedding stage maps it again once it has caught up.
+
+**Why:** measured on the reference corpus, 122 137 vectors are 104 MiB on disk and about 145 MiB
+of heap when loaded. Loaded, the daemon's resident memory was **307 MiB against a 250 MB budget**.
+Mapped, the same daemon measures:
+
+| | fresh start | after ten searches |
+|---|---|---|
+| RssAnon (heap) | 178 MiB | **182 MiB** |
+| RssShmem (the mapped index) | 0 | 107 MiB |
+| VmRSS (what `top` shows) | 206 MiB | 299 MiB |
+
+**So the budget is restated, not raised:** *idle RSS below 250 MB* now means **anonymous** memory,
+because that is the memory the daemon genuinely holds and the only part the kernel cannot take
+back. The mapped index is page cache attributed to the process; under pressure it is evicted and
+searches get slower rather than the machine swapping.
+
+Stating it any other way would have left two bad options: pretend a 299 MiB process is inside a
+250 MB budget, or delete a feature the milestone requires.
+
+**Also worth knowing:** `view` maps the file and trusts its header. Pointed at a truncated one it
+does not fail, it **segfaults** — found by the test that writes rubbish into the path. The header
+is now read with an ordinary file read first, and only then is anything mapped.
+
+**Revisit if:** the anonymous half approaches the budget on its own. The path index (69.6 MiB for
+105 273 paths) is the next largest item and the one with the most obvious slack.
+
+---
+
+### D28 — Embedding is a separate stage from extraction
+**Status:** ACCEPTED
+
+Extraction and embedding are two threads over two queues, not one pipeline. Extraction has the
+chunk text in hand and could embed it there, saving a file read; the embedding stage re-reads
+each chunk through its stored offsets instead.
+
+**Why:** measured on the reference corpus, extracting 100 000 files costs **26 seconds** and
+embedding the 122 137 chunks it produces costs **hours** on a CPU. One pipeline would hold the
+cheap, high-value work behind the expensive one: lexical search would arrive hours late instead of
+in half a minute. The re-read costs a few hundred microseconds against tens of milliseconds of
+inference — under one per cent of what it decouples.
+
+**It is also not optional in general.** A model fetched *after* the corpus was indexed has no
+other way to see it, and that is the normal case: the model is a deliberate download, so every
+first install is exactly that situation.
+
+**Revisit if:** embeddings ever become cheap enough that the two stages have comparable cost —
+a GPU changes the ratio by one to two orders of magnitude, but not the direction.

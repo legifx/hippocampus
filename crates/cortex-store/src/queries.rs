@@ -519,6 +519,104 @@ impl Store {
     }
 
     /// Reclaim space and rebuild indexes. Blocking and occasionally slow — never on a hot path.
+    /// Throw away everything that can be derived again, keeping only what cannot.
+    ///
+    /// What survives: `episodes`, which is the ground truth and is never mutated (rule R10), and
+    /// — unless `keep_embeddings` is false — the vectors, which are keyed by the hash of the text
+    /// rather than by the rows being deleted (migration 0003). Keeping them is what makes a
+    /// rebuild something a person will actually run: the same corpus comes back without the
+    /// model being asked a single question.
+    ///
+    /// What goes: nodes and everything that cascades from them, the lexical index, and the zones.
+    /// All of it is re-derived from the filesystem.
+    pub fn clear_derived(&self, keep_embeddings: bool) -> Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+
+        // The FTS index is contentless and has no foreign key to cascade through, so it has to
+        // be told. `delete-all` is the documented command for exactly this; deleting rows one by
+        // one from a table that has just lost its companion would need the text back.
+        tx.execute("INSERT INTO chunks_fts(chunks_fts) VALUES('delete-all')", [])?;
+        // Chunks, edges and salience entries all cascade from nodes.
+        tx.execute("DELETE FROM nodes", [])?;
+        tx.execute("DELETE FROM zones", [])?;
+        if !keep_embeddings {
+            tx.execute("DELETE FROM embeddings", [])?;
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// A stable, sorted description of everything the index believes.
+    ///
+    /// Two dumps taken before and after `--rebuild-index` must be identical — that is the test
+    /// rule R10 asks for, and it is only a test if the format leaves out everything that is
+    /// *allowed* to differ. Row ids change on a rebuild and are excluded; so are `first_seen`
+    /// and `last_seen`, which record when this index learned something rather than anything
+    /// about the filesystem.
+    ///
+    /// What is included is what a rebuild must reproduce exactly: the path, what kind of thing it
+    /// is, its stat, what its content hashed to, how far extraction got, and the hash of every
+    /// chunk in order. If a rebuild produced different chunk boundaries, this would say so.
+    pub fn canonical_dump(&self) -> Result<String> {
+        let conn = self.conn();
+        let mut out = String::new();
+
+        let mut nodes = conn.prepare(
+            "SELECT id, kind, path, size, mtime, coalesce(content_hash, '-'), tier,
+                    extract_state, coalesce(mime, '-')
+             FROM nodes WHERE path IS NOT NULL ORDER BY path",
+        )?;
+        let mut chunks = conn.prepare(
+            "SELECT hash FROM chunks WHERE node_id = ?1 ORDER BY ordinal",
+        )?;
+
+        let mut rows = nodes.query([])?;
+        while let Some(row) = rows.next()? {
+            let id: i64 = row.get(0)?;
+            let kind: String = row.get(1)?;
+            let path: String = row.get(2)?;
+            let size: i64 = row.get(3)?;
+            let mtime: i64 = row.get(4)?;
+            let content_hash: String = row.get(5)?;
+            let tier: String = row.get(6)?;
+            let extract_state: String = row.get(7)?;
+            let mime: String = row.get(8)?;
+
+            out.push_str(&format!(
+                "{path}\t{kind}\t{size}\t{mtime}\t{content_hash}\t{tier}\t{extract_state}\t{mime}"
+            ));
+            let hashes: Vec<String> = chunks
+                .query_map([id], |r| r.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            for hash in hashes {
+                out.push('\t');
+                out.push_str(&hash);
+            }
+            out.push('\n');
+        }
+
+        Ok(out)
+    }
+
+    /// Read a value from the small key/value table the daemon keeps beside the index.
+    pub fn meta_get(&self, key: &str) -> Result<Option<String>> {
+        let conn = self.conn();
+        Ok(conn
+            .query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0))
+            .optional()?)
+    }
+
+    pub fn meta_set(&self, key: &str, value: &str) -> Result<()> {
+        self.conn().execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
     pub fn vacuum(&self) -> Result<()> {
         let conn = self.conn();
         conn.execute_batch("VACUUM; ANALYZE;")?;
@@ -1154,6 +1252,20 @@ mod tests {
         store.link_parents().unwrap();
         let root = store.node_by_path(Path::new("/")).unwrap().unwrap();
         assert_ne!(root.parent_id, Some(root.id));
+    }
+
+    #[test]
+    fn meta_values_round_trip_and_absent_keys_are_none() {
+        let store = Store::open_in_memory().unwrap();
+        assert_eq!(store.meta_get("nothing").unwrap(), None);
+
+        store.meta_set("marker", "one").unwrap();
+        assert_eq!(store.meta_get("marker").unwrap().as_deref(), Some("one"));
+        store.meta_set("marker", "two").unwrap();
+        assert_eq!(store.meta_get("marker").unwrap().as_deref(), Some("two"));
+
+        // The lamport clock lives in the same table and must not be disturbed by any of this.
+        assert_eq!(store.meta_get("lamport").unwrap().as_deref(), Some("0"));
     }
 
     #[test]

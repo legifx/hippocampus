@@ -9,8 +9,9 @@ use cortex_core::paths::Paths;
 use cortex_rpc::client::Client;
 use cortex_rpc::protocol::{
     method, EpisodesRecentParams, EpisodesRecentResult, ExtractRequeueResult, ExtractStatusResult,
-    IndexPathParams, IndexPathResult, ModelReloadResult, ModelStatusResult, NodeGetParams,
-    NodeGetResult, PingResult, ReconcileParams, ReconcileResult, SearchExplainParams,
+    CanonicalDumpResult, IndexPathParams, IndexPathResult, ModelReloadResult, ModelStatusResult,
+    NodeGetParams, NodeGetResult, PingResult, RebuildParams, RebuildResult, ReconcileParams,
+    ReconcileResult, SearchExplainParams,
     SearchExplainResult, SearchParams, SearchResult, StatusResult, WatchStatusResult,
     ZoneSetColorParams, ZonesListResult,
 };
@@ -95,6 +96,24 @@ enum Command {
         #[command(subcommand)]
         command: Option<ZoneCommand>,
     },
+    /// Throw the index away and derive it again from the filesystem.
+    ///
+    /// Everything except the episode log is derived, so this is a supported operation rather
+    /// than a repair of last resort (rule R10). Vectors are keyed by the content they describe
+    /// and survive it, so the model is not asked for anything it has already computed.
+    Rebuild {
+        /// Drop the vectors too. Costs a full re-embedding pass.
+        #[arg(long)]
+        drop_embeddings: bool,
+        /// Wait until extraction has caught up again, printing progress.
+        #[arg(long, default_value_t = true)]
+        wait: bool,
+    },
+    /// Print the canonical dump of the index: one stable line per path.
+    ///
+    /// Two dumps either side of a rebuild must be identical. That is the test rule R10 asks for,
+    /// and `cortex dump > before && cortex rebuild && cortex dump > after && diff` is it.
+    Dump,
     /// Compare the index against the filesystem and repair any drift.
     Reconcile {
         /// Reconcile only this path. Defaults to every configured root.
@@ -545,6 +564,51 @@ async fn run(args: Args) -> Result<()> {
                 }
             }
         },
+
+        Command::Dump => {
+            let result: CanonicalDumpResult = client
+                .call(method::CANONICAL_DUMP, serde_json::json!({}))
+                .await?;
+            if args.json {
+                print_json(&result)?;
+            } else {
+                print!("{}", result.dump);
+            }
+        }
+
+        Command::Rebuild { drop_embeddings, wait } => {
+            let result: RebuildResult = client
+                .call(method::REBUILD_INDEX, RebuildParams { drop_embeddings })
+                .await?;
+            if args.json {
+                print_json(&result)?;
+            } else {
+                println!(
+                    "re-derived {} entries in {} ms, {} vectors kept",
+                    result.indexed, result.elapsed_ms, result.embeddings_kept
+                );
+                println!("{} files queued for extraction", result.extraction_pending);
+            }
+
+            if wait && !args.json {
+                // A rebuild returns as soon as the tree has been walked; extraction and embedding
+                // run in the background under their own budgets. Waiting here is what makes
+                // "rebuild, then compare the dumps" a single sitting.
+                loop {
+                    let status: ExtractStatusResult = client
+                        .call(method::EXTRACT_STATUS, serde_json::json!({}))
+                        .await?;
+                    if status.pending == 0 {
+                        println!("extraction complete: {} chunks", status.chunks);
+                        break;
+                    }
+                    print!("\r  {} files left to extract   ", status.pending);
+                    use std::io::Write;
+                    let _ = std::io::stdout().flush();
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                }
+            }
+        }
 
         Command::Reconcile { path } => {
             let path = match path {

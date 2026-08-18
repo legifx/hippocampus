@@ -352,6 +352,25 @@ impl Store {
         Ok(rows)
     }
 
+    /// A cheap fingerprint of the chunk table: how many rows, and the highest id.
+    ///
+    /// The embedding stage needs to ask "is there anything to do" every so often, and the honest
+    /// version of that question — a left join looking for chunks without a vector — scans every
+    /// chunk in the index. Measured on the reference corpus that was 0.84 % of one core spent
+    /// discovering that there was nothing to do, against a whole-daemon idle budget of 0.5 %.
+    ///
+    /// Both numbers come from indexes and are effectively free. Together they change whenever a
+    /// chunk is added, removed or re-derived, which is exactly when the answer to the real
+    /// question can have changed.
+    pub fn chunk_watermark(&self) -> Result<(i64, i64)> {
+        let conn = self.conn();
+        Ok(conn.query_row(
+            "SELECT count(*), coalesce(max(id), 0) FROM chunks",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?)
+    }
+
     pub fn extract_progress(&self) -> Result<ExtractProgress> {
         let conn = self.conn();
         let mut progress = ExtractProgress::default();
@@ -883,6 +902,127 @@ mod tests {
         assert_eq!(located[0].node_id, node);
         assert!(located[0].path.ends_with("located.md"));
         assert!(!located[0].hash.is_empty());
+    }
+
+    #[test]
+    fn clearing_derived_data_keeps_episodes_and_vectors() {
+        // Rule R10 in one test: what survives a rebuild is the append-only log and the vectors
+        // that are keyed by content. Everything else comes back from the filesystem.
+        let (store, node) = store_with_file("wird-neu-gebaut.md");
+        store.replace_chunks(node, &[chunk(0, "inhalt der wiederkommt")]).unwrap();
+        store
+            .append_episode(
+                1,
+                &cortex_core::model::Actor::Human,
+                cortex_core::model::Action::Open,
+                Some(node),
+                None,
+                &serde_json::json!({}),
+            )
+            .unwrap();
+        let stored = store.chunks_for_node(node).unwrap();
+        store
+            .upsert_embeddings(
+                crate::embeddings::ModelRef { id: "m", version: "1", dim: 2 },
+                &[crate::embeddings::EmbeddingWrite {
+                    chunk_id: stored[0].id,
+                    chunk_hash: stored[0].hash.clone(),
+                    vector: vec![1.0, 0.0],
+                }],
+                1,
+            )
+            .unwrap();
+
+        store.clear_derived(true).unwrap();
+
+        assert_eq!(store.stats().unwrap().files, 0, "nodes are derived and must go");
+        assert_eq!(store.stats().unwrap().chunks, 0);
+        assert!(
+            store.search_chunks("\"wiederkommt\"", 10).unwrap().is_empty(),
+            "the lexical index is contentless and does not cascade — it must be cleared explicitly"
+        );
+        assert_eq!(store.recent_episodes(10).unwrap().len(), 1, "episodes are never derived");
+        assert_eq!(
+            store
+                .embedding_count(crate::embeddings::ModelRef { id: "m", version: "1", dim: 2 })
+                .unwrap(),
+            1,
+            "vectors are keyed by content and must survive a rebuild"
+        );
+    }
+
+    #[test]
+    fn clearing_can_also_drop_the_vectors_when_asked() {
+        let (store, node) = store_with_file("ganz-weg.md");
+        store.replace_chunks(node, &[chunk(0, "inhalt")]).unwrap();
+        let stored = store.chunks_for_node(node).unwrap();
+        let model = crate::embeddings::ModelRef { id: "m", version: "1", dim: 2 };
+        store
+            .upsert_embeddings(
+                model,
+                &[crate::embeddings::EmbeddingWrite {
+                    chunk_id: stored[0].id,
+                    chunk_hash: stored[0].hash.clone(),
+                    vector: vec![1.0, 0.0],
+                }],
+                1,
+            )
+            .unwrap();
+
+        store.clear_derived(false).unwrap();
+        assert_eq!(store.embedding_count(model).unwrap(), 0);
+    }
+
+    #[test]
+    fn the_canonical_dump_ignores_everything_a_rebuild_is_allowed_to_change() {
+        // Ids and "when did we first see this" differ after a rebuild by construction. If the
+        // dump included them, the rule R10 test could never pass and would be quietly dropped.
+        let store = Store::open_in_memory().unwrap();
+        let insert = |path: &str, seen: i64| {
+            store
+                .upsert_node(
+                    &NodeUpsert {
+                        kind: NodeKind::File,
+                        path: PathBuf::from(path),
+                        parent_id: None,
+                        mime: None,
+                        size: 42,
+                        mtime: 7,
+                        ctime: 7,
+                        inode: 1,
+                        dev: 1,
+                        zone_id: None,
+                    },
+                    seen,
+                )
+                .unwrap()
+        };
+
+        let first = insert("/tmp/corpus/b.md", 1000);
+        insert("/tmp/corpus/a.md", 2000);
+        store.replace_chunks(first, &[chunk(0, "eins"), chunk(1, "zwei")]).unwrap();
+        let before = store.canonical_dump().unwrap();
+
+        // Same corpus, different ids, different discovery times, different insertion order.
+        store.clear_derived(true).unwrap();
+        insert("/tmp/corpus/a.md", 9000);
+        let rebuilt = insert("/tmp/corpus/b.md", 9000);
+        store.replace_chunks(rebuilt, &[chunk(0, "eins"), chunk(1, "zwei")]).unwrap();
+
+        assert_eq!(before, store.canonical_dump().unwrap());
+        assert!(before.starts_with("/tmp/corpus/a.md"), "the dump must be sorted by path");
+    }
+
+    #[test]
+    fn the_canonical_dump_notices_a_change_in_chunk_boundaries() {
+        // The point of putting chunk hashes in it: a rebuild that produced different boundaries
+        // would otherwise pass a comparison of paths and stats.
+        let (store, node) = store_with_file("grenzen.md");
+        store.replace_chunks(node, &[chunk(0, "eins"), chunk(1, "zwei")]).unwrap();
+        let before = store.canonical_dump().unwrap();
+
+        store.replace_chunks(node, &[chunk(0, "eins zwei")]).unwrap();
+        assert_ne!(before, store.canonical_dump().unwrap());
     }
 
     #[test]

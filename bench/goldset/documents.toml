@@ -1,0 +1,463 @@
+# The goldset corpus: documents that mean something.
+#
+# The benchmark corpus is Zipfian word salad on purpose — it reproduces the *statistics* of text,
+# which is what latency depends on. Relevance does not work that way. A judgement of "this
+# document answers that question" needs documents that answer questions, so the goldset brings
+# its own, and the generated corpus around them becomes the distractor set.
+#
+# Rules these documents follow, each for a reason:
+#
+# - **Unique topics.** If two documents covered the same ground, "the right answer" would be
+#   ambiguous and recall would measure the judgement rather than the system.
+# - **German and English, and pairs across them.** The project's whole corpus is mixed, and D6
+#   chose a multilingual model for it. Parallel documents are what make cross-lingual recall
+#   measurable rather than assumed.
+# - **Some answers share no word with their question.** Those are the ones only the vector arm
+#   can find, and they are how the goldset says what the model is worth.
+# - **Some are findable by name alone.** The path arm is ninety per cent of real use; a goldset
+#   that only measured content would happily accept a regression there.
+#
+# Paths are relative to the goldset corpus root and are part of the fixture: several queries are
+# about the name rather than the contents.
+
+[[document]]
+id = "speicherkosten"
+lang = "de"
+path = "Projekte/infrastruktur/speicherkosten-2026.md"
+text = """
+# Speicherkosten nach der Archivmigration
+
+Nach der Umstellung auf das neue Archiv sind die monatlichen Ausgaben deutlich schneller
+gestiegen als geplant. Der Hauptgrund ist, dass die alten Sicherungen weiterhin vorgehalten
+werden, obwohl sie nach dem Umzug niemand mehr braucht.
+
+Wir haben drei Möglichkeiten geprüft: die doppelten Sicherungen löschen, sie auf langsamere
+Medien verschieben, oder die Aufbewahrungsfrist von zwölf auf sechs Monate verkürzen. Die
+zweite Variante spart am meisten, ohne dass jemand auf etwas verzichten muss.
+
+Die Entscheidung fällt im nächsten Quartal. Bis dahin bleibt der Posten im Haushalt
+unverändert stehen.
+"""
+
+[[document]]
+id = "storage-costs"
+lang = "en"
+path = "Projects/infrastructure/storage-costs-2026.md"
+text = """
+# Storage costs after the archive migration
+
+Monthly spending rose considerably faster than planned once the new archive went live. The
+main reason is that the old backups are still being kept, although nobody has needed them
+since the move.
+
+We looked at three options: delete the duplicated backups, move them to slower media, or
+shorten the retention period from twelve months to six. The second saves the most without
+anybody losing access to anything.
+
+The decision is due next quarter. Until then the line item stays in the budget unchanged.
+"""
+
+[[document]]
+id = "kamerawinkel"
+lang = "de"
+path = "Dokumente/aufnahmen/kamerawinkel-vergleich.md"
+text = """
+# Vergleich der Kamerawinkel
+
+Die drei Montagepositionen wurden über eine Woche hinweg verglichen. Die mittlere Position
+liefert die ruhigste Bildwirkung, weil die Blickachse dort über die gesamte Sequenz konstant
+bleibt und der Horizont nicht wandert.
+
+Die obere Position zeigt mehr vom Umfeld, kippt aber bei jeder Erschütterung sichtbar. Die
+untere Position ist unbrauchbar, sobald sich jemand vor dem Gerät bewegt.
+
+Für die nächste Aufnahme bleibt es bei der mittleren Position.
+"""
+
+[[document]]
+id = "camera-angles"
+lang = "en"
+path = "Documents/recordings/camera-angle-comparison.md"
+text = """
+# Comparing the camera angles
+
+The three mounting positions were compared over the course of a week. The middle position
+gives the steadiest image, because the line of sight stays constant across the whole sequence
+and the horizon does not drift.
+
+The upper position shows more of the surroundings but tilts visibly with every vibration. The
+lower position is useless as soon as somebody moves in front of the device.
+
+The next recording stays with the middle position.
+"""
+
+[[document]]
+id = "puffer"
+lang = "de"
+path = "Projekte/sensorik/pufferverhalten.md"
+text = """
+# Warum Bilder verloren gehen
+
+Die Verarbeitungskette verwirft Bilder, sobald der Zwischenspeicher schneller volläuft als er
+geleert wird. Das passiert nicht bei hoher Last allein, sondern immer dann, wenn das Schreiben
+auf die Platte kurz stockt — dann staut sich alles auf.
+
+Ein größerer Zwischenspeicher verschiebt das Problem nur. Wirksam war stattdessen, das
+Schreiben zu bündeln und die Kette bei Rückstau kurz anzuhalten, statt weiter anzunehmen was
+sie nicht wegschreiben kann.
+"""
+
+[[document]]
+id = "quartalspruefung"
+lang = "de"
+path = "Dokumente/finanzen/quartalspruefung-notizen.md"
+text = """
+# Notizen zur Quartalsprüfung
+
+Die Freigabe des Haushalts hängt weiterhin an der Prüfung. Zwei Positionen sind offen: die
+Reisekosten aus dem Frühjahr, für die Belege fehlen, und die Lizenzen, die versehentlich
+doppelt gebucht wurden.
+
+Beides ist inhaltlich unstrittig und muss nur noch sauber dokumentiert werden. Sobald das
+erledigt ist, wird der Rest freigegeben.
+"""
+
+[[document]]
+id = "onboarding"
+lang = "en"
+path = "Documents/team/onboarding-checklist.md"
+text = """
+# Onboarding checklist
+
+A new colleague needs three things on the first day: an account, a machine, and somebody who
+answers questions without being asked twice. The first two take an hour; the third is what
+decides whether the first week is useful.
+
+Pair them with one person rather than the team. A named contact gets asked; a group does not.
+
+Everything else — access to the shared drives, the calendar invitations, the door badge — can
+follow in the first week without anybody being blocked.
+"""
+
+[[document]]
+id = "einarbeitung"
+lang = "de"
+path = "Dokumente/team/einarbeitung-checkliste.md"
+text = """
+# Checkliste für die Einarbeitung
+
+Neue Kolleginnen und Kollegen brauchen am ersten Tag drei Dinge: einen Zugang, ein Gerät und
+jemanden, der Fragen beantwortet, ohne zweimal gefragt zu werden. Die ersten beiden dauern eine
+Stunde; das dritte entscheidet, ob die erste Woche etwas bringt.
+
+Eine feste Ansprechperson ist besser als das ganze Team. Eine benannte Person wird gefragt,
+eine Gruppe nicht.
+
+Alles Weitere — Zugriff auf die Ablagen, Termine, der Ausweis für die Tür — kann in der ersten
+Woche folgen, ohne dass jemand aufgehalten wird.
+"""
+
+[[document]]
+id = "fahrradkette"
+lang = "de"
+path = "Notizen/werkstatt/fahrrad-wartung.md"
+text = """
+# Wartung am Rad
+
+Die Kette springt beim Antritt unter Last. Ursache war nicht die Kette selbst, sondern ein
+verschlissenes Ritzel, das die Glieder nicht mehr sauber führt. Mit neuer Kette auf altem
+Ritzel wird es schlimmer statt besser, weil die neue Kette nicht in die eingelaufenen Zähne
+passt.
+
+Beides zusammen tauschen, dann hält es wieder ein paar tausend Kilometer.
+"""
+
+[[document]]
+id = "sauerteig"
+lang = "de"
+path = "Notizen/kueche/sauerteig-protokoll.md"
+text = """
+# Sauerteig, dritter Versuch
+
+Der Ansatz geht deutlich besser, seit er wärmer steht. Bei Raumtemperatur passierte zwei Tage
+lang nichts; auf dem Schrank über der Heizung verdoppelt er sich in sechs Stunden.
+
+Das Mehl macht weniger aus als gedacht, die Temperatur fast alles. Beim Backen war der
+Unterschied dann kaum noch zu sehen, aber die Krume ist gleichmäßiger geworden.
+"""
+
+[[document]]
+id = "latency-budget"
+lang = "en"
+path = "Projects/search/latency-budget.md"
+text = """
+# Where the time goes in a query
+
+Measuring a search end to end hides which part is slow. Broken down, the ranking is almost
+free and the two expensive things are reading the index from disk the first time and turning
+the query into something the model understands.
+
+Everything after the first keystroke is cache-warm, which is why the second query of a session
+feels instant and the first one does not. Optimising the wrong one of those is the usual
+mistake.
+"""
+
+[[document]]
+id = "wohnungsuebergabe"
+lang = "de"
+path = "Dokumente/wohnung/uebergabeprotokoll.md"
+text = """
+# Übergabe der Wohnung
+
+Beim Auszug wurden zwei Mängel festgehalten: ein Riss in der Fensterbank im Schlafzimmer und
+ein fehlender Schlüssel für den Keller. Der Riss war schon beim Einzug da und steht auch im
+alten Protokoll, der Schlüssel ist tatsächlich verloren gegangen.
+
+Die Kaution wird bis zur Nebenkostenabrechnung einbehalten, das ist zulässig. Der Termin für
+die Endabnahme steht auf dem Kalender.
+"""
+
+[[document]]
+id = "sql-index"
+lang = "en"
+path = "Projects/database/index-notes.md"
+text = """
+# Why the query got slower after adding an index
+
+An index that covers the filter but not the ordering makes the database read every matching
+row and then sort them. Adding the sort column to the index removed the sort entirely, and the
+query went from hundreds of milliseconds to a few.
+
+The lesson is that "add an index" is not a plan. Which columns, and in which order, is the
+whole decision — an index in the wrong order is a scan with extra steps.
+"""
+
+[[document]]
+id = "urlaubsplanung"
+lang = "de"
+path = "Dokumente/team/urlaubsplanung-sommer.md"
+text = """
+# Urlaubsplanung für den Sommer
+
+Zwei Wochen im August sind fast vollständig blockiert, weil vier Leute gleichzeitig weg sind.
+Die Bereitschaft ist in dieser Zeit nicht besetzt.
+
+Vorschlag: eine der beiden Wochen entzerren, indem zwei Termine um sieben Tage verschoben
+werden. Damit bleibt in jeder Woche jemand da, der im Notfall erreichbar ist.
+"""
+
+[[document]]
+id = "reisekosten"
+lang = "de"
+path = "Dokumente/finanzen/reisekosten-erstattung.md"
+text = """
+# Erstattung von Reisekosten
+
+Belege müssen im Original eingereicht werden, ein Foto reicht nur bei Beträgen unter zwanzig
+Euro. Die Bahnfahrt wird vollständig erstattet, das Auto mit einer Pauschale pro Kilometer.
+
+Übernachtungen werden bis zu einer Obergrenze übernommen; alles darüber muss vorher abgestimmt
+sein. Verpflegung läuft über die Tagespauschale und nicht über einzelne Rechnungen.
+"""
+
+[[document]]
+id = "backup-restore"
+lang = "en"
+path = "Projects/infrastructure/restore-drill.md"
+text = """
+# What the restore drill found
+
+The backup had been running for months and nobody had ever read one back. It turned out the
+job was writing an empty archive whenever the source directory was busy, so roughly one night
+in five produced nothing at all.
+
+The backup itself reported success every time, which is the part worth remembering: a job that
+only checks whether it finished is not checking anything.
+"""
+
+[[document]]
+id = "wasserschaden"
+lang = "de"
+path = "Dokumente/wohnung/wasserschaden-versicherung.md"
+text = """
+# Wasserschaden im Bad
+
+Der Schaden kam von der Leitung hinter der Wand, nicht vom Silikon an der Wanne. Das ist für
+die Versicherung der entscheidende Unterschied: das eine ist ein Rohrbruch und gedeckt, das
+andere wäre Instandhaltung gewesen.
+
+Der Trockner läuft jetzt drei Wochen. Die Rechnung geht direkt an die Versicherung, wir müssen
+nichts vorstrecken.
+"""
+
+[[document]]
+id = "rust-lifetimes"
+lang = "en"
+path = "Projects/notes/borrow-checker.md"
+text = """
+# The borrow checker was right again
+
+The error was not about lifetimes at all. Holding the lock across the await point meant the
+value had to outlive a suspension the compiler could not reason about, and the fix was to copy
+the two fields that were actually needed and drop the guard before the call.
+
+Every time this looks like the compiler being awkward, it has turned out to be a design that
+kept something alive longer than it needed to be.
+"""
+
+[[document]]
+id = "gartenbewaesserung"
+lang = "de"
+path = "Notizen/garten/bewaesserung.md"
+text = """
+# Bewässerung im Sommer
+
+Zweimal die Woche gründlich ist besser als jeden Tag ein bisschen. Bei täglichem Gießen
+bleiben die Wurzeln flach und die Pflanzen halten keine drei heißen Tage ohne Wasser durch.
+
+Am frühen Morgen gießen, nicht abends: über Nacht bleibt es zu lange feucht und die Schnecken
+finden alles.
+"""
+
+[[document]]
+id = "meeting-notes-roadmap"
+lang = "en"
+path = "Documents/meetings/roadmap-2026-q1.md"
+text = """
+# Roadmap discussion, first quarter
+
+Two things were agreed. The migration is moved ahead of the redesign, because the redesign
+depends on it and doing them in the other order would mean building the same screens twice.
+
+The second decision is that nothing else gets added before the migration is finished. Every
+previous attempt failed at exactly this point, and always for the same reason.
+"""
+
+[[document]]
+id = "schluesseldienst"
+lang = "de"
+path = "Notizen/haushalt/schluesseldienst-rechnung.md"
+text = """
+# Rechnung vom Schlüsseldienst
+
+Die Tür war nur zugefallen, nicht abgeschlossen — das ist der billigste Fall und war trotzdem
+teuer, weil es Sonntag war. Der Zuschlag für Wochenende und Nacht macht mehr aus als die
+eigentliche Arbeit.
+
+Beim nächsten Mal zuerst bei den Nachbarn klingeln, dort liegt ein Zweitschlüssel.
+"""
+
+[[document]]
+id = "unit-test-flake"
+lang = "en"
+path = "Projects/testing/flaky-test-hunt.md"
+text = """
+# Chasing a test that failed once a week
+
+The test was not flaky; the clock was. It compared a timestamp written by one thread with one
+read by another, and on a machine under load the two could be a millisecond apart in the wrong
+direction.
+
+Passing the time in as a parameter made the test deterministic and also made the production
+code easier to reason about, which is usually how this ends.
+"""
+
+[[document]]
+id = "kuendigung-vertrag"
+lang = "de"
+path = "Dokumente/vertraege/kuendigung-fristen.md"
+text = """
+# Fristen für die Kündigung
+
+Der Vertrag verlängert sich automatisch um ein Jahr, wenn nicht drei Monate vor Ablauf
+gekündigt wird. Maßgeblich ist der Eingang beim Anbieter, nicht das Datum auf dem Schreiben.
+
+Schriftlich per Einschreiben ist die sichere Variante; per E-Mail ist zwar zulässig, aber im
+Streitfall schwer nachzuweisen.
+"""
+
+[[document]]
+id = "photo-backup-workflow"
+lang = "en"
+path = "Documents/photography/import-workflow.md"
+text = """
+# Import workflow for a shoot
+
+Cards are copied twice before anything is deleted: once to the working drive and once to the
+slow disk that never gets edited. Only after both copies verify does the card get formatted,
+and it gets formatted in the camera rather than on the computer.
+
+The step people skip is the verification, and it is the only step that makes the second copy
+worth having.
+"""
+
+[[document]]
+id = "heizung-thermostat"
+lang = "de"
+path = "Notizen/haushalt/heizung-einstellen.md"
+text = """
+# Heizung richtig einstellen
+
+Das Ventil ganz aufzudrehen macht den Raum nicht schneller warm, sondern nur wärmer als
+gewollt. Die Zahl am Thermostat ist eine Zieltemperatur, kein Tempo.
+
+Nachts absenken lohnt sich nur bei gut gedämmten Räumen; sonst kostet das Aufheizen am Morgen
+mehr, als die Nacht gespart hat.
+"""
+
+[[document]]
+id = "api-pagination"
+lang = "en"
+path = "Projects/api/pagination-design.md"
+text = """
+# Paging that survives inserts
+
+Offset paging breaks as soon as rows are added while somebody is reading: page two shows a row
+that was already on page one, and one row is never seen at all.
+
+Keyset paging — remember the last key and ask for what comes after it — has neither problem
+and is also faster, because the database can seek instead of counting past the rows it is
+skipping.
+"""
+
+[[document]]
+id = "vortrag-vorbereitung"
+lang = "de"
+path = "Dokumente/vortraege/vorbereitung-notizen.md"
+text = """
+# Vorbereitung für den Vortrag
+
+Zwanzig Minuten sind kürzer als sie klingen. Drei Aussagen reichen; alles andere ist Material
+für Fragen danach.
+
+Die Folien werden zuletzt gebaut, nicht zuerst — sonst bestimmt die Gliederung der Folien den
+Inhalt, und das merkt man dem Ergebnis an.
+"""
+
+[[document]]
+id = "kaffeemaschine-entkalken"
+lang = "de"
+path = "Notizen/kueche/entkalken.md"
+text = """
+# Entkalken
+
+Alle zwei Monate, auch wenn die Anzeige noch nichts sagt — die Anzeige zählt Durchläufe und
+nicht die Härte des Wassers. Hier ist es hart, also lieber öfter.
+
+Nach dem Entkalken zweimal nur mit Wasser durchlaufen lassen, sonst schmeckt der erste Kaffee
+danach eindeutig nach Essig.
+"""
+
+[[document]]
+id = "monitoring-alerts"
+lang = "en"
+path = "Projects/operations/alert-fatigue.md"
+text = """
+# Turning down the noise
+
+Half the alerts fired every night and nobody looked at any of them, which meant the two that
+mattered were invisible. Deleting the ones that had never once led to an action took the
+nightly volume from forty to three.
+
+An alert that does not change what somebody does is not information, it is a habit.
+"""

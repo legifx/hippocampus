@@ -12,6 +12,7 @@ members = [
     "crates/cortex-cli",
     "bench/corpus-gen",
     "bench/latency",
+    "bench/goldset",
 ]
 
 [workspace.package]

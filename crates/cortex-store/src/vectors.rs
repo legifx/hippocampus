@@ -11,6 +11,20 @@
 //! does not notice: the quantisation error is far below the distance between a relevant result
 //! and an irrelevant one. Precision that matters for anything else is still in the table.
 //!
+//! ## Mapped until something writes
+//!
+//! The index is opened with `view` — memory-mapped, read-only — because that is what the build
+//! prompt specifies and because of what it costs otherwise. Measured on the reference corpus:
+//! 122 137 vectors is a 104 MiB file and about 145 MiB of heap when loaded, which took the
+//! daemon's idle resident memory to 307 MiB against a 250 MB budget. Mapped, those pages are
+//! file-backed: they are only resident once touched, and the kernel can drop them under
+//! pressure instead of pushing the daemon into swap.
+//!
+//! A mapped index cannot be written to, so the first mutation promotes it: the mapping is
+//! dropped, the file is loaded, and writes continue on the heap. [`VectorIndex::demote`] goes
+//! back the other way once there is nothing left to add, which is the steady state — a corpus is
+//! embedded once and searched for months.
+//!
 //! ## Why the whole thing is behind one lock
 //!
 //! usearch supports concurrent reads and writes, but the *capacity* is not dynamic — adding
@@ -41,6 +55,8 @@ pub struct VectorHit {
 
 pub struct VectorIndex {
     index: RwLock<Index>,
+    /// True while the index is a read-only mapping of the file.
+    mapped: RwLock<bool>,
     path: PathBuf,
     dim: usize,
 }
@@ -54,43 +70,110 @@ impl VectorIndex {
         let index = new_index(dim)?;
 
         if path.exists() {
-            match index.load(&path.to_string_lossy()) {
+            // The header is read first, and it is not an optimisation. `view` maps the file and
+            // trusts what it finds there: pointed at a truncated or foreign file it does not
+            // return an error, it **segfaults**, which was discovered by the test that writes
+            // rubbish into the path. Reading the metadata is a plain file read that fails
+            // cleanly, so nothing is mapped until the header has been agreed with.
+            let usable = match Index::metadata(&path.to_string_lossy()) {
+                Ok(metadata) => {
+                    let matches = metadata.dimensions as usize == dim;
+                    if !matches {
+                        tracing::warn!(
+                            found = metadata.dimensions,
+                            expected = dim,
+                            "vector index belongs to another model; rebuilding from the store"
+                        );
+                    }
+                    matches
+                }
+                Err(e) => {
+                    // A corrupt cache is not a corrupt database. Say so and start again.
+                    tracing::warn!(error = %e, "vector index header is unreadable; rebuilding from the store");
+                    false
+                }
+            };
+
+            if usable {
+            match index.view(&path.to_string_lossy()) {
                 Ok(()) if index.dimensions() == dim => {
                     tracing::info!(
                         vectors = index.size(),
                         path = %path.display(),
-                        "vector index loaded"
-                    );
-                }
-                Ok(()) => {
-                    tracing::warn!(
-                        found = index.dimensions(),
-                        expected = dim,
-                        "vector index belongs to another model; rebuilding from the store"
+                        "vector index mapped"
                     );
                     return Ok(Self {
-                        index: RwLock::new(new_index(dim)?),
+                        index: RwLock::new(index),
+                        mapped: RwLock::new(true),
                         path: path.to_path_buf(),
                         dim,
                     });
                 }
-                Err(e) => {
-                    // A corrupt cache is not a corrupt database. Say so and start again.
-                    tracing::warn!(error = %e, "vector index could not be read; rebuilding from the store");
-                    return Ok(Self {
-                        index: RwLock::new(new_index(dim)?),
-                        path: path.to_path_buf(),
-                        dim,
-                    });
-                }
+                Ok(()) => tracing::warn!(
+                    found = index.dimensions(),
+                    expected = dim,
+                    "vector index belongs to another model; rebuilding from the store"
+                ),
+                Err(e) => tracing::warn!(
+                    error = %e,
+                    "vector index could not be mapped; rebuilding from the store"
+                ),
+            }
             }
         }
 
         Ok(Self {
-            index: RwLock::new(index),
+            index: RwLock::new(new_index(dim)?),
+            mapped: RwLock::new(false),
             path: path.to_path_buf(),
             dim,
         })
+    }
+
+    /// Whether the index is currently a mapping rather than a heap copy.
+    pub fn is_mapped(&self) -> bool {
+        *self.mapped.read().unwrap()
+    }
+
+    /// Make the index writable, loading it from disk if it is currently mapped.
+    ///
+    /// Called by every mutation. Idempotent, and cheap once it has happened.
+    fn promote(&self) -> Result<()> {
+        let mut mapped = self.mapped.write().unwrap();
+        if !*mapped {
+            return Ok(());
+        }
+
+        let fresh = new_index(self.dim)?;
+        if self.path.exists() && Index::metadata(&self.path.to_string_lossy()).is_ok() {
+            fresh.load(&self.path.to_string_lossy()).map_err(vector_error)?;
+        }
+        *self.index.write().unwrap() = fresh;
+        *mapped = false;
+        tracing::debug!("vector index loaded for writing");
+        Ok(())
+    }
+
+    /// Save, then go back to being a mapping.
+    ///
+    /// The steady state of a corpus that has been embedded: everything is searched, nothing is
+    /// added. Giving the pages back to the page cache is the difference between the daemon
+    /// sitting inside its memory budget and sitting above it.
+    pub fn demote(&self) -> Result<()> {
+        if self.is_mapped() {
+            return Ok(());
+        }
+        self.save()?;
+
+        let mut mapped = self.mapped.write().unwrap();
+        let fresh = new_index(self.dim)?;
+        fresh
+            .view(&self.path.to_string_lossy())
+            .map_err(vector_error)?;
+        *self.index.write().unwrap() = fresh;
+        *mapped = true;
+        tracing::debug!("vector index mapped again");
+        Ok(())
     }
 
     pub fn dim(&self) -> usize {
@@ -133,6 +216,7 @@ impl VectorIndex {
             }
         }
 
+        self.promote()?;
         let index = self.index.write().unwrap();
         let needed = index.size() + vectors.len();
         if needed > index.capacity() {
@@ -143,13 +227,22 @@ impl VectorIndex {
         for (chunk, vector) in vectors {
             // usearch keys are u64 and chunk ids are positive by construction, so this is a
             // reinterpretation rather than a conversion that could collide.
-            index.add(chunk.0 as u64, vector).map_err(vector_error)?;
+            let key = chunk.0 as u64;
+            // Adding a key that is already there is an error in usearch's wrapper, not a
+            // replacement. "Here is the vector for this chunk" has to be idempotent: a
+            // re-embedding pass, a model that was re-run, or an index file left over from an
+            // earlier run all produce exactly this, and none of them is a failure.
+            if index.contains(key) {
+                index.remove(key).map_err(vector_error)?;
+            }
+            index.add(key, vector).map_err(vector_error)?;
         }
         Ok(())
     }
 
     /// Remove a chunk's vector. Absent keys are not an error — the caller is deleting.
     pub fn remove(&self, chunk: ChunkId) -> Result<()> {
+        self.promote()?;
         let index = self.index.write().unwrap();
         index.remove(chunk.0 as u64).map_err(vector_error)?;
         Ok(())
@@ -203,6 +296,7 @@ impl VectorIndex {
     pub fn clear(&self) -> Result<()> {
         let mut index = self.index.write().unwrap();
         *index = new_index(self.dim)?;
+        *self.mapped.write().unwrap() = false;
         Ok(())
     }
 }
@@ -311,8 +405,11 @@ mod tests {
     }
 
     #[test]
-    fn a_corrupt_file_is_a_rebuild_rather_than_a_failure() {
-        // The index is a cache. A cache that refuses to start is worse than one that rebuilds.
+    fn a_corrupt_file_is_a_rebuild_rather_than_a_crash() {
+        // The index is a cache, so a bad one must cost a rebuild rather than a start. It very
+        // nearly cost the process instead: `view` maps the file and trusts its header, and
+        // pointing it at this fixture segfaulted rather than returning an error. The header is
+        // now read with a plain file read first.
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("vectors.usearch");
         std::fs::write(&path, b"this is not an hnsw graph").unwrap();
@@ -321,6 +418,73 @@ mod tests {
         assert_eq!(index.len(), 0);
         index.add(ChunkId(1), &unit([1.0, 0.0, 0.0, 0.0])).unwrap();
         assert_eq!(index.len(), 1);
+    }
+
+    #[test]
+    fn an_existing_index_is_mapped_rather_than_loaded() {
+        // The whole reason for the mode: 122 137 vectors are 104 MiB on disk and about 145 MiB
+        // on the heap, and the daemon's entire memory budget is 250 MB.
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("vectors.usearch");
+        {
+            let index = VectorIndex::open(&path, 4).unwrap();
+            index.add(ChunkId(1), &unit([1.0, 0.0, 0.0, 0.0])).unwrap();
+            assert!(!index.is_mapped(), "a fresh index is writable");
+            index.save().unwrap();
+        }
+
+        let reopened = VectorIndex::open(&path, 4).unwrap();
+        assert!(reopened.is_mapped());
+        assert_eq!(reopened.len(), 1);
+        assert_eq!(
+            reopened.search(&unit([1.0, 0.0, 0.0, 0.0]), 1).unwrap()[0].chunk_id,
+            ChunkId(1)
+        );
+    }
+
+    #[test]
+    fn writing_to_a_mapped_index_promotes_it_and_keeps_what_was_there() {
+        // A mapped index is read-only. Adding to it has to load the file first, and losing the
+        // existing vectors in the process would be a silent, corpus-wide regression.
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("vectors.usearch");
+        {
+            let index = VectorIndex::open(&path, 4).unwrap();
+            index.add(ChunkId(1), &unit([1.0, 0.0, 0.0, 0.0])).unwrap();
+            index.save().unwrap();
+        }
+
+        let index = VectorIndex::open(&path, 4).unwrap();
+        assert!(index.is_mapped());
+        index.add(ChunkId(2), &unit([0.0, 1.0, 0.0, 0.0])).unwrap();
+
+        assert!(!index.is_mapped(), "an add must have promoted it");
+        assert_eq!(index.len(), 2, "the mapped vectors must survive the promotion");
+        assert_eq!(
+            index.search(&unit([1.0, 0.0, 0.0, 0.0]), 1).unwrap()[0].chunk_id,
+            ChunkId(1)
+        );
+    }
+
+    #[test]
+    fn demoting_saves_and_maps_again() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("vectors.usearch");
+        let index = VectorIndex::open(&path, 4).unwrap();
+        index.add(ChunkId(3), &unit([0.0, 0.0, 1.0, 0.0])).unwrap();
+        assert!(!index.is_mapped());
+
+        index.demote().unwrap();
+        assert!(index.is_mapped());
+        assert_eq!(index.len(), 1);
+        assert_eq!(
+            index.search(&unit([0.0, 0.0, 1.0, 0.0]), 1).unwrap()[0].chunk_id,
+            ChunkId(3)
+        );
+
+        // And it is on disk, which is what "demote" promised.
+        let reopened = VectorIndex::open(&path, 4).unwrap();
+        assert_eq!(reopened.len(), 1);
     }
 
     #[test]
@@ -334,6 +498,25 @@ mod tests {
         assert!(
             hits.iter().all(|h| h.chunk_id != ChunkId(1)),
             "a removed vector came back: {hits:?}"
+        );
+    }
+
+    #[test]
+    fn adding_the_same_chunk_twice_replaces_rather_than_failing() {
+        // Found by the goldset runner against a leftover index file: usearch's wrapper refuses a
+        // duplicate key outright. Re-embedding a chunk is an ordinary thing to do — after a model
+        // change, or over an index that survived from an earlier run — and it must overwrite.
+        let (_tmp, index) = index();
+        index.add(ChunkId(1), &unit([1.0, 0.0, 0.0, 0.0])).unwrap();
+        index.add(ChunkId(1), &unit([0.0, 1.0, 0.0, 0.0])).unwrap();
+
+        assert_eq!(index.len(), 1, "the chunk must appear once, not twice");
+        let hits = index.search(&unit([0.0, 1.0, 0.0, 0.0]), 1).unwrap();
+        assert_eq!(hits[0].chunk_id, ChunkId(1));
+        assert!(
+            hits[0].similarity > 0.9,
+            "the second vector must be the one that stuck, got {}",
+            hits[0].similarity
         );
     }
 
