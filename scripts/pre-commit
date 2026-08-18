@@ -43,7 +43,11 @@ for f in "${files[@]}"; do
   while IFS=: read -r line content; do
     [[ -z "${line:-}" ]] && continue
     report "private IPv4 address" "$f:$line" "$content"
-  done < <(grep -nE '\b(10|192\.168|172\.(1[6-9]|2[0-9]|3[01]))\.[0-9]{1,3}\.[0-9]{1,3}\b' "$f" | head -5)
+  # Four octets, not three. `10.4.1` is a version number and `^10.6.0` is a dependency range;
+  # a lock file is full of both, and flagging them trains people to ignore this gate.
+  # Each alternative spells out its own remaining octets, so all three require a full address.
+  # A single shared repeat count cannot: `10` needs three more octets, `192.168` needs two.
+  done < <(grep -nE '(^|[^0-9.])(10(\.[0-9]{1,3}){3}|192\.168(\.[0-9]{1,3}){2}|172\.(1[6-9]|2[0-9]|3[01])(\.[0-9]{1,3}){2})([^0-9.]|$)' "$f" | head -5)
 
   while IFS=: read -r line content; do
     [[ -z "${line:-}" ]] && continue

@@ -1,0 +1,154 @@
+/*
+ * The design system, as values.
+ *
+ * `docs/06-DESIGN-SYSTEM.md` is the contract and this file is its implementation. Nothing here
+ * is invented: a colour, a radius or a spring that is not in that document does not belong in
+ * this file, and a new one goes into the document first.
+ *
+ * The performance rules in §8 of that document override the aesthetics above them, and two of
+ * them are visible here: no `backdrop-filter` outside the overlay container, and no
+ * `box-shadow` on anything that repeats per row.
+ */
+
+:root {
+  /* §2 Colour */
+  --hc-bg: #09090b;
+  --hc-surface: #0e0e11;
+  --hc-surface-hi: #141418;
+  --hc-stroke: rgba(255, 255, 255, 0.075);
+  --hc-stroke-lift: rgba(255, 255, 255, 0.1);
+  --hc-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.09);
+
+  --hc-text: rgba(255, 255, 255, 0.96);
+  --hc-text-dim: rgba(255, 255, 255, 0.55);
+  --hc-text-faint: rgba(255, 255, 255, 0.32);
+
+  --hc-info: #0a84ff;
+  --hc-success: #30d158;
+  --hc-warning: #ffb86b;
+  --hc-error: #ff453a;
+  --hc-neutral: #ffffff;
+
+  --hc-shadow-rest: 0 12px 40px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  --hc-shadow-lift: 0 20px 56px rgba(0, 0, 0, 0.62), 0 4px 14px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16);
+
+  /* Zone accents (D15). Hue is per-row and set inline; saturation and lightness are the
+     theme's, so no zone can be louder than another. */
+  --hc-zone-sat: 58%;
+  --hc-zone-light: 62%;
+  --hc-zone-alpha: 0.85;
+  --hc-zone-alpha-bg: 0.06;
+
+  /* §4 Geometry */
+  --hc-radius-row: 13px;
+  --hc-radius-panel: 20px;
+  --hc-radius-overlay: 26px;
+  --hc-radius-pill: 999px;
+  --hc-lead: 50px;
+  --hc-row-compact: 28px;
+  --hc-row-comfortable: 34px;
+  --hc-row-height: var(--hc-row-compact);
+  --hc-preview-max: 460px;
+
+  /* §5 Easing. The springs live in motion.ts — Framer Motion takes numbers, not CSS. */
+  --hc-ease-island: cubic-bezier(0.16, 1, 0.3, 1);
+  --hc-ease-sheet: cubic-bezier(0.32, 0.72, 0, 1);
+  --hc-exit: 140ms;
+  --hc-icon-crossfade: 240ms;
+
+  /* §3 Typography */
+  --hc-font: "Inter Variable", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --hc-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+}
+
+[data-density="comfortable"] {
+  --hc-row-height: var(--hc-row-comfortable);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: transparent;
+  color: var(--hc-text);
+  font-family: var(--hc-font);
+  font-size: 14px;
+  font-weight: 520;
+  letter-spacing: -0.006em;
+  line-height: 1.38;
+  /* The window is summoned and dismissed; a text selection left over from last time is noise. */
+  user-select: none;
+  overflow: hidden;
+}
+
+/* Numbers must not jitter while a list updates (§3). */
+.hc-num,
+.hc-meta {
+  font-variant-numeric: tabular-nums;
+}
+
+.hc-title {
+  font-size: 15.5px;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  line-height: 1.2;
+}
+
+.hc-subtitle {
+  font-size: 13.5px;
+  font-weight: 450;
+  line-height: 1.3;
+}
+
+.hc-row-text {
+  font-size: 13.5px;
+  font-weight: 500;
+  letter-spacing: -0.004em;
+  line-height: 1.35;
+}
+
+.hc-meta {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--hc-text-dim);
+}
+
+.hc-pill {
+  font-size: 12.5px;
+  font-weight: 500;
+  border-radius: var(--hc-radius-pill);
+  padding: 1px 8px;
+  border: 1px solid var(--hc-stroke);
+  color: var(--hc-text-dim);
+  white-space: nowrap;
+}
+
+/* §7 Reduced motion is a hard requirement. The springs are neutralised in motion.ts; what is
+   left here is everything CSS drives. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.12s !important;
+  }
+}
+
+/* Focus is never invisible: keyboard-only operation is mandatory, so the focused thing has to
+   be findable without a pointer to follow. */
+:focus-visible {
+  outline: 2px solid var(--hc-info);
+  outline-offset: -2px;
+}

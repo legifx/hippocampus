@@ -217,6 +217,13 @@ pub struct SearchHit {
     pub path: PathBuf,
     pub kind: NodeKind,
     pub tier: Tier,
+    /// Bytes, and seconds since the epoch.
+    ///
+    /// A result list that cannot say how big a file is or when it changed makes the reader open
+    /// candidates to find out, which is the work the search exists to save. Both are already on
+    /// the node the hit came from, so carrying them costs the answer sixteen bytes.
+    pub size: i64,
+    pub mtime: i64,
     pub zone_id: Option<ZoneId>,
     /// A short excerpt, when the hit came from content rather than from the path.
     pub snippet: Option<String>,

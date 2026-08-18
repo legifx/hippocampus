@@ -769,3 +769,47 @@ whose whole job is to be unavoidable.
 refuses to start rather than starting and refusing every call — a client that sees a tool list
 has been told the surface is available, and it must not be told that when it is not. There is an
 end-to-end test per claim: same operation through all three surfaces, byte-identical answers.
+
+---
+
+### D37 — D4's conditions are met; the GUI stack stays
+**Status:** ACCEPTED (D4 was PROVISIONAL until M3 kickoff)
+
+D4 chose Tauri v2 + React with two conditions attached and a stated fallback to GTK4 if the
+first could not be met: every list virtualised, and no data processing in the frontend. Both
+are met and both are asserted rather than claimed.
+
+**Virtualisation.** Ten thousand results render under forty rows, and the whole document stays
+under four hundred nodes — checked in a real browser at four viewport widths, and again after
+scrolling five thousand rows in. The bound is arithmetic (`maxRenderedRows`) and it is asserted
+directly as well as through the rendered component.
+
+**No data processing.** An architectural test reads the source: the runtime dependency list may
+contain only React, React DOM and Framer Motion; no file may use `filter`, `sort`, `reduce` or
+`find`; only `ipc.ts` may import the Tauri API; and no colour may appear outside `tokens.css`.
+The one exemption is the virtualiser, which slices a list to what fits on screen — that is
+layout, and it is the thing D4 requires.
+
+The rule had teeth immediately: the context sidebar was written to filter annotation edges out
+of a neighbour list, and the fix was to ask the daemon for the edge types it wanted instead.
+
+**Consequence:** the fallback in D4 is retired. A future move to GTK4 remains cheap (D1), but it
+is no longer a scheduled decision.
+
+---
+
+### D38 — The overlay speaks to the daemon over a split socket, not the request/response client
+**Status:** ACCEPTED
+
+`cortex-rpc::client::Client` holds the socket while it waits for an answer. The overlay uses its
+own connection instead: a reader task owns the read half and dispatches by id, so calls are
+pipelined and unsolicited messages become window events.
+
+**Why:** a search's reranked order arrives about seventeen milliseconds after its first answer,
+on the same connection (D7). With a request/response client the only way to receive it is to
+wait for it, which puts those seventeen milliseconds in front of the next keystroke — and the
+keystroke budget for the entire round trip is eighty.
+
+**Consequence:** the frontend needs no notion of "waiting for the better answer"; it renders
+what arrives. Measured: the frontend's own share of the budget is 2 ms at the median and under
+16 at the ninety-fifth percentile, against a 24 ms allowance.

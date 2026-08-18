@@ -220,6 +220,8 @@ pub fn run(params: Params<'_>) -> Outcome {
                 path,
                 kind: node.as_ref().map(|n| n.kind).unwrap_or(NodeKind::File),
                 tier: node.as_ref().map(|n| n.tier).unwrap_or(Tier::Stm),
+                size: node.as_ref().map(|n| n.size).unwrap_or(0),
+                mtime: node.as_ref().map(|n| n.mtime).unwrap_or(0),
                 zone_id: node.as_ref().and_then(|n| n.zone_id),
                 snippet: chunks.get(&f.node_id).and_then(|h| snippet_for(h, &terms)),
                 score: ScoreBreakdown {

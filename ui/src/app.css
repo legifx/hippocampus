@@ -1,0 +1,364 @@
+/*
+ * The overlay's layout.
+ *
+ * Everything here obeys the performance rules in design system §8 — `backdrop-filter` appears
+ * exactly once, on the overlay container; no list row carries a `box-shadow`; nothing that
+ * triggers layout is animated. Where a rule and a nicer look disagree, the rule wins, because
+ * a nicer look that drops frames at ten thousand rows is not the nicer look.
+ *
+ * The breakpoints are the niri constraints: the layout has to work from 400 px to full width,
+ * and 400 px is a normal column, not an edge case.
+ */
+
+.hc-overlay {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  /* `minmax(0, 1fr)`, not `1fr`: a grid item's automatic minimum size is its min-content width,
+     so a scrollable list refuses to shrink below the width of its own scrollbar plus content
+     and pushes the whole window sideways. At 400 px that is not a rounding error, it is the
+     horizontal overflow §4 forbids — and it is invisible until something measures it. */
+  grid-template-columns: minmax(0, 1fr);
+  height: 100%;
+  background: color-mix(in srgb, var(--hc-bg) 88%, transparent);
+  backdrop-filter: blur(24px);
+  border-radius: var(--hc-radius-overlay);
+  border: 1px solid var(--hc-stroke);
+  box-shadow: var(--hc-shadow-rest);
+  overflow: hidden;
+}
+
+/* §6 Ambient: absolute, pointer-events none, animating opacity only. */
+.hc-breath {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(90% 150% at 50% -35%, rgba(255, 255, 255, 0.06), transparent 70%);
+  z-index: 0;
+}
+
+.hc-head {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px 12px;
+  border-bottom: 1px solid var(--hc-stroke);
+}
+
+.hc-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--hc-text);
+  font-family: inherit;
+  user-select: text;
+}
+
+.hc-input::placeholder {
+  color: var(--hc-text-faint);
+}
+
+.hc-status {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  white-space: nowrap;
+}
+
+.hc-banner {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  padding: 6px 18px;
+  font-size: 12px;
+  color: var(--hc-text-dim);
+  border-bottom: 1px solid var(--hc-stroke);
+}
+
+.hc-body {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  min-height: 0;
+  min-width: 0;
+  grid-template-columns: 1fr;
+}
+
+[data-width="medium"] .hc-body {
+  grid-template-columns: minmax(0, 1fr) minmax(0, var(--hc-preview-max));
+}
+
+[data-width="wide"] .hc-body {
+  grid-template-columns: minmax(0, 1fr) minmax(0, var(--hc-preview-max)) minmax(0, 320px);
+}
+
+/* ---------------------------------------------------------------- list */
+
+.hc-list {
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  min-width: 0;
+  padding: 6px;
+  outline: none;
+  /* The list is the thing being scrolled at sixty frames a second; telling the compositor so
+     is cheaper than letting it work it out. */
+  will-change: scroll-position;
+}
+
+.hc-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "name meta"
+    "dir  meta";
+  align-items: center;
+  column-gap: 12px;
+  padding: 0 10px 0 8px;
+  border-left: 2px solid transparent;
+  border-radius: var(--hc-radius-row);
+  cursor: default;
+  overflow: hidden;
+  /* §8.2: selection is a background change and a border, never a shadow. */
+}
+
+.hc-row-selected {
+  background: var(--hc-surface-hi);
+  outline: 1px solid var(--hc-stroke-lift);
+  outline-offset: -1px;
+}
+
+.hc-row-name {
+  grid-area: name;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hc-row-dir {
+  grid-area: dir;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--hc-text-faint);
+}
+
+.hc-row-snippet {
+  display: none;
+}
+
+.hc-row-meta {
+  grid-area: meta;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  white-space: nowrap;
+}
+
+/* A narrow column cannot afford two metadata columns; the name is what identifies the row. */
+[data-width="narrow"] .hc-row-meta > .hc-num:last-child {
+  display: none;
+}
+
+[data-density="comfortable"] .hc-row-snippet {
+  display: block;
+  grid-area: dir;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--hc-text-dim);
+}
+
+[data-density="comfortable"] .hc-row-dir {
+  display: none;
+}
+
+.hc-tier {
+  color: var(--hc-text-faint);
+  border-color: var(--hc-stroke);
+}
+
+.hc-empty,
+.hc-faint {
+  color: var(--hc-text-faint);
+  padding: 12px;
+  margin: 0;
+}
+
+.hc-error {
+  color: var(--hc-error);
+}
+
+/* ---------------------------------------------------------------- panes */
+
+.hc-preview,
+.hc-context {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--hc-stroke);
+  overflow: hidden;
+}
+
+.hc-preview-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px 8px;
+  border-bottom: 1px solid var(--hc-stroke);
+}
+
+.hc-preview-head .hc-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hc-preview-head .hc-meta {
+  display: flex;
+  gap: 10px;
+}
+
+.hc-preview-body {
+  overflow: auto;
+  padding: 10px 14px;
+  min-height: 0;
+}
+
+.hc-preview-text {
+  margin: 0;
+  font-family: var(--hc-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--hc-text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
+.hc-context {
+  padding: 12px 14px;
+  gap: 14px;
+  overflow-y: auto;
+}
+
+.hc-context-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin: 0;
+}
+
+.hc-section h3 {
+  margin: 0 0 6px;
+  color: var(--hc-text-dim);
+}
+
+.hc-section .hc-faint {
+  padding: 0;
+}
+
+.hc-note {
+  background: var(--hc-surface);
+  border: 1px solid var(--hc-stroke);
+  border-radius: var(--hc-radius-panel);
+  padding: 8px 10px;
+  margin-bottom: 6px;
+}
+
+.hc-note-text {
+  margin: 0 0 4px;
+  user-select: text;
+}
+
+.hc-note .hc-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 0;
+}
+
+.hc-related {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 3px 0;
+  min-width: 0;
+}
+
+.hc-related-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hc-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.hc-facts div {
+  min-width: 0;
+}
+
+.hc-facts dt {
+  color: var(--hc-text-faint);
+}
+
+.hc-facts dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- palette */
+
+.hc-palette {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  width: min(520px, calc(100% - 32px));
+  background: var(--hc-surface);
+  border: 1px solid var(--hc-stroke-lift);
+  border-radius: var(--hc-radius-panel);
+  box-shadow: var(--hc-shadow-lift);
+  padding: 6px;
+  outline: none;
+}
+
+.hc-command {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: var(--hc-radius-row);
+  cursor: default;
+}
+
+.hc-command-selected {
+  background: var(--hc-surface-hi);
+}
+
+.hc-command-detail {
+  grid-column: 1;
+  color: var(--hc-text-faint);
+}
+
+.hc-command kbd {
+  font-family: var(--hc-mono);
+  grid-row: 1 / span 2;
+  grid-column: 2;
+}

@@ -1,0 +1,35 @@
+[package]
+name = "hippocampus-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The search overlay: the first GUI onto the Cortex memory daemon."
+
+[lib]
+name = "hippocampus_ui_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "hippocampus"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+cortex-core.workspace = true
+cortex-rpc.workspace = true
+tauri = { version = "2", features = [] }
+tauri-plugin-global-shortcut = "2"
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

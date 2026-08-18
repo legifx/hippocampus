@@ -9,59 +9,69 @@ If you finish work without editing this file, the next agent starts from nothing
 
 | | |
 |---|---|
-| **Active milestone** | M3 — Agent Surface |
-| **Status** | **Complete.** All five Definition-of-Done items are met and tested end to end, with one caveat named below. 559 tests. |
+| **Active milestone** | M4 — Search Overlay |
+| **Status** | **In progress.** The overlay exists, searches, and holds its layout and its DOM bound against ten thousand results. The preview subsystem (§5, §6) is not built, and one measurement is owed by a human. 623 tests. |
 | **Last updated** | 2026-08-18 |
 | **Blocked on** | nothing |
 
-## Where M3 stands
-
-Agents can use the brain and cannot damage the filesystem. Every claim in that sentence has a
-test behind it.
+## Where M4 stands
 
 | DoD | State | Where it is proven |
 |---|---|---|
-| §1 A real task end to end | met, with a caveat | `cortexd/tests/agent_task.rs` — search, read, annotate, link, and the note comes back from the other end. See the caveat. |
-| §2 Red-team suite | met | `cortex-agent/tests/red_team.rs` — 13 tests, table-driven over every gated tool |
-| §3 Undo restores exactly | met | `cortex-agent/tests/undo.rs` — 100 files moved, dump hash identical afterwards |
-| §4 Kill switch | met | `cortexd/tests/three_surfaces.rs` — the surface refuses, `cortex-mcp` will not start, state survives a restart |
-| §5 One implementation, three surfaces | met | `cortexd/tests/three_surfaces.rs` — byte-identical answers from MCP, socket and CLI |
+| §1 Cold start < 300 ms | **instrumented, unmeasured** | `startup.rs` reports it every run; the window does not map in the agent's environment, so a human has to read the number once |
+| §2 Keystroke → row < 80 ms P95 | **frontend share met** | `tests/perf.spec.ts` — 2 ms median, under 16 ms p95 against a 24 ms allowance; the daemon's ~20 ms is measured in `bench/latency` |
+| §3 10 000 rows, bounded DOM, 60 fps | met | `tests/layout.spec.ts`, `useVirtual.test.ts` — under 40 rows, under 400 nodes, worst scroll update 9 ms |
+| §4 400–1400 px, no overflow | met | `tests/layout.spec.ts` — four widths plus the full-width-to-400 shrink, in a real browser |
+| §5 Preview of a 40 MP image < 50 ms | **not built** | the thumbnailer process (D14) does not exist yet |
+| §6 Killing the thumbnailer is harmless | **not built** | same |
+| §7 Everything reachable without a mouse | met | `tests/keyboard.spec.ts` — 12 checks, real key presses |
+| §8 No data processing in the frontend | met | `src/test/architecture.test.ts` — dependencies, source, one door, one palette |
 
-**The caveat on §1.** The task test runs without the embedding model, so the search step is
-answered by the lexical and path arms. The semantic arm — the one that finds documents sharing
-no word with the query — is measured against the goldset in M2 rather than here. The *shape* of
-the task is what this test proves. A human confirming it through Claude Code proper against a
-model-equipped daemon is a five-minute check nobody has done yet; `claude mcp add hippocampus --
-<path>/cortex-mcp --actor claude` is the whole setup.
+D4's two conditions are met and its GTK4 fallback is retired (D37).
 
-### What was built
+### What is there
 
-- **`cortex-agent`**, a crate with no daemon in it: policy, kill switch, audit log, dry-run
-  plans, the `fs.*` tools, the `brain.*` tools, and undo. Every refusal is a pure function of
-  configuration and a path, so it is testable without starting anything.
-- **`cortex-mcp`**, eighteen tools over stdio, and no policy in it at all (D36).
-- **The graph**: edges, annotations, traversal in both directions, and `brain.recall` — search
-  for the way in, the associative graph for what belongs with it.
-- **Assertions survive a rebuild** (D35). An annotation is not on the filesystem, so it is
-  written to the episode log with its target's *path* and replayed from there. `rebuild` now
-  reports `assertions_replayed` and `assertions_dropped`.
+A Tauri v2 window with a query input, a virtualised result list, a preview pane for text, a
+context sidebar showing what the brain knows about the selected file, a command palette on
+Ctrl+K, and the breath layer whose period is the indexing load. Summoned with
+`ctrl+alt+space`; Escape clears, then closes.
 
-### Not done, and known
+The Rust half is a bridge over a **split socket** (D38): a reader task dispatches by id, so
+calls pipeline and the reranked order arrives as a window event rather than as something the
+next keystroke has to wait behind.
 
-1. **The `fs.*` and `brain.*` handlers run inline on the async runtime.** A ten-thousand-entry
-   listing occupies one worker for as long as it takes. The runtime is multi-threaded so this
-   degrades rather than stalls, but M4's 80 ms keystroke budget shares those threads — move them
-   to `spawn_blocking` before the GUI lands.
-2. **`fs.list` ignores its `glob` argument.** The parameter is in the wire format and the schema;
-   nothing filters on it yet.
-3. **`brain.working_set` is recent episodes**, not a salience-weighted working set. It says so in
-   its own `basis` field rather than implying more, and the real thing is M5.
-4. **A plan's TTL is a constant** (two minutes), not configuration. A client wanting to confirm a
-   thousand-file reorganisation a minute later will need it to be configurable (D33).
-5. **Brain writes are not in the undo journal.** They are reversible by their opposite —
-   `brain.forget` for a pin, `brain.link --remove` for a link — but `cortex undo` does not
-   reverse them. The journal is for filesystem mutations, where the loss is not recoverable by
-   asking again.
+### Four bugs the tests found, none of them visible by looking
+
+1. **The list measured itself once, while it did not exist.** `useRef` was null on the first
+   render — an empty list renders a message, not a scroller — so the row window stayed at zero
+   height for ever. The scroll height was right and the list was empty: the failure looks like
+   "no results" and is not.
+2. **A grid item will not shrink below its min-content width.** `1fr` instead of
+   `minmax(0, 1fr)` on the overlay let the list's scrollbar push the whole window ten pixels
+   sideways at 400 px, which is exactly the overflow §4 forbids.
+3. **`scrollToIndex` ignored the list's padding**, so the last row sat six pixels below the
+   visible edge — present in the DOM, cut off on screen.
+4. **A cold start too fast to measure read as "never started".** Zero was the sentinel for
+   "has not happened yet", and zero milliseconds is the best case.
+
+And one the daemon owed the frontend: `SearchHit` carried no `size` or `mtime`, so a result row
+could not say how big a file was or when it changed without opening it. Both are on the node
+already; they are on the hit now.
+
+### Not done
+
+1. **The preview subsystem** (§5, §6). Text and code render in the pane today, read through the
+   daemon's `fs.read` so the deny-list still applies. Images, PDFs and video posters need the
+   separate thumbnailer process D14 describes, and the pane says so rather than showing an empty
+   box.
+2. **§1 has no number yet.** The instrumentation is in and reports through the command palette;
+   a window that never maps cannot report it. One run on a real session settles it.
+3. **`fs.list` has a `glob` parameter nothing implements.** It is in the wire format and the
+   MCP schema; no filter is applied.
+4. **The overlay is not packaged.** It runs from `cargo build`; a desktop entry and a bundle are
+   M9.
+5. **Zone accents are wired but untested against real zones** — the hue comes from the daemon
+   and is rendered as a 2 px left border, but no test asserts what a user sees for a zone tree.
 
 ## Where M2 stands — read this first
 
@@ -218,6 +228,37 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
+
+### 2026-08-18 — M4: the overlay, and four bugs that only a real browser could show
+
+The first GUI. A Tauri window, a virtualised list, a preview pane, a context sidebar, a command
+palette, and the breath layer. 623 tests across three suites: Rust, vitest, and Playwright
+against a real layout engine.
+
+**The layout tests are in a real browser on purpose.** M4 §4 is a claim about a box model, and
+jsdom has none to be wrong about. Running them properly cost a fixture entry point — the app
+wired to a fake daemon — and it paid for itself immediately: three of the four bugs above are
+invisible to a DOM emulation, and the grid min-content one is invisible to a person looking at
+the window unless they happen to try 400 px.
+
+**The eighty-millisecond budget is decomposed rather than claimed.** The frontend's share is
+measured here (2 ms median, under 16 at p95); the daemon's is measured in `bench/latency`; the
+end-to-end number comes from the app itself. A test that measured a fixture and reported it as
+end-to-end latency would be worse than no test, so it says which part it measured.
+
+**What is measured is work, not frame pacing.** The first version waited on two animation
+frames and reported sixty milliseconds — thirty-three of which were the display's, before any
+of this code had run. The timing now stops when the DOM reflects the keystroke; the compositor
+takes its frame afterwards regardless.
+
+For the next session:
+
+- **The preview subsystem is the rest of M4** (§5, §6): a separate thumbnailer process, the XDG
+  thumbnail spec, progressive rendering, and a cap of 2048 px on the long edge. It is
+  deliberately a separate process — preview generation touches untrusted bytes with third-party
+  decoders (D14).
+- **§1 needs a human for five minutes.** Run the overlay, press Ctrl+K, and read the cold-start
+  line. The number is already being measured; nothing here can display it.
 
 ### 2026-08-18 — M3 finished: the brain tools, MCP, and three surfaces proven identical
 
