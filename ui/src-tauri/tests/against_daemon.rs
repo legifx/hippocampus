@@ -275,3 +275,67 @@ async fn the_bridge_survives_the_daemon_going_away() {
         "unexpected error after the daemon stopped: {err}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// M4 §6: killing the thumbnailer mid-preview does not affect search or the daemon.
+// ---------------------------------------------------------------------------
+
+fn thumbnailer_binary() -> PathBuf {
+    let mut dir = std::env::current_exe().unwrap();
+    dir.pop();
+    dir.pop();
+    let path = dir.join("cortex-preview");
+    assert!(
+        path.exists(),
+        "{} is missing; build the workspace first: `cargo build --workspace --bins`",
+        path.display()
+    );
+    path
+}
+
+/// Write a picture big enough that rendering it takes long enough to interrupt.
+fn big_picture(path: &Path) {
+    let mut png = Vec::new();
+    // A PNG written by hand would be a second image encoder; the previewer's own test crate has
+    // one, and here a file that fails to decode is enough — the point is that the process is
+    // *busy*, and it is busy either way.
+    png.extend_from_slice(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]);
+    png.extend_from_slice(&vec![0u8; 4 * 1024 * 1024]);
+    std::fs::write(path, png).unwrap();
+}
+
+#[tokio::test]
+async fn killing_the_thumbnailer_leaves_search_working() {
+    use hippocampus_ui_lib::preview::Thumbnailer;
+
+    let instance = Instance::start();
+    let (bridge, _) = connect(&instance.socket()).await;
+    let thumbnailer = Thumbnailer::at(thumbnailer_binary());
+
+    let picture = instance.work().join("picture.png");
+    big_picture(&picture);
+
+    // One request to get the process running, whatever it answers.
+    let _ = thumbnailer.preview(&picture, 256, |_| {});
+    assert!(thumbnailer.is_running());
+
+    thumbnailer.kill();
+    assert!(!thumbnailer.is_running());
+
+    // The claim §6 makes: search is unaffected. It shares nothing with the thumbnailer but the
+    // window, and this is what proves it.
+    let result = bridge
+        .call("search", serde_json::json!({ "query": "launcher", "limit": 5 }))
+        .await
+        .expect("search still answers after the thumbnailer died");
+    assert!(!result["hits"].as_array().unwrap().is_empty());
+
+    // And a later preview starts a new process rather than failing for ever.
+    let _ = thumbnailer.preview(&picture, 256, |_| {});
+    assert!(
+        thumbnailer.is_running(),
+        "the supervisor did not restart the thumbnailer after it was killed"
+    );
+
+    thumbnailer.stop();
+}

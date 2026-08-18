@@ -813,3 +813,41 @@ keystroke budget for the entire round trip is eighty.
 **Consequence:** the frontend needs no notion of "waiting for the better answer"; it renders
 what arrives. Measured: the frontend's own share of the budget is 2 ms at the median and under
 16 at the ninety-fifth percentile, against a 24 ms allowance.
+
+---
+
+### D39 — The thumbnailer decodes JPEG with `jpeg-decoder`, not with `image`
+**Status:** ACCEPTED
+
+`cortex-preview` depends on both. Everything except JPEG goes through the `image` crate; JPEG
+goes through `jpeg-decoder` directly, with `scale()` called before `decode()`.
+
+**Why:** `image` 0.25 decodes JPEG with zune-jpeg, which has no DCT scaling — it produces
+full-resolution pixels and nothing else. D14's quality rule says a small preview must never
+decode a full-resolution image, and for a forty-megapixel photograph that is the difference
+between reading six hundred kilopixels and reading forty million. Without this the rule would
+be a comment rather than a behaviour.
+
+**Consequence:** a second decoder in the tree, and a test that fails if a 128 px preview ever
+costs the same as a full-size one. Revisit if `image` gains a scaled JPEG path; the rest of the
+crate is written so that deleting `decode_jpeg_scaled` would be the whole change.
+
+---
+
+### D40 — PDF and video previews use whatever the machine already has
+**Status:** ACCEPTED
+
+`pdftoppm` or `mutool` for PDFs, `ffmpeg` for a video frame, found on `PATH` at render time.
+Where none is present the previewer answers with the name of the missing program and the pane
+prints it.
+
+**Why:** a PDF engine and a demuxer are two of the largest attack surfaces in desktop software,
+and bundling them would mean shipping them, updating them, and owning their vulnerabilities —
+for a side panel. Every desktop that shows PDF thumbnails already has one of these installed.
+
+**Why the absence is reported rather than silently skipped:** a preview that never appears looks
+like a bug in this program. "pdftoppm is not installed" is something a person can act on.
+
+**Consequence:** a missing tool is *not* recorded as a thumbnail failure. Marking the file would
+leave it unpreviewable after the tool was installed, and the marker is meant to record facts
+about files rather than about the machine.

@@ -12,6 +12,7 @@ members = [
     "crates/cortexd",
     "crates/cortex-cli",
     "crates/cortex-mcp",
+    "crates/cortex-preview",
     "ui/src-tauri",
     "bench/corpus-gen",
     "bench/latency",

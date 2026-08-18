@@ -59,6 +59,20 @@ setTransport({
             { node_id: 3, target_id: 1, tags: ["decision", "storage"], note: "eine Notiz, die lang genug ist, um in einer schmalen Spalte umzubrechen", actor: "agent:claude", ts: 1_700_000_000 },
           ],
         } as T;
+      case "preview": {
+        // A 1×1 PNG as a data URL: the harness has no thumbnail cache and the layout tests care
+        // about the box the image sits in, not about what is inside it.
+        return {
+          path: String(args?.path ?? ""),
+          png: "/fixture/thumbnail.png",
+          width: 320,
+          height: 240,
+          kind: "image",
+          size: "x-large",
+          cached: true,
+          elapsed_ms: 1,
+        } as T;
+      }
       case "read_text":
         return {
           path: "x",
@@ -80,6 +94,10 @@ setTransport({
   async listen() {
     return () => {};
   },
+  // A 1×1 transparent PNG, so an `<img>` in the harness loads rather than showing a broken
+  // icon and changing the layout being measured.
+  assetUrl: () =>
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
 });
 
 const root = document.getElementById("root");

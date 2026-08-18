@@ -231,6 +231,33 @@
   min-height: 0;
 }
 
+.hc-preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  margin: 0 auto;
+  border-radius: calc(var(--hc-radius-row) - 4px);
+  /* The pane's background shows through a transparent PNG, which is what a transparent PNG is
+     for. No checkerboard: it is louder than most of the pictures it would sit behind. */
+  object-fit: contain;
+}
+
+/* The placeholder, while the full render is on its way (D14). Blur rather than a spinner: it
+   says "this is not final" without claiming anything about how long it will take, and it is a
+   compositor-only property. */
+.hc-preview-blurry {
+  filter: blur(6px);
+  transform: scale(1.02);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hc-preview-blurry {
+    filter: none;
+    transform: none;
+    opacity: 0.7;
+  }
+}
+
 .hc-preview-text {
   margin: 0;
   font-family: var(--hc-mono);

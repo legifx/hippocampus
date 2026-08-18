@@ -10,7 +10,7 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | M4 — Search Overlay |
-| **Status** | **In progress.** The overlay exists, searches, and holds its layout and its DOM bound against ten thousand results. The preview subsystem (§5, §6) is not built, and one measurement is owed by a human. 623 tests. |
+| **Status** | **Complete but for one number.** Seven of eight Definition-of-Done items are met and tested; §1 is instrumented and needs one run in a session where a window actually maps. 652 tests. |
 | **Last updated** | 2026-08-18 |
 | **Blocked on** | nothing |
 
@@ -22,8 +22,8 @@ If you finish work without editing this file, the next agent starts from nothing
 | §2 Keystroke → row < 80 ms P95 | **frontend share met** | `tests/perf.spec.ts` — 2 ms median, under 16 ms p95 against a 24 ms allowance; the daemon's ~20 ms is measured in `bench/latency` |
 | §3 10 000 rows, bounded DOM, 60 fps | met | `tests/layout.spec.ts`, `useVirtual.test.ts` — under 40 rows, under 400 nodes, worst scroll update 9 ms |
 | §4 400–1400 px, no overflow | met | `tests/layout.spec.ts` — four widths plus the full-width-to-400 shrink, in a real browser |
-| §5 Preview of a 40 MP image < 50 ms | **not built** | the thumbnailer process (D14) does not exist yet |
-| §6 Killing the thumbnailer is harmless | **not built** | same |
+| §5 Preview of a 40 MP image < 50 ms | met | `cortex-preview/tests/process.rs` — **146 µs** for the cached thumbnail of a 40 MP photograph |
+| §6 Killing the thumbnailer is harmless | met | `cortex-preview/tests/process.rs` and `ui/src-tauri/tests/against_daemon.rs` — killed mid-render, search unaffected, nothing corrupt left in the shared cache |
 | §7 Everything reachable without a mouse | met | `tests/keyboard.spec.ts` — 12 checks, real key presses |
 | §8 No data processing in the frontend | met | `src/test/architecture.test.ts` — dependencies, source, one door, one palette |
 
@@ -58,14 +58,32 @@ And one the daemon owed the frontend: `SearchHit` carried no `size` or `mtime`, 
 could not say how big a file was or when it changed without opening it. Both are on the node
 already; they are on the hit now.
 
+### The thumbnailer
+
+`cortex-preview` is a process whose whole design goal is to be killable (D14). It shares the
+desktop's XDG thumbnail cache — same directory, same MD5-of-URI naming, same `Thumb::MTime`
+invalidation — so a thumbnail it renders is one Nautilus does not have to, and the other way
+round.
+
+Three things in it are worth knowing:
+
+- **A JPEG is never fully decoded for a small preview.** `image` 0.25 decodes JPEG with
+  zune-jpeg, which has no DCT scaling, so the previewer uses `jpeg-decoder` directly and asks
+  for a scaled image. A test asserts a 128 px preview costs strictly less than a full one; the
+  40 MP case is where that is the difference between six hundred kilopixels and forty million.
+- **PDFs and video frames are rendered by whatever the machine already has** — `pdftoppm` or
+  `mutool`, and `ffmpeg`. Bundling a PDF engine would mean shipping two of the largest attack
+  surfaces in desktop software. Where the tool is absent the pane names it.
+- **A failed render is remembered** under `fail/cortex-preview/`, so no file manager on the
+  machine keeps retrying a file that cannot be decoded — and a file that *changes* is retried,
+  because the marker carries an mtime like everything else here.
+
 ### Not done
 
-1. **The preview subsystem** (§5, §6). Text and code render in the pane today, read through the
-   daemon's `fs.read` so the deny-list still applies. Images, PDFs and video posters need the
-   separate thumbnailer process D14 describes, and the pane says so rather than showing an empty
-   box.
-2. **§1 has no number yet.** The instrumentation is in and reports through the command palette;
+1. **§1 has no number yet.** The instrumentation is in and reports through the command palette;
    a window that never maps cannot report it. One run on a real session settles it.
+2. **Audio shows nothing yet.** The scope says "waveform metadata only"; the previewer refuses
+   audio with a reason rather than rendering a waveform, and the pane prints that reason.
 3. **`fs.list` has a `glob` parameter nothing implements.** It is in the wire format and the
    MCP schema; no filter is applied.
 4. **The overlay is not packaged.** It runs from `cargo build`; a desktop entry and a bundle are
@@ -228,6 +246,40 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
+
+### 2026-08-18 — M4: the thumbnailer, in a process that is meant to die
+
+`cortex-preview`, the XDG thumbnail cache, and the progressive contract D14 describes. 652
+tests. §5 measures **146 µs** for the cached thumbnail of a forty-megapixel photograph against
+a fifty-millisecond budget, and §6 kills the process mid-render and finds search unaffected and
+the shared cache uncorrupted.
+
+**The cache is shared, and that is most of the work.** Getting the naming right — MD5 of the
+percent-encoded URI, under `normal`/`large`/`x-large`/`xx-large`, with `Thumb::URI` and
+`Thumb::MTime` as `tEXt` chunks — is what makes a thumbnail this renders one that Nautilus finds
+and does not re-render. A thumbnailer that got it wrong would not fail; it would quietly stop
+sharing, which is worse.
+
+**Two things had to be written out rather than depended on.** The `image` crate writes no text
+chunks, so the PNG header is assembled here and the encoder's output spliced in after it — a PNG
+is a signature followed by chunks, and inserting chunks between two of them is concatenation.
+And PNG's CRC-32 is four lines of arithmetic that did not justify a compression crate.
+
+**The JPEG path is the whole of D14's quality rule.** `image` 0.25 decodes JPEG with zune-jpeg,
+which produces full-resolution pixels and nothing else — so a 128 px preview of a 40 MP
+photograph would decode all forty megapixels first. `jpeg-decoder` can be told to scale in the
+DCT domain, and there is a test that fails if the two paths ever cost the same.
+
+**A test of mine was wrong and the code was right.** The MD5 I wrote into the cache test came
+from memory and did not match the implementation. Pinning it against values computed outside
+this code — including the empty string and "abc" — is what a hash test should have been.
+
+For the next session:
+
+- **§1 still needs a human.** Everything else in M4 is measured.
+- **Audio previews** are refused with a reason; the scope asks for waveform metadata.
+- **The handlers are still inline on the async runtime** (noted since the first M4 session), and
+  M4's keystroke budget shares those threads with the GUI now.
 
 ### 2026-08-18 — M4: the overlay, and four bugs that only a real browser could show
 

@@ -1,0 +1,41 @@
+[package]
+name = "cortex-preview"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The thumbnailer: file previews in a process of their own."
+
+[[bin]]
+name = "cortex-preview"
+path = "src/main.rs"
+
+[dependencies]
+cortex-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+md-5 = "0.10"
+
+# JPEG is decoded through this rather than through `image`, and the reason is the whole point of
+# D14's quality rule: `image` 0.25 decodes JPEG with zune-jpeg, which has no DCT scaling, so a
+# 128 px preview of a forty-megapixel photograph would decode all forty megapixels first. This
+# decoder can be told to produce a scaled image directly.
+jpeg-decoder = "0.3"
+
+# Decoding is the whole job, and it is why this runs in a process of its own (D14): these are
+# the third-party decoders that touch untrusted bytes. `default-features = false` keeps the
+# format list to what the pane actually shows — every extra decoder is extra attack surface for
+# no benefit.
+[dependencies.image]
+version = "0.25"
+default-features = false
+features = ["png", "jpeg", "gif", "bmp", "tiff", "webp"]
+
+[dev-dependencies]
+tempfile.workspace = true
+# The process tests write and read real images.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }

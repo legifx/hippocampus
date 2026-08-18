@@ -11,12 +11,14 @@
  * runs, with a daemon that answers from a fixture.
  */
 
-import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen as tauriListen } from "@tauri-apps/api/event";
 
 export type Transport = {
   invoke<T>(command: string, args?: Record<string, unknown>): Promise<T>;
   listen(event: string, handler: (payload: unknown) => void): Promise<() => void>;
+  /** A local file the webview may load, as a URL it is allowed to load it from. */
+  assetUrl(path: string): string;
 };
 
 /** True when running inside the Tauri shell rather than a bare browser or a test. */
@@ -30,6 +32,10 @@ const realTransport: Transport = {
     const unlisten = await tauriListen(event, (e) => handler(e.payload));
     return unlisten;
   },
+  // The asset protocol is scoped to the thumbnail cache in `tauri.conf.json`: the webview can
+  // display a rendered thumbnail and nothing else. It has no business reading the files those
+  // thumbnails are of.
+  assetUrl: (path) => convertFileSrc(path),
 };
 
 /** A transport that fails every call, for a browser tab opened by mistake. */
@@ -38,6 +44,7 @@ const absentTransport: Transport = {
     throw new Error(`${command} needs the Tauri shell; this is a plain browser window`);
   },
   listen: async () => () => {},
+  assetUrl: (path) => path,
 };
 
 let transport: Transport = inTauri() ? realTransport : absentTransport;
@@ -164,6 +171,25 @@ export type ReadResult = {
   note: string | null;
 };
 
+/** What the thumbnailer produced. The PNG lives in the shared XDG thumbnail cache. */
+export type Preview = {
+  path: string;
+  png: string;
+  width: number;
+  height: number;
+  kind: "image" | "pdf" | "video" | "audio" | "text" | "none";
+  size: "normal" | "large" | "x-large" | "xx-large";
+  cached: boolean;
+  elapsed_ms: number;
+};
+
+/** The smaller thumbnail that arrives before the real one (D14). */
+export type PreviewPartial = {
+  path: string;
+  png: string;
+  size: Preview["size"];
+};
+
 export type StartupReport = {
   connected_ms: number;
   interactive_ms: number;
@@ -195,6 +221,15 @@ export const ipc = {
 
   readText: (path: string, bytes?: number) =>
     transport.invoke<ReadResult>("read_text", { path, bytes }),
+
+  preview: (path: string, pixels?: number) =>
+    transport.invoke<Preview>("preview", { path, pixels }),
+
+  onPreviewPartial: (handler: (partial: PreviewPartial) => void) =>
+    transport.listen("preview:partial", (payload) => handler(payload as PreviewPartial)),
+
+  /** Turn a path in the thumbnail cache into something an `<img>` may load. */
+  assetUrl: (path: string) => transport.assetUrl(path),
 
   explain: (query: string, path: string) =>
     transport.invoke<unknown>("explain", { query, path }),

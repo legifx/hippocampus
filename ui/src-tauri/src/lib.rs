@@ -9,6 +9,7 @@
 //! global hotkey, and opening a file in whatever the desktop thinks should open it.
 
 pub mod bridge;
+pub mod preview;
 pub mod startup;
 
 use bridge::{Bridge, BridgeError};
@@ -21,6 +22,7 @@ use tauri_plugin_global_shortcut::GlobalShortcutExt;
 pub struct AppState {
     pub bridge: Bridge,
     pub startup: startup::Startup,
+    pub thumbnailer: preview::Thumbnailer,
 }
 
 // ---------------------------------------------------------------------------
@@ -124,6 +126,31 @@ async fn read_text(
             json!({ "path": path, "byte_range": [0, cap] }),
         )
         .await
+}
+
+/// A thumbnail for the preview pane.
+///
+/// Rendered by a separate process (D14), so a malformed image kills a helper rather than this
+/// window. The smaller cached thumbnail, when there is one, arrives first as a `preview:partial`
+/// event — the caller shows it immediately and replaces it when this returns.
+///
+/// Blocking rather than async on purpose: it runs on Tauri's blocking pool, and the alternative
+/// would be an async wrapper around a synchronous pipe, which is a thread either way.
+#[tauri::command(async)]
+fn preview(
+    window: tauri::Window,
+    state: tauri::State<'_, AppState>,
+    path: String,
+    pixels: Option<u32>,
+) -> Result<preview::Preview, preview::PreviewError> {
+    let emitter = window.clone();
+    state.thumbnailer.preview(
+        std::path::Path::new(&path),
+        pixels.unwrap_or(512),
+        move |params| {
+            let _ = emitter.emit("preview:partial", params);
+        },
+    )
 }
 
 #[tauri::command]
@@ -276,7 +303,11 @@ pub fn run() {
             match bridge {
                 Ok(bridge) => {
                     startup.mark_connected();
-                    app.manage(AppState { bridge, startup: startup.clone() });
+                    app.manage(AppState {
+                        bridge,
+                        startup: startup.clone(),
+                        thumbnailer: preview::Thumbnailer::beside_this_binary(),
+                    });
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "no daemon");
@@ -306,6 +337,7 @@ pub fn run() {
             timeline,
             node_get,
             read_text,
+            preview,
             explain,
             zones,
             activity_ping,

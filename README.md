@@ -185,6 +185,9 @@ Without `--root`, the daemon uses the XDG locations: configuration in
 - **Read file contents by default.** Metadata indexing may cover your whole home directory;
   content extraction only happens inside roots you explicitly configure.
 - **Talk to the network.** Not until you turn something on.
+- **Decode untrusted bytes in the daemon.** Image, PDF and video previews run in a separate
+  process that shares the desktop's thumbnail cache. A malformed file kills a helper; search
+  does not notice.
 - **Let an agent loose on your files.** Agents get read access and an empty write allow-list.
   Mutations need a plan you can inspect, leave an undo entry, and are logged whether they were
   permitted or refused.
