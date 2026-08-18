@@ -52,7 +52,7 @@ the system is complete without it.
 |---|---|---|
 | M0 | Daemon skeleton, schema, JSON-RPC socket, CLI | **done** |
 | M1 | Filesystem watcher, metadata index, episodes, trigram path search, zones | **done** |
-| M2 | Extraction, chunking, embeddings, hybrid search | |
+| M2 | Extraction, chunking, embeddings, hybrid search | **in progress** |
 | M3 | Agent Surface: MCP, policy engine, undo journal | |
 | M4 | Search overlay (first GUI) | |
 | M5 | Salience, decay, tiering, consolidation | |

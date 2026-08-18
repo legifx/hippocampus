@@ -9,35 +9,93 @@ If you finish work without editing this file, the next agent starts from nothing
 
 | | |
 |---|---|
-| **Active milestone** | M1 — Perception |
-| **Status** | M1 complete except the 24-hour soak test, which the owner deferred. Ready for M2. |
+| **Active milestone** | M2 — Meaning |
+| **Status** | M2 started. The extraction layer is built and tested but **not yet wired into anything**. See "Where M2 stands" below. |
 | **Last updated** | 2026-08-18 |
 | **Blocked on** | nothing |
 
-## Outstanding in M1
+## Where M2 stands — read this first
 
-One item, deliberately deferred by the project owner:
+M2 is being built in two halves. The first half is **meaning without models**: everything that
+makes content searchable using no machine learning at all. The second half is the models. This
+ordering is deliberate and follows the same discipline as M0 and M1 — if lexical search over
+extracted content is not good, no embedding will rescue it, and the models are by far the
+heaviest dependency in the project.
 
-- **The 24-hour soak test.** The M1 definition of done requires bounded RSS and file
-  descriptors across 24 hours of synthetic churn. Not written. It belongs in `bench/` as a
-  nightly CI job, not in the unit suite. Everything it would guard is currently unguarded:
-  a descriptor leak in the watcher, or unbounded growth in the coalescer, would not be caught
-  by anything else.
+### Done, tested, and green (275 tests across the workspace)
 
-Zones and `parent_id` are done — see the session log.
+**`cortex-extract`** — a new crate with three modules:
 
-## Then M2 — Meaning
+- `classify` — decides what a file is and whether it may be read. Magic bytes for binary
+  formats; content sniffing for text, because plain text has no magic number; the extension is
+  consulted **only** to choose between text handlers, never to decide readability. Enforces
+  rule R1 (deny-list) and rule R3 (content roots) before anything opens a file.
+- `extract` — bounded, lossy-decoding text extraction. Truncation is reported rather than
+  silent, never cuts a character in half, and a byte-order mark is stripped.
+- `chunk` — structure-aware chunking: Markdown at headings (not inside fenced blocks), code at
+  top-level definitions, prose at paragraphs. Overlap of 15 %, BLAKE3 hash per chunk, byte
+  offsets that address the original text exactly.
 
-Do not start M2 before the three items above are closed, or they never will be.
+**Migration 0002** — rebuilds `chunks_fts` with `contentless_delete=1`, which is what lets a
+contentless FTS index delete rows without being handed the original text back. Adds
+`nodes.extract_state` and `nodes.extract_note`.
 
-1. Classifier: MIME by magic bytes, never by extension.
-2. Extractors with wall-clock and memory caps, in a way that cannot take the daemon down.
-3. Structure-aware chunker with per-chunk content hashing — the largest single performance
-   lever in the whole pipeline.
-4. Embedder: `multilingual-e5-small` via ONNX Runtime, CUDA with CPU fallback (D6).
-5. FTS5 (contentless, D16) and the usearch ANN index.
-6. RRF fusion across trigram, BM25 and vector, then the async cross-encoder rerank.
-7. The 50-query German/English goldset in `bench/goldset/`.
+### Not done — and the first thing to notice
+
+**`cortex-extract` is not called by anything.** It compiles, it is tested, and it is dead code.
+Nothing extracts, nothing chunks, nothing writes to `chunks` or `chunks_fts`. The next session's
+first job is to wire it in.
+
+Remaining in the first half:
+
+1. **Store operations for chunks.** Write chunks for a node, replace them when the file
+   changes, delete them when it goes away, and keep `chunks_fts` in step. Must go through
+   `Store::batch` — a document produces tens of chunks and the commit barrier dominates
+   otherwise (see the M1 session log).
+2. **The extraction stage in the ingest loop.** Idle-priority: extraction is the "replay" stage
+   and must yield when the user is active. `nodes.extract_state` exists so the queue can be
+   resumed rather than recomputed. The per-chunk hash is what makes a re-index cheap — a file
+   whose content hash is unchanged must not be re-chunked at all.
+3. **BM25 retrieval** over `chunks_fts`. Note that SQLite's `bm25()` returns *negative* scores,
+   more negative being a better match. Getting that sign wrong inverts the ranking silently.
+4. **RRF fusion** of the trigram path arm and the BM25 content arm, plus the salience boost, and
+   the score breakdown that makes `cortex explain` possible. `ScoreBreakdown` already has the
+   fields; nothing populates `lexical_rank` yet.
+5. **Snippets.** Chunks store byte offsets and a bounded preview, not text (D16). A snippet
+   longer than the preview is re-read from the file using the offsets.
+
+Then the second half: the embedder (`multilingual-e5-small` via ONNX Runtime, D6), the usearch
+vector index, the cross-encoder reranker, and the 50-query German/English goldset.
+
+### Deferred, still outstanding from M1
+
+- **The 24-hour soak test.** Deliberately deferred by the project owner. Everything it would
+  guard is currently unguarded: a descriptor leak in the watcher, or unbounded growth in the
+  coalescer, would not be caught by anything else.
+
+### Decisions taken during M2 so far
+
+- **Chunk size is measured in characters, not tokens.** The specification says 300–600 tokens.
+  No tokenizer exists in the pipeline yet, and adding one purely to measure chunk sizes would
+  tie chunking to a model choice not yet made. `TARGET_CHARS = 1600` lands inside the intended
+  range at roughly 3.5–4 characters per token for a German/English mix. When the embedder
+  arrives with its own tokenizer this becomes a token count; the resulting boundary shift is a
+  re-index, which is a supported operation.
+- **Code chunking is heuristic, not parsed.** The build prompt specifies tree-sitter. A grammar
+  per language is one dependency per language, and the heuristic already captures the property
+  that matters — a definition is not split from its signature. Tree-sitter remains the correct
+  answer and is planned; this is a deliberate staging, not a silent descope.
+- **PDF extraction is not implemented.** `Handling::Pdf` is recognised and classified but
+  `has_text()` returns false for it, so such files are recorded and skipped. `pdf-extract` is
+  available; this is the natural next extractor after the text path works end to end.
+
+### A limitation worth knowing before writing the goldset
+
+FTS5's `remove_diacritics 2` folds `ä` to `a`, so a query typed without umlauts matches. It does
+**not** fold `ß` to `ss`, because ß carries no diacritic — it is a distinct letter. So "grosse"
+does not find "große". There is a test asserting this gap so that it is recorded rather than
+rediscovered as a recall mystery. Closing it needs either a custom tokenizer or query-side
+expansion, and it will affect the German half of the M2 goldset.
 
 ### Things M1 deliberately left rough
 
@@ -106,6 +164,31 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
+
+### 2026-08-18 — M2 begun: the extraction layer
+
+Stopped deliberately at a clean boundary so the next session has a well-defined starting point.
+275 tests green, workspace builds, no daemon left running.
+
+Built `cortex-extract` (classify, extract, chunk) and migration 0002. **None of it is wired
+in** — see "Where M2 stands" at the top of this file for exactly what to do next and in what
+order.
+
+Three things worth knowing:
+
+1. **"MIME by magic bytes, never by extension" is only half a rule.** Binary formats have magic
+   numbers; plain text does not. There is no byte sequence meaning "this is Markdown". So the
+   actual rule is: deny-list first, then magic number if present, then content sniffing to
+   decide whether it is text at all, and only then the extension — used solely to pick which
+   text handler runs. The extension can never make an unreadable file readable, and never
+   overrides a magic number. A JPEG named `.txt` is a JPEG, and there is a test saying so.
+2. **A byte budget must bound the read itself, not check the size afterwards.** `take()` on the
+   reader means a file that grows while being read still cannot exceed the budget. Checking
+   `metadata.len()` first would be a race.
+3. **Slicing a string at a byte offset derived from arithmetic will panic sooner or later.** The
+   chunker's hard-split searched for a line break inside `text[cursor..cursor + MAX_CHARS]`, and
+   that endpoint is not a character boundary in German text. Caught by the test written for
+   exactly that case. Every offset that reaches a slice now goes through `floor_char_boundary`.
 
 ### 2026-08-18 — M1: zones and the directory graph
 

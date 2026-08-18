@@ -6,6 +6,7 @@ members = [
     "crates/cortex-rpc",
     "crates/cortex-query",
     "crates/cortex-ingest",
+    "crates/cortex-extract",
     "crates/cortexd",
     "crates/cortex-cli",
     "bench/corpus-gen",
@@ -26,6 +27,7 @@ cortex-store = { path = "crates/cortex-store" }
 cortex-rpc = { path = "crates/cortex-rpc" }
 cortex-query = { path = "crates/cortex-query" }
 cortex-ingest = { path = "crates/cortex-ingest" }
+cortex-extract = { path = "crates/cortex-extract" }
 
 anyhow = "1"
 thiserror = "2"

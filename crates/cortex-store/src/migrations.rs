@@ -14,11 +14,18 @@ struct Migration {
     sql: &'static str,
 }
 
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "initial",
-    sql: include_str!("schema/0001_initial.sql"),
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "initial",
+        sql: include_str!("schema/0001_initial.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "fts_contentless_delete",
+        sql: include_str!("schema/0002_fts_contentless_delete.sql"),
+    },
+];
 
 /// The schema version this build expects.
 pub fn target_version() -> i64 {
@@ -117,6 +124,90 @@ mod tests {
         ] {
             assert!(found.contains(&table.to_string()), "missing table: {table}");
         }
+    }
+
+    #[test]
+    fn the_lexical_index_can_delete_without_being_given_the_text_back() {
+        // Decision D16 keeps no copy of chunk text, so a plain contentless FTS5 table could
+        // never remove a row for a file that changed — the index would only ever grow.
+        let conn = fresh();
+        conn.execute("INSERT INTO chunks_fts(rowid, text) VALUES (1, 'kamerawinkel vergleich')", [])
+            .unwrap();
+
+        let hits: i64 = conn
+            .query_row("SELECT count(*) FROM chunks_fts WHERE chunks_fts MATCH 'kamerawinkel'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(hits, 1);
+
+        conn.execute("DELETE FROM chunks_fts WHERE rowid = 1", []).unwrap();
+
+        let hits: i64 = conn
+            .query_row("SELECT count(*) FROM chunks_fts WHERE chunks_fts MATCH 'kamerawinkel'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(hits, 0, "a stale row survived deletion");
+    }
+
+    #[test]
+    fn umlauts_are_folded_so_a_query_without_them_still_matches() {
+        // Users type "anderungen" and mean "Änderungen". `remove_diacritics 2` makes that work.
+        let conn = fresh();
+        conn.execute(
+            "INSERT INTO chunks_fts(rowid, text) VALUES (1, 'Änderungen an der Übersicht')",
+            [],
+        )
+        .unwrap();
+
+        for query in ["anderungen", "Anderungen", "ubersicht"] {
+            let hits: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM chunks_fts WHERE chunks_fts MATCH ?1",
+                    [query],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(hits, 1, "{query:?} should match through diacritic folding");
+        }
+    }
+
+    #[test]
+    fn eszett_is_not_folded_to_ss_and_this_is_a_known_gap() {
+        // `remove_diacritics` strips diacritics. ß carries none — it is a distinct letter — so
+        // "grosse" does not find "große". Closing this needs either a custom tokenizer or a
+        // query-side expansion, and it matters for the German half of the M2 goldset. Asserted
+        // here so the limitation is recorded rather than discovered later as a recall mystery.
+        let conn = fresh();
+        conn.execute("INSERT INTO chunks_fts(rowid, text) VALUES (1, 'größere Datei')", [])
+            .unwrap();
+
+        let hits: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM chunks_fts WHERE chunks_fts MATCH 'grossere'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(hits, 0, "if this now matches, the gap is closed — update the goldset notes");
+    }
+
+    #[test]
+    fn extraction_state_defaults_to_pending_and_is_constrained() {
+        let conn = fresh();
+        conn.execute(
+            "INSERT INTO nodes (kind, path, first_seen, last_seen) VALUES ('file', '/x', 0, 0)",
+            [],
+        )
+        .unwrap();
+
+        let state: String = conn
+            .query_row("SELECT extract_state FROM nodes WHERE path = '/x'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(state, "pending");
+
+        assert!(
+            conn.execute("UPDATE nodes SET extract_state = 'maybe' WHERE path = '/x'", [])
+                .is_err(),
+            "an unknown extraction state must be rejected by the database"
+        );
     }
 
     #[test]

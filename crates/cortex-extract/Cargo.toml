@@ -1,0 +1,19 @@
+[package]
+name = "cortex-extract"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Classification, content extraction and chunking for the Cortex daemon."
+
+[dependencies]
+cortex-core.workspace = true
+blake3.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+infer = "0.22"
+
+[dev-dependencies]
+tempfile.workspace = true
