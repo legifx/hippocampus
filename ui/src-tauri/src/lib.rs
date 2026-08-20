@@ -143,14 +143,21 @@ fn preview(
     path: String,
     pixels: Option<u32>,
 ) -> Result<preview::Preview, preview::PreviewError> {
+    let started = std::time::Instant::now();
     let emitter = window.clone();
-    state.thumbnailer.preview(
+    let answer = state.thumbnailer.preview(
         std::path::Path::new(&path),
         pixels.unwrap_or(512),
         move |params| {
             let _ = emitter.emit("preview:partial", params);
         },
-    )
+    );
+
+    let elapsed = started.elapsed().as_millis();
+    if elapsed >= 50 {
+        tracing::info!(path, ms = elapsed as u64, "slow preview");
+    }
+    answer
 }
 
 #[tauri::command]

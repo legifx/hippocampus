@@ -11,6 +11,11 @@ Wants=hippocampus-cortexd.service
 
 [Service]
 Type=simple
+# WebKitGTK's DMABUF renderer and the proprietary NVIDIA driver are a known bad pair: the
+# symptoms are glitches, black areas and rendering that falls back to something very slow.
+# Turning it off costs nothing on hardware where it works and fixes the machines where it does
+# not. Remove this line and restart to compare.
+Environment=WEBKIT_DISABLE_DMABUF_RENDERER=1
 # Resident and hidden. The window is summoned with the hotkey; starting it visible at login
 # would put a search box in front of somebody who has not asked for one.
 ExecStart=%h/.local/bin/hippocampus

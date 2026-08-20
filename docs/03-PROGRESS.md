@@ -268,6 +268,36 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
 
+### 2026-08-20 — "es laggt": four things that were costing frames
+
+The owner used the overlay and said it lagged. The measurements said 2 ms. When those two
+disagree the measurements are wrong, so this is what they were missing.
+
+1. **The breath layer was a JavaScript animation.** Framer Motion drives values from a
+   `requestAnimationFrame` loop, so an animation with `repeat: Infinity` is a callback on every
+   frame for as long as the window is open. Design system §6 says ambient layers are
+   compositor-only, and this violated the rule it was implementing. It is a CSS keyframe
+   animation now, and the render benchmark — which never claimed to be measuring this — dropped
+   from 9.7 ms at p95 to **2.4 ms**.
+2. **Holding an arrow key fired two round trips per row.** The context sidebar and the preview
+   each request per selection, so thirty rows a second is sixty requests, fifty-nine of them
+   about rows nobody looked at. The list still follows the key immediately; the panes follow the
+   list once it settles, 120 ms later.
+3. **Every keystroke pinged the daemon** to say a human was present. The first keystroke says
+   that; the rest repeat it. Throttled to once every five seconds.
+4. **`backdrop-filter: blur(24px)` over the whole window.** §8 permits it on the overlay
+   container and nowhere else — but permission is not a requirement, and a backdrop filter is
+   recomputed whenever anything behind it changes. It is behind `--hc-blur`, which is 0.
+
+And the environment: WebKitGTK's DMABUF renderer with the proprietary NVIDIA driver is a known
+bad pair. `WEBKIT_DISABLE_DMABUF_RENDERER=1` is set in the service unit, with a comment saying
+to remove it and compare.
+
+**What this does not settle.** None of the four was measured *in the real window* — three are
+"obviously wasteful whatever the number is" and the fourth is a known driver problem. The bridge
+now logs any daemon call over 50 ms and any preview over 50 ms, so the next report of lag can be
+answered from the journal instead of from reasoning.
+
 ### 2026-08-20 — §1 was measured wrong, and the hotkey never worked
 
 Two corrections, both found by somebody actually using the thing.

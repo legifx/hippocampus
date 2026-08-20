@@ -21,20 +21,46 @@
   grid-template-columns: minmax(0, 1fr);
   height: 100%;
   background: color-mix(in srgb, var(--hc-bg) 88%, transparent);
-  backdrop-filter: blur(24px);
+  /* §8 permits blur here and nowhere else. Permission is not a requirement: a backdrop filter
+     over the whole window is recomputed whenever anything behind it changes, and on a renderer
+     without working hardware acceleration that is a cost paid on every frame of every scroll.
+     `--hc-blur` is 0 by default and the overlay opts in only where it is free. */
+  backdrop-filter: blur(var(--hc-blur, 0px));
   border-radius: var(--hc-radius-overlay);
   border: 1px solid var(--hc-stroke);
   box-shadow: var(--hc-shadow-rest);
   overflow: hidden;
 }
 
-/* §6 Ambient: absolute, pointer-events none, animating opacity only. */
+/* §6 Ambient: absolute, pointer-events none, animating opacity only — and animated by the
+   compositor rather than by a JavaScript frame callback, which is what "compositor-only"
+   means. The period comes from React as an inline `animation-duration`; nothing else about
+   this layer costs anything while it runs. */
 .hc-breath {
   position: absolute;
   inset: 0;
   pointer-events: none;
   background: radial-gradient(90% 150% at 50% -35%, rgba(255, 255, 255, 0.06), transparent 70%);
   z-index: 0;
+  opacity: 0.4;
+  /* Its own layer, so a repaint of the list never repaints the gradient underneath it. */
+  will-change: opacity;
+}
+
+.hc-breath-animated {
+  animation-name: hc-breathe;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+@keyframes hc-breathe {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 .hc-head {

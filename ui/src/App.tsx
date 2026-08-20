@@ -20,6 +20,7 @@ import { CommandPalette, type Command } from "./components/CommandPalette";
 import { ContextSidebar } from "./components/ContextSidebar";
 import { PreviewPane } from "./components/PreviewPane";
 import { ResultList } from "./components/ResultList";
+import { throttled, useDeferred } from "./hooks/useDeferred";
 import { useSearch } from "./hooks/useSearch";
 import { useViewport } from "./hooks/useViewport";
 import { ipc, type SearchHit } from "./ipc";
@@ -29,6 +30,9 @@ const ROW_HEIGHT_COMFORTABLE = 34;
 
 /** Which side pane is showing when there is room for only one. */
 type Pane = "preview" | "context";
+
+/** The daemon needs to know somebody is here, not how fast they type. */
+const pingSometimes = throttled(5000);
 
 export function App() {
   const { state, run } = useSearch();
@@ -50,6 +54,11 @@ export function App() {
 
   const rowHeight = comfortable ? ROW_HEIGHT_COMFORTABLE : ROW_HEIGHT_COMPACT;
   const hit: SearchHit | null = state.hits[selected] ?? null;
+
+  // The list follows the arrow key; the panes follow the list once it stops. Holding a key
+  // otherwise fires one `brain.neighbors` and one preview render per row passed over, and
+  // every one of them describes a row nobody looked at.
+  const settled = useDeferred(hit);
 
   // The first frame a person can act on. M4 §1's timer stops here.
   useEffect(() => {
@@ -125,8 +134,9 @@ export function App() {
       setSelected(0);
       run(next);
       // A person typing here is the clearest evidence a human is present, which is what the
-      // daemon's duty cycle keys off (D22).
-      ipc.activityPing().catch(() => {});
+      // daemon's duty cycle keys off (D22) — but the first keystroke establishes that, and the
+      // next forty repeat it at the cost of forty round trips.
+      pingSometimes(() => void ipc.activityPing().catch(() => {}));
     },
     [run],
   );
@@ -307,8 +317,8 @@ export function App() {
           }
         />
 
-        {showPreview && (showBoth || pane === "preview") && <PreviewPane hit={hit} />}
-        {showContext && <ContextSidebar hit={hit} />}
+        {showPreview && (showBoth || pane === "preview") && <PreviewPane hit={settled} />}
+        {showContext && <ContextSidebar hit={settled} />}
       </main>
 
       <CommandPalette

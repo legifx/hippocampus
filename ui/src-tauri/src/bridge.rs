@@ -133,8 +133,16 @@ impl Bridge {
         })
     }
 
+    /// How long a call may take before it is worth a line in the journal.
+    ///
+    /// Not an error — a rebuild legitimately takes seconds. It exists so that "it feels slow"
+    /// can be answered with which call was slow, from a log somebody already has, rather than
+    /// with a benchmark written after the fact against a fixture that was never slow.
+    const SLOW_CALL_MS: u128 = 50;
+
     /// Issue one call. Several may be in flight at once.
     pub async fn call(&self, method: &str, params: Value) -> Result<Value, BridgeError> {
+        let started = std::time::Instant::now();
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         self.pending
@@ -165,7 +173,13 @@ impl Bridge {
             writer.flush().await.map_err(|e| BridgeError::Io(e.to_string()))?;
         }
 
-        rx.await.map_err(|_| BridgeError::Disconnected)?
+        let answer = rx.await.map_err(|_| BridgeError::Disconnected)?;
+
+        let elapsed = started.elapsed().as_millis();
+        if elapsed >= Self::SLOW_CALL_MS {
+            tracing::info!(method, ms = elapsed as u64, "slow call");
+        }
+        answer
     }
 
     /// Call and decode in one step.
