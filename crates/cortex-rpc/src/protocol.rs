@@ -207,6 +207,47 @@ pub mod method {
     pub const BRAIN_EXPLAIN: &str = "brain.explain";
 
     /// Every method this build serves. Used by `status` so a client can discover the surface.
+    /// Methods that may be answered out of order, concurrently with each other.
+    ///
+    /// **An allow-list, so that a new method is serialised until somebody has thought about
+    /// it.** Everything here reads: it does not write a file, does not write the index beyond
+    /// an audit row, and does not depend on having happened before or after its neighbours.
+    ///
+    /// The reason this exists: a connection used to answer one request at a time, so a single
+    /// slow call held up everything queued behind it. The journal shows the signature clearly —
+    /// a `search`, a `brain.neighbors` and an `fs.read` all reporting **152 ms** and all
+    /// finishing within 0.4 ms of each other. They were not slow. They were in a queue. That is
+    /// what scrolling a result list feels like: every row asks for its neighbours and its
+    /// preview, and each one waits behind the last.
+    ///
+    /// Writes stay in order on purpose. `fs.transfer`, `undo` and the rest have an order that
+    /// means something — an undo undoes the previous thing — and making them concurrent would
+    /// be a much larger claim than "these reads are independent".
+    pub fn is_concurrent(method: &str) -> bool {
+        matches!(
+            method,
+            PING | STATUS
+                | SEARCH
+                | SEARCH_EXPLAIN
+                | NODE_GET
+                | EPISODES_RECENT
+                | EXTRACT_STATUS
+                | MODEL_STATUS
+                | WATCH_STATUS
+                | ZONES_LIST
+                | AGENT_STATUS
+                | AUDIT_RECENT
+                | FS_LIST
+                | FS_PLACES
+                | FS_READ
+                | FS_STAT
+                | BRAIN_SEARCH
+                | BRAIN_NEIGHBORS
+                | BRAIN_TIMELINE
+                | BRAIN_WORKING_SET
+        )
+    }
+
     pub const ALL: &[&str] = &[
         PING,
         STATUS,

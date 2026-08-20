@@ -370,6 +370,14 @@ async fn handle_connection(
     // itself once, and every episode and audit entry after that carries the name. A connection
     // that never says anything is a human at a terminal, which is the safe assumption because
     // it is the one that grants nothing.
+    /// How many reads one connection may have in flight.
+    ///
+    /// Generous for what a window does — a listing, a preview and the brain's neighbours for
+    /// one row is three — and small enough that a client cannot spend the daemon's memory by
+    /// asking faster than it can answer.
+    const CONCURRENT_READS: usize = 8;
+    let concurrency = Arc::new(tokio::sync::Semaphore::new(CONCURRENT_READS));
+
     let notifier_writer = writer.clone();
     let mut ctx = ConnCtx {
         actor: cortex_core::model::Actor::Human,
@@ -421,6 +429,61 @@ async fn handle_connection(
 
         let id = request.id.clone();
         let method = request.method.clone();
+
+        // A read is answered on its own task, so that a slow one does not hold up the ones
+        // behind it.
+        //
+        // This loop used to await every request in turn, and the journal shows what that did to
+        // a person scrolling a result list: a `search`, a `brain.neighbors` and an `fs.read` all
+        // reporting **152 ms** and all finishing within 0.4 ms of each other. None of them was
+        // slow. They were in a queue, and the queue was this line.
+        //
+        // Only the methods in `is_concurrent` — an allow-list, so anything new is serialised
+        // until somebody has thought about it. Writes keep the connection's order because their
+        // order means something: an undo undoes the previous thing.
+        //
+        // `ctx` is cloned rather than shared. The only thing that mutates it is `identify`,
+        // which is not on the list and therefore still runs here, in order, before anything a
+        // clone could observe.
+        if id.is_some() && method::is_concurrent(&method) {
+            let daemon = daemon.clone();
+            let writer = writer.clone();
+            let mut ctx = ctx.clone();
+            let params = request.params;
+            let method = method.clone();
+            let id = id.clone();
+
+            // Bounded, so that a client cannot turn a burst of requests into an unbounded pile
+            // of tasks. Waiting here is the same back-pressure the old loop had, applied at a
+            // depth where it stops being visible.
+            let permit = concurrency.clone().acquire_owned().await;
+
+            tokio::spawn(async move {
+                let mut refinable: Option<search::Outcome> = None;
+                let outcome = dispatch(&daemon, &method, params, &mut refinable, &mut ctx).await;
+                let Some(id) = id else { return };
+
+                let response = match outcome {
+                    Ok(result) => Response::ok(id.clone(), result),
+                    Err(error) => Response::err(id.clone(), error),
+                };
+                {
+                    let mut guard = writer.lock().await;
+                    let _ = transport::write_message(
+                        &mut *guard,
+                        &serde_json::to_value(&response).unwrap(),
+                    )
+                    .await;
+                }
+
+                if let Some(outcome) = refinable {
+                    spawn_rerank(daemon.clone(), writer.clone(), id, outcome);
+                }
+                drop(permit);
+            });
+            continue;
+        }
+
         // A search keeps its outcome here so the reranker can reuse it. Re-running the search in
         // the background task would be simpler and would double every query's retrieval work.
         let mut refinable: Option<search::Outcome> = None;
@@ -500,6 +563,7 @@ fn spawn_rerank(
 }
 
 /// State that belongs to one connection rather than to the daemon.
+#[derive(Clone)]
 pub struct ConnCtx {
     pub actor: cortex_core::model::Actor,
     /// How a spawned operation reaches the client that started it.

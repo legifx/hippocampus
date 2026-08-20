@@ -10,7 +10,7 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | M6 — Human View (pulled ahead of M5 at the owner's request, D43) |
-| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 857 tests. |
+| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 860 tests. |
 | **Last updated** | 2026-08-20 |
 | **Blocked on** | nothing |
 
@@ -99,10 +99,21 @@ because a reader that blocked while upgrading could deadlock. `busy_timeout` doe
 Every transaction is now `IMMEDIATE`, which takes the lock up front so contention is a wait; a
 test runs four threads writing eighty times and asserts all eighty land.
 
-**What is not fixed and is known.** The RPC read loop handles one request at a time per
-connection, so a slow call still blocks whatever is queued behind it on the same socket. With
-the three above fixed there is no longer a call slow enough for that to show, so it stays as a
-noted limit rather than a speculative rewrite of request handling.
+**4. The RPC read loop answered one request at a time.** Left as a noted limit after the first
+three were fixed — and then the owner said scrolling was still slow, and the journal gave the
+signature exactly:
+
+```text
+18:39:22.084861  slow call method="search"          ms=152
+18:39:22.085244  slow call method="brain.neighbors" ms=152
+18:39:22.085253  slow call method="fs.read"         ms=152
+```
+
+Three different calls, the same duration to the millisecond, finishing within 0.4 ms of each
+other. A queue, not slowness. Reads now run on their own tasks, eight at a time per connection,
+from an allow-list so anything new stays serialised; writes keep their order because their order
+means something (D55). The regression test was checked against the old behaviour and fails
+there.
 
 **It opens somewhere a person recognises.** The first screen is a list of places, not `/`:
 Persönlich (home and the XDG user folders that exist, plus the trash), Lesezeichen (read from

@@ -1276,3 +1276,44 @@ shell knows, so the shell says.
 said it "costs nothing". It is two aggregate queries over a hundred thousand rows each, and it
 existed to set the period of an animation. It now runs every eight seconds, only while the
 window is on screen, and the query behind it has an index (migration 5): 26.8 ms to 4.8 ms.
+
+---
+
+### D55 — Reads are answered concurrently; writes keep their order
+**Status:** ACCEPTED. Removes the limit noted in D53's session.
+
+A connection's read loop used to await each request before reading the next. It now spawns a
+task for any method on an allow-list in `protocol::method::is_concurrent`, bounded to eight in
+flight per connection. Everything else keeps the old, sequential path.
+
+**How this was found.** Three lines from the journal of a real session, after the CPU and store
+problems had already been fixed and the owner reported that scrolling was still slow:
+
+```text
+18:39:22.084861  slow call method="search"          ms=152
+18:39:22.085244  slow call method="brain.neighbors" ms=152
+18:39:22.085253  slow call method="fs.read"         ms=152
+```
+
+Three different calls, the same duration to the millisecond, all finishing within 0.4 ms of each
+other. Nothing there is slow. They were in a queue, and scrolling a result list is what fills
+it: every row the cursor rests on asks for its neighbours and its preview, and each waits behind
+the last.
+
+**Why an allow-list rather than a deny-list.** A method nobody has thought about is serialised,
+which is the safe direction. Adding `fs.move` to that list would be a claim that two moves may
+interleave, and the claim should be made deliberately by whoever wants it.
+
+**Why writes stay in order.** Their order means something: an undo undoes the previous thing, a
+paste follows the plan that described it. Making them concurrent is a much larger change than
+"these reads are independent", and nothing measured asks for it.
+
+**`ConnCtx` is cloned into each task, not shared.** The only thing that mutates it is
+`identify`, which is not on the list and therefore still runs on the sequential path — before
+any clone could observe it.
+
+**Tested by property, not by timing.** A test sends a large listing and then a `ping`, and
+asserts the ping comes back first; a shared machine makes timing assertions into tests that fail
+on Tuesdays. Two more assert that writes are still answered in order and that twenty
+interleaved requests are each answered exactly once. The first was checked against the old
+behaviour and fails there, which is the only way to know a regression test tests the regression.
