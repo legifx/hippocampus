@@ -57,6 +57,11 @@ tests/          Playwright, against a real layout engine
 | `npm run test:e2e` | both of the above, in that order |
 | `cargo test -p hippocampus-ui` | the bridge and the thumbnailer supervisor, against a real `cortexd` |
 
+`scripts/measure-startup.sh` measures the cold start. Use it rather than reading a number out of
+the journal: it takes ten runs, throws away the first — which reads from disk — and refuses to
+report while the machine is busy. Both times that number was reported wrong, it was a single run
+taken immediately after a build.
+
 The latency tests run by themselves on purpose. Playwright's worker pool is per-invocation, so
 a timing assertion sharing eight cores with seven other browser instances measures the cores —
 it failed exactly that way once before being split out.
