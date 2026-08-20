@@ -17,6 +17,7 @@
 use crate::audit::{summarize, Auditor};
 use crate::plans::{Fingerprint, PlanBook};
 use crate::policy::{Policy, Refusal};
+use crate::trash::{trash_for, DeletionDate, Trash};
 use cortex_core::model::{Action, Actor};
 use cortex_core::tools::*;
 use cortex_store::Store;
@@ -76,8 +77,9 @@ pub struct Surface<'a> {
     pub store: &'a Store,
     pub auditor: &'a Auditor,
     pub plans: &'a PlanBook,
-    /// Where displaced content goes so that a destructive operation stays reversible.
-    pub trash: &'a Path,
+    /// The XDG trash. Deleting puts things where every other tool on the desktop looks for
+    /// them, which is what makes it safe to stop using another file manager.
+    pub trash: &'a Trash,
     pub actor: Actor,
     pub now: i64,
 }
@@ -269,7 +271,7 @@ impl Surface<'_> {
             size: md.as_ref().map(|m| m.len()).unwrap_or(0),
             mtime: md.as_ref().map(crate::plans::mtime_of).unwrap_or(0),
             readable: self.policy.check_read(&path).is_ok(),
-            writable: self.policy.check_write(&path).is_ok(),
+            writable: self.policy.check_write(&path, &self.actor).is_ok(),
             indexed: node.is_some(),
             node_id: node.as_ref().map(|n| n.id.0),
             mime: node.and_then(|n| n.mime),
@@ -289,7 +291,7 @@ impl Surface<'_> {
         let args = serde_json::to_value(params).unwrap_or_default();
         self.gate_with(tool, &args)?;
 
-        let path = match self.policy.check_write(&params.path) {
+        let path = match self.policy.check_write(&params.path, &self.actor) {
             Ok(p) => p,
             Err(r) => return self.refuse(tool, &args, r),
         };
@@ -323,45 +325,73 @@ impl Surface<'_> {
         };
         let _ = stored;
 
-        // Overwriting is destructive, so the previous version is moved aside rather than lost.
-        // Appending is not: truncating back to the old length restores it exactly.
+        // Overwriting is destructive, so the previous version goes to the trash rather than
+        // being lost — the *real* trash, where the person can find it without knowing this
+        // program exists (D34, revised by D45). Appending is not destructive: truncating back
+        // to the old length restores it exactly.
         //
-        // The inverse steps are stored in the order of the forward steps they undo, and run in
-        // reverse — so an overwrite, which is "move the old one away, then write the new one",
-        // is undone by "delete the new one, then move the old one back". Getting that order
+        // Inverse steps are stored in the order of the forward steps they undo and run in
+        // reverse, so an overwrite — "put the old one in the trash, then write the new one" —
+        // is undone by "delete the new one, then take the old one back out". Getting that order
         // wrong makes the restore land on an occupied path and fail, which is how it was found.
-        let (trashed, inverse) = match action {
-            PlanAction::Create => (None, vec![InverseStep::Delete { path: path.clone() }]),
-            PlanAction::Overwrite if existing.is_some() => {
-                let dest = self.trash_slot(&path)?;
-                (
-                    Some(dest.clone()),
-                    vec![
-                        InverseStep::Restore {
-                            from: dest,
-                            to: path.clone(),
-                        },
-                        InverseStep::Delete { path: path.clone() },
-                    ],
-                )
-            }
-            PlanAction::Overwrite => (None, vec![InverseStep::Delete { path: path.clone() }]),
-            PlanAction::Append => (
-                None,
-                vec![InverseStep::Truncate {
-                    path: path.clone(),
-                    size: existing.as_ref().map(|e| e.size).unwrap_or(0),
-                }],
-            ),
+        let overwriting_something = action == PlanAction::Overwrite && existing.is_some();
+
+        let inverse = match action {
+            PlanAction::Create => vec![InverseStep::Delete { path: path.clone() }],
+            PlanAction::Overwrite if overwriting_something => vec![
+                // The name is filled in once the trash has chosen one, below.
+                InverseStep::Untrash {
+                    trash: PathBuf::new(),
+                    name: String::new(),
+                },
+                InverseStep::Delete { path: path.clone() },
+            ],
+            PlanAction::Overwrite => vec![InverseStep::Delete { path: path.clone() }],
+            PlanAction::Append => vec![InverseStep::Truncate {
+                path: path.clone(),
+                size: existing.as_ref().map(|e| e.size).unwrap_or(0),
+            }],
             _ => unreachable!("write produces no other action"),
         };
 
         let undo_id = self.journal(tool, &[step.clone()], &inverse)?;
 
-        let outcome = (|| -> std::io::Result<()> {
-            if let (Some(dest), true) = (&trashed, action == PlanAction::Overwrite) {
-                move_file(&path, dest)?;
+        let mut trashed = None;
+        if overwriting_something {
+            let trash = trash_for(&path, self.trash).map_err(|e| ToolError::Io {
+                path: path.clone(),
+                message: e.to_string(),
+            })?;
+            match trash.put(&path, DeletionDate::from_unix(self.now)) {
+                Ok(entry) => {
+                    self.store.replace_inverse(
+                        undo_id,
+                        &serde_json::json!({
+                            "steps": [
+                                InverseStep::Untrash {
+                                    trash: trash.root().to_path_buf(),
+                                    name: entry.name.clone(),
+                                },
+                                InverseStep::Delete { path: path.clone() },
+                            ]
+                        }),
+                    )?;
+                    trashed = Some(entry.path);
+                }
+                Err(e) => {
+                    let _ = self.store.mark_undone(undo_id, self.now);
+                    let error = ToolError::Io {
+                        path: path.clone(),
+                        message: e.to_string(),
+                    };
+                    self.auditor
+                        .allowed(self.now, tool, &args, &format!("failed: {error}"));
+                    return Err(error);
+                }
             }
+        }
+
+        let outcome = (|| -> std::io::Result<()> {
             match action {
                 PlanAction::Append => {
                     use std::io::Write;
@@ -396,11 +426,11 @@ impl Surface<'_> {
         // Both ends are mutations: a move removes the source as surely as it creates the
         // target, so allow-listing only the destination would let an agent empty a directory it
         // was never given.
-        let from = match self.policy.check_write(&params.from) {
+        let from = match self.policy.check_write(&params.from, &self.actor) {
             Ok(p) => p,
             Err(r) => return self.refuse(tool, &args, r),
         };
-        let to = match self.policy.check_write(&params.to) {
+        let to = match self.policy.check_write(&params.to, &self.actor) {
             Ok(p) => p,
             Err(r) => return self.refuse(tool, &args, r),
         };
@@ -462,7 +492,7 @@ impl Surface<'_> {
         let args = serde_json::to_value(params).unwrap_or_default();
         self.gate_with(tool, &args)?;
 
-        let path = match self.policy.check_write(&params.path) {
+        let path = match self.policy.check_write(&params.path, &self.actor) {
             Ok(p) => p,
             Err(r) => return self.refuse(tool, &args, r),
         };
@@ -486,25 +516,58 @@ impl Surface<'_> {
         };
         let _ = stored;
 
-        let dest = self.trash_slot(&path)?;
+        // Which trash: the home one, or the one at the top of this path's own filesystem. A
+        // trash on the wrong filesystem would mean copying every byte to delete something.
+        let trash = trash_for(&path, self.trash).map_err(|e| ToolError::Io {
+            path: path.clone(),
+            message: e.to_string(),
+        })?;
+
+        // The journal entry names the trash and the entry rather than a path, so undoing goes
+        // through the same code that a person clicking "restore" would: the `.trashinfo` is
+        // removed with the file, and the two never disagree.
         let undo_id = self.journal(
             tool,
             &[step.clone()],
-            &[InverseStep::Restore {
-                from: dest.clone(),
-                to: path.clone(),
+            &[InverseStep::Untrash {
+                trash: trash.root().to_path_buf(),
+                // Filled in below, once the trash has chosen a name.
+                name: String::new(),
             }],
         )?;
 
-        let outcome = move_file(&path, &dest).map_err(|e| ToolError::io(&path, e));
-        self.finish(tool, &args, undo_id, outcome, &path, Action::Delete)?;
+        let entry = match trash.put(&path, DeletionDate::from_unix(self.now)) {
+            Ok(entry) => entry,
+            Err(e) => {
+                let _ = self.store.mark_undone(undo_id, self.now);
+                let error = ToolError::Io {
+                    path: path.clone(),
+                    message: e.to_string(),
+                };
+                self.auditor
+                    .allowed(self.now, tool, &args, &format!("failed: {error}"));
+                return Err(error);
+            }
+        };
 
+        // Now that the name is known, replace the journal's inverse with one that can be used.
+        self.store.replace_inverse(
+            undo_id,
+            &serde_json::json!({
+                "steps": [InverseStep::Untrash {
+                    trash: trash.root().to_path_buf(),
+                    name: entry.name.clone(),
+                }]
+            }),
+        )?;
+
+        self.finish(tool, &args, undo_id, Ok(()), &path, Action::Delete)?;
         let _ = self.store.remove_path(&path);
 
         Ok(Mutation::Applied {
             undo_id,
             steps: vec![step],
-            trashed: Some(dest),
+            trashed: Some(entry.path),
         })
     }
 
@@ -638,7 +701,7 @@ impl Surface<'_> {
         steps: Vec<PlanStep>,
     ) -> ToolResult<Option<Option<crate::plans::StoredPlan>>> {
         match plan_id {
-            None if self.policy.require_dry_run() => Ok(None),
+            None if self.policy.requires_plan(&self.actor) => Ok(None),
             // No plan needed and none given: the call is its own confirmation.
             None => Ok(Some(None)),
             Some(id) => {
@@ -732,32 +795,6 @@ impl Surface<'_> {
         Ok(())
     }
 
-    /// Reserve a directory in the trash and return the path the file will take inside it.
-    ///
-    /// A directory per operation rather than a flat namespace, so two files with the same name
-    /// trashed a second apart do not collide, and so restoring one is a rename rather than a
-    /// search.
-    fn trash_slot(&self, original: &Path) -> ToolResult<PathBuf> {
-        std::fs::create_dir_all(self.trash)
-            .map_err(|e| ToolError::io(self.trash, e))?;
-        let name = original
-            .file_name()
-            .map(|n| n.to_owned())
-            .unwrap_or_else(|| std::ffi::OsString::from("unnamed"));
-
-        for suffix in 0..10_000u32 {
-            let slot = self.trash.join(format!("{}-{}", self.now, suffix));
-            match std::fs::create_dir(&slot) {
-                Ok(()) => return Ok(slot.join(name)),
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                Err(e) => return Err(ToolError::io(&slot, e)),
-            }
-        }
-        Err(ToolError::Io {
-            path: self.trash.to_path_buf(),
-            message: "no free trash slot".into(),
-        })
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -775,6 +812,8 @@ pub enum InverseStep {
     Restore { from: PathBuf, to: PathBuf },
     /// Undo an append: cut the file back to the length it had.
     Truncate { path: PathBuf, size: u64 },
+    /// Undo a trashing, through the trash's own restore so the `.trashinfo` goes with it.
+    Untrash { trash: PathBuf, name: String },
 }
 
 fn apply_inverse(inverse: &serde_json::Value) -> std::io::Result<()> {
@@ -809,6 +848,11 @@ fn apply_inverse(inverse: &serde_json::Value) -> std::io::Result<()> {
             InverseStep::Truncate { path, size } => {
                 let f = std::fs::OpenOptions::new().write(true).open(path)?;
                 f.set_len(*size)?;
+            }
+            InverseStep::Untrash { trash, name } => {
+                crate::trash::Trash::at(trash)
+                    .restore(name)
+                    .map_err(|e| std::io::Error::other(e.to_string()))?;
             }
         }
     }

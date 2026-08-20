@@ -58,8 +58,9 @@ pub struct Daemon {
     /// Dry-run plans awaiting confirmation. In memory: a plan that outlived a restart would
     /// describe a filesystem nobody has looked at since.
     pub plans: PlanBook,
-    /// Where an agent's displaced content waits until the undo journal forgets it.
-    pub trash_dir: PathBuf,
+    /// The XDG trash. Everything this daemon deletes lands where the rest of the desktop
+    /// looks for it, which is what makes it safe to stop using another file manager (D45).
+    pub trash: cortex_agent::trash::Trash,
     pub database_path: PathBuf,
     pub started: Instant,
     /// Signalled when a client calls `shutdown`.
@@ -77,7 +78,7 @@ impl Daemon {
         semantics: Arc<Semantics>,
         config: Config,
         kill: Arc<KillSwitch>,
-        trash_dir: PathBuf,
+        trash: cortex_agent::trash::Trash,
         database_path: PathBuf,
     ) -> Self {
         let policy = Policy::new(&config.agent, config.index.extra_deny.clone());
@@ -93,7 +94,7 @@ impl Daemon {
             policy,
             kill,
             plans: PlanBook::default(),
-            trash_dir,
+            trash,
             database_path,
             started: Instant::now(),
             shutdown: Arc::new(Notify::new()),
@@ -1235,7 +1236,7 @@ fn surface<'a>(
         store: &daemon.store,
         auditor,
         plans: &daemon.plans,
-        trash: &daemon.trash_dir,
+        trash: &daemon.trash,
         actor: actor.clone(),
         now: indexer::unix_now(),
     }

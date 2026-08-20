@@ -212,12 +212,16 @@ async fn a_refusal_arrives_with_its_code_rather_than_as_a_failure() {
     let instance = Instance::start();
     let (bridge, _) = connect(&instance.socket()).await;
 
-    // No write allow-list is configured, so this is refused — and the overlay needs the *code*
-    // to say something useful about it rather than "an error occurred".
+    // The deny-list, which applies to everybody including the person at the keyboard (D44).
+    // The overlay needs the *code* to say something useful about a refusal rather than "an
+    // error occurred".
+    let ssh = instance.work().join(".ssh");
+    std::fs::create_dir_all(&ssh).unwrap();
+
     let err = bridge
         .call(
             "fs.write",
-            json!({ "path": instance.work().join("x.txt").display().to_string(), "content": "x" }),
+            json!({ "path": ssh.join("id_ed25519").display().to_string(), "content": "x" }),
         )
         .await
         .unwrap_err();
@@ -225,10 +229,34 @@ async fn a_refusal_arrives_with_its_code_rather_than_as_a_failure() {
     match err {
         BridgeError::Daemon { code, message } => {
             assert_eq!(code, 1002);
-            assert!(message.contains("allow-list"));
+            assert!(message.contains("deny-list"), "{message}");
         }
         other => panic!("expected a policy refusal, got {other}"),
     }
+}
+
+#[tokio::test]
+async fn the_overlay_is_not_held_to_the_agent_allowlist() {
+    let instance = Instance::start();
+    let (bridge, _) = connect(&instance.socket()).await;
+
+    // No allow-list is configured, and this connection has not identified as an agent — so it
+    // is the person at the keyboard, using their own file manager (D44). An empty allow-list
+    // making the GUI read-only was the bug that found this.
+    let target = instance.work().join("written-by-the-human.txt");
+    let answer = bridge
+        .call(
+            "fs.write",
+            json!({ "path": target.display().to_string(), "content": "hello" }),
+        )
+        .await
+        .expect("the human path is not gated by the agent allow-list");
+
+    assert_eq!(answer["outcome"], json!("applied"), "{answer}");
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "hello");
+
+    // And no plan was needed either: a person who clicked the button has confirmed.
+    assert!(answer.get("plan").is_none());
 }
 
 #[tokio::test]

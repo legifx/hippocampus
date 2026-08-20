@@ -25,7 +25,7 @@ struct Env {
     auditor: Auditor,
     plans: PlanBook,
     policy: Policy,
-    trash: PathBuf,
+    trash: cortex_agent::trash::Trash,
 }
 
 impl Env {
@@ -72,7 +72,7 @@ impl Env {
         let auditor = Auditor::new(store.clone(), &Actor::Agent("brain".into()));
         let env = Self {
             policy: Policy::new(&config, vec![]),
-            trash: dir.path().join("trash"),
+            trash: cortex_agent::trash::Trash::at(dir.path().join("Trash")),
             _dir: dir,
             root,
             store,

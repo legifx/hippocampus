@@ -24,7 +24,7 @@ struct Fixture {
     _dir: tempfile::TempDir,
     allowed: PathBuf,
     forbidden: PathBuf,
-    trash: PathBuf,
+    trash: cortex_agent::trash::Trash,
     store: Arc<Store>,
     auditor: Auditor,
     plans: PlanBook,
@@ -40,7 +40,7 @@ impl Fixture {
         let dir = tempfile::tempdir().unwrap();
         let allowed = dir.path().join("allowed");
         let forbidden = dir.path().join("forbidden");
-        let trash = dir.path().join("trash");
+        let trash = cortex_agent::trash::Trash::at(dir.path().join("Trash"));
         std::fs::create_dir_all(&allowed).unwrap();
         std::fs::create_dir_all(&forbidden).unwrap();
 

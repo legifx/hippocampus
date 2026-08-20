@@ -954,3 +954,55 @@ number.
 and is still the real gate. §5 — all M4 performance gates still hold in the full application —
 is now the gate that keeps the reorder honest, because a file manager bolted onto a launcher is
 exactly where those budgets go.
+
+---
+
+### D44 — The write allow-list gates agents, not the person at the keyboard
+**Status:** ACCEPTED
+
+`Policy::check_write` takes the actor. An agent is held to `agent.write_allowlist` and to the
+mandatory dry run; a human and the daemon itself are not. The **deny-list applies to everybody**.
+
+**Why:** rule R6 is titled "Agent writes are gated" and its first sentence is about agents. The
+first version of the policy ignored the actor, which was harmless while the only mutating client
+*was* an agent — and became absurd the moment the GUI grew a file manager: with the shipped
+configuration, whose allow-list is empty, the owner could not move his own file until he had
+listed the directory in a configuration file. He can already use `rm`. A gate that only stops
+the person holding the key is ceremony.
+
+**Why the deny-list still applies to everybody:** nothing in this program needs to write into
+`~/.ssh`, and a file manager that can do it unasked is one bug away from doing it unasked.
+
+**Consequence:** the red-team suite is unchanged and still passes, which is the point — it
+constructs its surface with an agent actor, so it proves the gated path stayed gated. Two new
+tests assert the other half, and one existing end-to-end test had its premise replaced rather
+than being made to pass: it asserted the GUI was refused a write outside the allow-list, which
+is no longer true and should not be.
+
+---
+
+### D45 — Deleting puts things in the XDG trash, and so does overwriting
+**Status:** ACCEPTED. Revises D34.
+
+D34 made destructive operations reversible by moving displaced content into
+`$XDG_STATE_HOME/hippocampus/trash/`. That was right about the mechanism and wrong about the
+location. Both trashing and overwriting now use the **shared XDG trash**: `~/.local/share/Trash`
+with `files/`, `info/` and a `.trashinfo` per entry, or `$topdir/.Trash-$uid` for a file on
+another filesystem.
+
+**Why:** M6's goal is one week of exclusive use with no fallback to another file manager. A file
+this program deletes has to appear in the same trash as a file deleted by anything else, and be
+restorable by anything else — otherwise stopping using it strands everything it ever deleted.
+A private trash is a data-loss trap wearing a safety feature's clothes.
+
+**What that changes about undo:** the journal's inverse for a trashing is no longer "move this
+path back" but "restore this entry from that trash", so the `.trashinfo` is removed with the
+file and the pair never disagrees. The entry has to be written *before* the move — a crash in
+between must leave something recoverable — but the trash chooses the name, so the journal row is
+written with a placeholder and rewritten once the name exists. That is the only place in this
+system where a journal row is updated rather than appended, and `Store::replace_inverse` says so.
+
+**Consequence:** overwriting a file puts the previous version somewhere the person can find
+without knowing this program exists. Ten thousand agent overwrites would fill the trash, which
+is the same thing that happens when a person deletes ten thousand files, and the trash is where
+that is dealt with.

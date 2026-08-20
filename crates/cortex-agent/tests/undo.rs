@@ -19,7 +19,7 @@ use std::sync::Arc;
 struct Env {
     _dir: tempfile::TempDir,
     root: PathBuf,
-    trash: PathBuf,
+    trash: cortex_agent::trash::Trash,
     store: Arc<Store>,
     auditor: Auditor,
     plans: PlanBook,
@@ -45,7 +45,7 @@ impl Env {
 
         Self {
             policy: Policy::new(&config, vec![]),
-            trash: dir.path().join("trash"),
+            trash: cortex_agent::trash::Trash::at(dir.path().join("Trash")),
             _dir: dir,
             root,
             store,
@@ -332,7 +332,14 @@ fn undo_refuses_to_overwrite_something_that_took_the_place() {
 
     assert!(result.undone.is_empty());
     assert_eq!(result.failed.len(), 1);
-    assert!(result.failed[0].reason.contains("occupied"));
+    // The contract is that the failure says *which* file it could not put back, not that it
+    // uses a particular word for it. The first version of this asserted the word and broke
+    // when the trash started phrasing it better.
+    assert!(
+        result.failed[0].reason.contains(&target.display().to_string()),
+        "the reason does not name the file: {}",
+        result.failed[0].reason
+    );
     assert_eq!(
         std::fs::read_to_string(&target).unwrap(),
         "somebody else's work",

@@ -17,6 +17,8 @@ pub mod fs_tools;
 pub mod plans;
 pub mod policy;
 pub mod surface;
+pub mod transfer;
+pub mod trash;
 
 pub use audit::{redact, Auditor};
 pub use fs_tools::{Surface, ToolError, ToolResult};

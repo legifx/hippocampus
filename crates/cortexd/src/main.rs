@@ -188,7 +188,10 @@ fn main() -> Result<()> {
             semantics,
             config,
             kill,
-            paths.trash_dir(),
+            // The shared trash, not one of our own: a file this daemon deletes must be in the
+            // same place a file deleted by anything else is, and restorable by anything else.
+            cortex_agent::trash::Trash::home()
+                .unwrap_or_else(|_| cortex_agent::trash::Trash::at(paths.trash_dir())),
             paths.database(),
         ));
         let listener = server::bind(&paths.socket())

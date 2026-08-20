@@ -16,6 +16,7 @@
 
 use cortex_core::config::AgentConfig;
 use cortex_core::denylist;
+use cortex_core::model::Actor;
 use std::path::{Component, Path, PathBuf};
 
 /// Why a call was refused.
@@ -88,6 +89,14 @@ impl Refusal {
 }
 
 pub type Decision<T> = std::result::Result<T, Refusal>;
+
+/// Whether the allow-list and the dry-run requirement apply.
+///
+/// `System` counts as the daemon acting on its own behalf — reconciliation, rebuilds — and is
+/// not gated either. Only a named agent is.
+pub fn is_agent(actor: &Actor) -> bool {
+    matches!(actor, Actor::Agent(_))
+}
 
 /// The policy engine. Cheap to clone; built once per daemon from configuration.
 #[derive(Debug, Clone)]
@@ -164,26 +173,43 @@ impl Policy {
         Ok(resolved)
     }
 
-    /// May an agent mutate this path? Returns the resolved target.
+    /// May this actor mutate this path? Returns the resolved target.
+    ///
+    /// **The allow-list gates agents, not the person at the keyboard.** Rule R6 is titled "agent
+    /// writes are gated" and says so in its first sentence; a file manager whose owner cannot
+    /// move a file until they have listed the directory in a configuration file is not a file
+    /// manager, and the same person can already use `rm`. What does apply to everybody is the
+    /// deny-list: a human's file manager has no more business writing into `~/.ssh` unasked
+    /// than an agent does, and nothing in this program needs to (D44).
     ///
     /// The target need not exist — a write creates files — but its parent must, or there is
-    /// nothing to resolve the allow-list against and a typo'd path would be judged on its
-    /// literal text.
-    pub fn check_write(&self, path: &Path) -> Decision<PathBuf> {
+    /// nothing to resolve against and a typo'd path would be judged on its literal text.
+    pub fn check_write(&self, path: &Path, actor: &Actor) -> Decision<PathBuf> {
         let resolved = resolve(path)?;
 
-        if self.write_allowlist.is_empty() {
-            return Err(Refusal::NoAllowlist);
+        if is_agent(actor) {
+            if self.write_allowlist.is_empty() {
+                return Err(Refusal::NoAllowlist);
+            }
+            if !self.write_allowlist.iter().any(|root| under(&resolved, root)) {
+                return Err(Refusal::OutsideAllowlist { path: resolved });
+            }
         }
-        if !self.write_allowlist.iter().any(|root| under(&resolved, root)) {
-            return Err(Refusal::OutsideAllowlist { path: resolved });
-        }
-        // The allow-list does not override R1. A user who allow-lists their home directory has
-        // not thereby allowed an agent to rewrite their private keys.
+
+        // R1 is not an agent rule. It applies to whoever is asking.
         if !denylist::classify(&resolved, &self.extra_deny).may_index() {
             return Err(Refusal::Denied { path: resolved });
         }
         Ok(resolved)
+    }
+
+    /// Does this actor have to present a plan before mutating?
+    ///
+    /// Only an agent. A person who clicked "delete" in a dialog has confirmed; asking them to
+    /// confirm a second time through a protocol they cannot see would be ceremony rather than
+    /// safety.
+    pub fn requires_plan(&self, actor: &Actor) -> bool {
+        self.require_dry_run && is_agent(actor)
     }
 }
 
@@ -248,6 +274,13 @@ fn under(path: &Path, root: &Path) -> bool {
 mod tests {
     use super::*;
 
+    /// Every test in here is about the *agent* path. The human path has its own tests below,
+    /// because "the allow-list does not apply to me" is exactly the kind of claim that needs
+    /// its own assertions rather than an absence of them.
+    fn agent() -> Actor {
+        Actor::Agent("test".into())
+    }
+
     fn config(allow: Vec<PathBuf>) -> AgentConfig {
         AgentConfig {
             enabled: true,
@@ -283,9 +316,9 @@ mod tests {
 
         let p = Policy::new(&config(vec![allowed.clone()]), vec![]);
 
-        assert!(p.check_write(&allowed.join("new.txt")).is_ok());
+        assert!(p.check_write(&allowed.join("new.txt"), &agent()).is_ok());
         assert!(matches!(
-            p.check_write(&elsewhere.join("new.txt")),
+            p.check_write(&elsewhere.join("new.txt"), &agent()),
             Err(Refusal::OutsideAllowlist { .. })
         ));
     }
@@ -295,7 +328,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let p = Policy::new(&config(vec![]), vec![]);
         assert_eq!(
-            p.check_write(&dir.path().join("f.txt")),
+            p.check_write(&dir.path().join("f.txt"), &agent()),
             Err(Refusal::NoAllowlist)
         );
     }
@@ -311,7 +344,7 @@ mod tests {
         let p = Policy::new(&config(vec![allowed.clone()]), vec![]);
         let escape = allowed.join("..").join("secret").join("f.txt");
         assert!(
-            matches!(p.check_write(&escape), Err(Refusal::OutsideAllowlist { .. })),
+            matches!(p.check_write(&escape, &agent()), Err(Refusal::OutsideAllowlist { .. })),
             "`..` must be resolved before the allow-list is consulted"
         );
     }
@@ -328,7 +361,7 @@ mod tests {
         let p = Policy::new(&config(vec![allowed.clone()]), vec![]);
         assert!(
             matches!(
-                p.check_write(&allowed.join("link").join("f.txt")),
+                p.check_write(&allowed.join("link").join("f.txt"), &agent()),
                 Err(Refusal::OutsideAllowlist { .. })
             ),
             "the link target is what gets written, so it is what gets checked"
@@ -345,7 +378,7 @@ mod tests {
 
         let p = Policy::new(&config(vec![allowed]), vec![]);
         assert!(matches!(
-            p.check_write(&sibling.join("f.txt")),
+            p.check_write(&sibling.join("f.txt"), &agent()),
             Err(Refusal::OutsideAllowlist { .. })
         ));
     }
@@ -359,7 +392,7 @@ mod tests {
 
         let p = Policy::new(&config(vec![allowed.clone()]), vec![]);
         assert!(
-            matches!(p.check_write(&ssh.join("id_ed25519")), Err(Refusal::Denied { .. })),
+            matches!(p.check_write(&ssh.join("id_ed25519"), &agent()), Err(Refusal::Denied { .. })),
             "allow-listing a home directory does not allow-list the keys in it"
         );
         assert!(matches!(
@@ -384,6 +417,51 @@ mod tests {
         let resolved = resolve(&target).unwrap();
         assert_eq!(resolved.file_name(), target.file_name());
         assert!(resolved.is_absolute());
+    }
+
+    #[test]
+    fn a_human_is_not_held_to_the_agent_allowlist() {
+        let dir = tempfile::tempdir().unwrap();
+        let elsewhere = dir.path().join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+
+        // No allow-list at all — the configuration an agent is refused everything under.
+        let p = Policy::new(&config(vec![]), vec![]);
+
+        assert!(
+            p.check_write(&elsewhere.join("new.txt"), &Actor::Human).is_ok(),
+            "a file manager whose owner cannot move a file until they edit a config file is \
+             not a file manager, and the same person can already use `rm`"
+        );
+        assert_eq!(
+            p.check_write(&elsewhere.join("new.txt"), &agent()),
+            Err(Refusal::NoAllowlist),
+            "and the agent path is unchanged"
+        );
+    }
+
+    #[test]
+    fn the_denylist_applies_to_the_human_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let ssh = dir.path().join(".ssh");
+        std::fs::create_dir_all(&ssh).unwrap();
+
+        let p = Policy::new(&config(vec![]), vec![]);
+        assert!(
+            matches!(
+                p.check_write(&ssh.join("id_ed25519"), &Actor::Human),
+                Err(Refusal::Denied { .. })
+            ),
+            "R1 is not an agent rule; nothing in this program needs to write there"
+        );
+    }
+
+    #[test]
+    fn only_an_agent_has_to_present_a_plan() {
+        let p = Policy::new(&config(vec![PathBuf::from("/tmp")]), vec![]);
+        assert!(p.requires_plan(&agent()));
+        assert!(!p.requires_plan(&Actor::Human));
+        assert!(!p.requires_plan(&Actor::System), "the daemon is not an agent either");
     }
 
     #[test]

@@ -152,6 +152,21 @@ impl Store {
             .optional()?)
     }
 
+    /// Replace an entry's inverse.
+    ///
+    /// For an operation whose undo cannot be written until it has partly happened: trashing
+    /// does not know the name the trash will give a file until the trash has given it one, and
+    /// the journal entry has to exist *before* the move so a crash in between is recoverable.
+    /// The row is rewritten rather than a second one appended, because two entries for one
+    /// deletion would undo it twice.
+    pub fn replace_inverse(&self, id: i64, inverse: &serde_json::Value) -> Result<()> {
+        self.conn().execute(
+            "UPDATE undo_journal SET inverse_json = ?2 WHERE id = ?1",
+            params![id, serde_json::to_string(inverse)?],
+        )?;
+        Ok(())
+    }
+
     /// Mark an entry as undone. Returns false if it was already undone, which is how a
     /// concurrent second `cortex undo` is prevented from applying the same inverse twice.
     pub fn mark_undone(&self, id: i64, ts: i64) -> Result<bool> {
