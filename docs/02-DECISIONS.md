@@ -1317,3 +1317,52 @@ asserts the ping comes back first; a shared machine makes timing assertions into
 on Tuesdays. Two more assert that writes are still answered in order and that twenty
 interleaved requests are each answered exactly once. The first was checked against the old
 behaviour and fails there, which is the only way to know a regression test tests the regression.
+
+---
+
+### D56 — The spare rows go where the eye is going, and a scroll that changes nothing renders nothing
+**Status:** ACCEPTED.
+
+Two changes to `useVirtual`, both from the same report: "still laggy, and it is with the mouse".
+
+**Scroll events are coalesced onto an animation frame, and the *window* is the state.** It used
+to be the other way round: every scroll event set `scrollTop`, so every scroll event re-rendered
+the list — including the many that move the view a few pixels and leave exactly the same rows on
+screen. A wheel produces a great many of those. Now the window is compared before it is stored,
+so a scroll that changes nothing visible changes no state, React never renders, and the DOM is
+never touched. A browser test asserts zero DOM mutations across four sub-row scrolls.
+
+**The overscan is asymmetric while moving: two rows behind, twelve ahead.** Symmetric overscan
+spends half its budget on rows that have just been scrolled away from. Worst gap in the viewport
+over twenty frames of steady scrolling, on a 650 px list of 28 px rows:
+
+| wheel speed | six each side | two behind, twelve ahead |
+|---|---|---|
+| 150 px/frame | none | none |
+| 200 px/frame | 28 px | **none** |
+| 300 px/frame | 128 px | **none** |
+| 420 px/frame | 240 px | **72 px** |
+| 600 px/frame | 428 px | **260 px** |
+
+For two more rows in the DOM — 38 against 36 — so M4 §3's bound is untouched, and a test asserts
+that too. This was never lag: the browser paints the new scroll position before React can put
+rows there, so a fast wheel showed a third of the list empty on every frame and filled it one
+frame later. That reads as loading, which is why the report was about files loading.
+
+**Three things about measuring this, because two of them were got wrong first.**
+
+The window is now computed *during render* when its inputs change — viewport height, row count,
+row height — rather than in an effect. An effect commits one frame with the stale window first,
+and that frame is visible: a list that has just been given its height renders a short window and
+corrects itself. A browser test caught it by finding twelve rows where there should have been
+thirty.
+
+The existing scroll benchmark waited a `setTimeout(0)` after dispatching a scroll. With
+coalescing, that turn now completes *before* the work happens — the test would have gone on
+passing while measuring nothing. It waits for the rows to change instead, which is also the
+quantity a person experiences.
+
+And the gap measurement has to warm up in the direction of travel. Measured from a standing
+jump, the first frame is genuinely incomplete — a wheel does not teleport — and the maximum over
+the run is that one frame. Measured that way, this change looked like it had made things four
+times worse.

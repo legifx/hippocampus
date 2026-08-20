@@ -142,12 +142,37 @@ test.describe("the render stays inside its share of the budget", () => {
       const list = document.querySelector(".hc-list") as HTMLElement;
       const timings: number[] = [];
 
+      // Scroll, then wait for the rows to actually change on screen — not for a fixed number
+      // of frames.
+      //
+      // This matters twice over. The list now coalesces scroll events onto an animation frame,
+      // so the old `setTimeout(0)` returned *before* any work happened and this test would have
+      // gone on passing while measuring nothing; and waiting a fixed two frames instead
+      // measures the waiting, which is 33 ms of doing nothing whatever the work costs. What a
+      // person experiences is the delay from moving the wheel to the rows moving, so that is
+      // what is timed.
+      const changed = () =>
+        new Promise<void>((resolve) => {
+          const observer = new MutationObserver(() => {
+            observer.disconnect();
+            resolve();
+          });
+          observer.observe(list, { childList: true, subtree: true });
+          // A scroll that changes nothing visible resolves on the next frame instead of
+          // hanging — and costs nothing, which is the point of the test below this one.
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() => {
+              observer.disconnect();
+              resolve();
+            }),
+          );
+        });
+
       for (let i = 0; i < 60; i++) {
         const started = performance.now();
         list.scrollTop += 137;
         list.dispatchEvent(new Event("scroll"));
-        // The work, not the wait: re-windowing the list and committing the new rows.
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await changed();
         timings.push(performance.now() - started);
       }
       // The first update includes whatever the browser had queued; the steady state is what a
@@ -156,9 +181,64 @@ test.describe("the render stays inside its share of the budget", () => {
     });
 
     console.log(`worst scroll update ${worst.toFixed(1)} ms (one frame is ${FRAME_MS} ms)`);
-    // One frame of work per scroll step. Anything above this cannot hold 60 fps, and §8 of the
-    // design system says such an effect is removed rather than optimised later.
-    expect(worst).toBeLessThan(FRAME_MS);
+    // Wheel to rows moving. One frame of that is the coalescing, which is deliberate; the
+    // budget allows a second for the work itself. Anything beyond cannot hold 60 fps, and §8 of
+    // the design system says such an effect is removed rather than optimised later.
+    expect(worst).toBeLessThan(FRAME_MS * 2);
+  });
+
+  test("a scroll too small to change a row costs nothing at all", async ({ page }) => {
+    // The wheel produces a great many small deltas, and most of them leave exactly the same
+    // rows on screen. Answering each of those with a React render was work whose result was
+    // identical to what was already there — which is what "laggy when scrolling with the
+    // mouse" turned out to be.
+    await open(page);
+    await page.getByLabel("Suche").fill("query");
+    await page.waitForSelector(".hc-row");
+
+    const mutations = await page.evaluate(async () => {
+      const list = document.querySelector(".hc-list") as HTMLElement;
+      const rowHeight = (document.querySelector(".hc-row") as HTMLElement).offsetHeight;
+
+      const settle = () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        );
+
+      // Land on a row boundary first, so the small scrolls below stay inside one row.
+      list.scrollTop = rowHeight * 20;
+      list.dispatchEvent(new Event("scroll"));
+      await settle();
+
+      let changes = 0;
+      const observer = new MutationObserver((records) => (changes += records.length));
+      observer.observe(list, { childList: true, subtree: true, attributes: true });
+
+      // Four steps that add up to less than one row, so no new row can come into view.
+      // (Four thirds of a row is more than a row: the first version of this test asserted the
+      // right property with the wrong arithmetic and failed honestly.)
+      const step = Math.max(1, Math.floor(rowHeight / 5));
+      for (let i = 0; i < 4; i++) {
+        list.scrollTop += step;
+        list.dispatchEvent(new Event("scroll"));
+        await settle();
+      }
+      const withinOneRow = changes;
+
+      // And now far enough that the rows must change, to prove the observer works and that
+      // scrolling still does something.
+      changes = 0;
+      list.scrollTop += rowHeight * 10;
+      list.dispatchEvent(new Event("scroll"));
+      await settle();
+      const acrossTenRows = changes;
+
+      observer.disconnect();
+      return { withinOneRow, acrossTenRows };
+    });
+
+    expect(mutations.withinOneRow).toBe(0);
+    expect(mutations.acrossTenRows).toBeGreaterThan(0);
   });
 
   test("the row count does not grow with the length of the list", async ({ page }) => {
@@ -173,5 +253,82 @@ test.describe("the render stays inside its share of the budget", () => {
 
     expect(new Set(counts).size).toBe(1);
     expect(counts[0]).toBeLessThan(40);
+  });
+});
+
+/**
+ * Blank space while scrolling.
+ *
+ * "It is still laggy, and it is with the mouse" — and it was not lag. The browser paints the new
+ * scroll position before React can put rows there, so a fast wheel showed a third of the list
+ * empty on every frame, filling in one frame later. That reads as loading, which is why the
+ * complaint was about files loading.
+ *
+ * Measured on this viewport, worst case over twenty steady frames, before and after moving the
+ * spare rows into the direction of travel:
+ *
+ * | wheel speed  | six rows each side | two behind, twelve ahead |
+ * |---|---|---|
+ * | 200 px/frame | 28 px  | none  |
+ * | 300 px/frame | 128 px | none  |
+ * | 420 px/frame | 240 px | 72 px |
+ *
+ * For two more rows in the DOM.
+ */
+test.describe("a fast scroll shows rows, not gaps", () => {
+  /** The worst gap in the viewport over twenty frames of steady scrolling. */
+  async function worstGap(page: Page, perFrame: number): Promise<number> {
+    return page.evaluate(async (delta) => {
+      const list = document.querySelector(".hc-list") as HTMLElement;
+      const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+      // Warm up in the same direction first. What is being measured is steady scrolling; the
+      // frame after a jump is genuinely incomplete and a wheel does not teleport. Measuring
+      // without this warm-up is how the first attempt at this concluded, wrongly, that the
+      // change had made things worse.
+      for (let i = 0; i < 6; i++) {
+        list.scrollTop += delta;
+        list.dispatchEvent(new Event("scroll"));
+        await frame();
+      }
+
+      let worst = 0;
+      for (let i = 0; i < 20; i++) {
+        list.scrollTop += delta;
+        list.dispatchEvent(new Event("scroll"));
+        await frame();
+
+        const box = list.getBoundingClientRect();
+        let covered = 0;
+        for (const row of Array.from(document.querySelectorAll(".hc-row"))) {
+          const r = row.getBoundingClientRect();
+          const top = Math.max(r.top, box.top);
+          const bottom = Math.min(r.bottom, box.bottom);
+          if (bottom > top) covered += bottom - top;
+        }
+        worst = Math.max(worst, Math.round(box.height - covered));
+      }
+      return worst;
+    }, perFrame);
+  }
+
+  test("a brisk wheel leaves no gap at all", async ({ page }) => {
+    await open(page, 100_000);
+    await page.getByLabel("Suche").fill("query");
+    await page.waitForSelector(".hc-row");
+
+    // 300 px per frame is a fast flick — eighteen thousand pixels a second — and it showed
+    // 128 px of the viewport empty before the spare rows were moved.
+    expect(await worstGap(page, 300)).toBe(0);
+  });
+
+  test("and the DOM does not grow to achieve it", async ({ page }) => {
+    // The whole point of the change is that it is free: the same budget, spent where the eye is
+    // going. M4 §3's bound is what stops this being solved by rendering more.
+    await open(page, 100_000);
+    await page.getByLabel("Suche").fill("query");
+    await page.waitForSelector(".hc-row");
+    await worstGap(page, 300);
+    expect(await page.locator(".hc-row").count()).toBeLessThan(40);
   });
 });

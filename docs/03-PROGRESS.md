@@ -10,7 +10,7 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | M6 — Human View (pulled ahead of M5 at the owner's request, D43) |
-| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 863 tests — 725 Rust, 42 vitest, 96 in a browser. |
+| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 866 tests — 725 Rust, 42 vitest, 99 in a browser. |
 | **Last updated** | 2026-08-20 |
 | **Blocked on** | nothing |
 
@@ -114,6 +114,15 @@ other. A queue, not slowness. Reads now run on their own tasks, eight at a time 
 from an allow-list so anything new stays serialised; writes keep their order because their order
 means something (D55). The regression test was checked against the old behaviour and fails
 there.
+
+**5. And it still felt slow with the mouse, which was none of the above.** Wheel scrolling moves
+no selection, so nothing was being asked of the daemon at all. Two things in the list itself
+(D56): every scroll event re-rendered it, including the many that leave the same rows on screen;
+and the spare rows were spread evenly on both sides, so a fast wheel painted a third of the
+viewport empty and filled it a frame later. That reads as loading, which is what it was reported
+as. Scroll events are coalesced onto a frame and compared before anything is stored, and the
+spare rows now go where the eye is going — 300 px per frame went from 128 px of gap to none, for
+two extra rows in the DOM.
 
 **It opens somewhere a person recognises.** The first screen is a list of places, not `/`:
 Persönlich (home and the XDG user folders that exist, plus the trash), Lesezeichen (read from
