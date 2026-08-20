@@ -10,7 +10,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 async function open(page: Page, width = 1200) {
   await page.setViewportSize({ width, height: 700 });
-  await page.goto("/harness.html");
+  await page.goto("/harness.html?at=/");
   await page.waitForSelector(".hc-row");
 }
 
@@ -74,7 +74,9 @@ test.describe("browsing", () => {
     await page.keyboard.press("Enter");
     await expect(page.locator('.hc-crumb[aria-current="page"]')).not.toHaveText("/");
 
-    await page.locator(".hc-crumb").first().click();
+    // The root crumb, not the first one — the first is "Orte", which leaves the filesystem
+    // for the places screen and is tested separately.
+    await page.locator(".hc-crumb", { hasText: /^\/$/ }).first().click();
     await expect(page.locator('.hc-crumb[aria-current="page"]')).toHaveText("/");
   });
 
@@ -182,5 +184,131 @@ test.describe("what a row says beyond its name", () => {
     // Down to the broken link — the sidebar settles 120 ms after the selection stops.
     for (let i = 0; i < 6; i++) await page.keyboard.press("ArrowDown");
     await expect(context.getByText("/home/user/weg.txt — fehlt")).toBeVisible();
+  });
+});
+
+/**
+ * The first screen.
+ *
+ * A file manager that opens at `/` opens at `bin boot dev etc lib opt proc run sbin srv sys tmp
+ * usr var` — sixteen directories of which one is ever wanted, with everything a person actually
+ * uses four levels below it. These tests are about the screen that replaces that.
+ */
+test.describe("the places screen", () => {
+  /** The default: no `?at=`, so the overlay opens where it really opens. */
+  async function openAtPlaces(page: Page, width = 1200) {
+    await page.setViewportSize({ width, height: 700 });
+    await page.goto("/harness.html");
+    await page.waitForSelector(".hc-place");
+  }
+
+  test("the overlay opens at the places, not at the filesystem root", async ({ page }) => {
+    await openAtPlaces(page);
+
+    // No directory listing at all, and no breadcrumb: this is not a directory.
+    await expect(page.locator(".hc-row")).toHaveCount(0);
+    await expect(page.locator(".hc-crumbs")).toHaveCount(0);
+    await expect(page.locator(".hc-places-title").first()).toHaveText("Persönlich");
+  });
+
+  test("everything technical is one row, at the end", async ({ page }) => {
+    await openAtPlaces(page);
+
+    const headings = page.locator(".hc-places-title");
+    await expect(headings).toHaveText(["Persönlich", "Laufwerke", "System"]);
+
+    // The whole point: one row called what it is, rather than sixteen in the way.
+    const system = page.locator(".hc-places-section").last().locator(".hc-place");
+    await expect(system).toHaveCount(1);
+    await expect(system).toContainText("Dateisystem");
+  });
+
+  test("the folders a person uses come first", async ({ page }) => {
+    await openAtPlaces(page);
+    const personal = page.locator(".hc-places-section").first().locator(".hc-place-name");
+    await expect(personal).toHaveText([
+      "Persönlicher Ordner",
+      "Downloads",
+      "Dokumente",
+      "Papierkorb",
+    ]);
+  });
+
+  test("a drive shows how much room is left", async ({ page }) => {
+    await openAtPlaces(page);
+    const drive = page.locator(".hc-place", { hasText: "ESD-USB" });
+    await expect(drive.locator(".hc-place-bar")).toBeVisible();
+    await expect(drive).toContainText("frei");
+
+    // At 400 px the name is what identifies a drive; the bar is the first thing to go.
+    await page.setViewportSize({ width: 400, height: 700 });
+    await expect(drive.locator(".hc-place-bar")).toBeHidden();
+  });
+
+  test("arrow keys move through the places across the headings", async ({ page }) => {
+    await openAtPlaces(page);
+    await expect(page.locator('.hc-place[aria-selected="true"]')).toHaveCount(1);
+
+    // Four personal places, then the drive: the fifth press crosses a heading, because the
+    // cursor counts places and not rows on screen.
+    for (let i = 0; i < 4; i++) await page.keyboard.press("ArrowDown");
+    await expect(page.locator('.hc-place[aria-selected="true"]')).toContainText("ESD-USB");
+
+    await page.keyboard.press("End");
+    await expect(page.locator('.hc-place[aria-selected="true"]')).toContainText("Dateisystem");
+    await page.keyboard.press("Home");
+    await expect(page.locator('.hc-place[aria-selected="true"]')).toContainText(
+      "Persönlicher Ordner",
+    );
+  });
+
+  test("Enter opens a place and the breadcrumb takes you back", async ({ page }) => {
+    await openAtPlaces(page);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+
+    // A directory now: rows, a breadcrumb, and the path of the place that was opened.
+    await expect(page.locator(".hc-row").first()).toBeVisible();
+    await expect(page.locator('.hc-crumb[aria-current="page"]')).toHaveText("Downloads");
+
+    await page.locator(".hc-crumb-places").click();
+    await expect(page.locator(".hc-place").first()).toBeVisible();
+    await expect(page.locator(".hc-row")).toHaveCount(0);
+  });
+
+  test("Backspace above the root comes back to the places", async ({ page }) => {
+    await open(page); // starts at `/`
+    await expect(page.locator(".hc-row").first()).toBeVisible();
+
+    // Up from `/` is not "nowhere". It is where everything else is reachable from.
+    await page.keyboard.press("Backspace");
+    await expect(page.locator(".hc-place").first()).toBeVisible();
+  });
+
+  test("typing searches from the places screen too", async ({ page }) => {
+    await openAtPlaces(page);
+    await page.getByLabel("Suche").fill("query");
+
+    // One window, three screens, and typing always wins.
+    await expect(page.locator(".hc-place")).toHaveCount(0);
+    await expect(page.locator(".hc-row").first()).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".hc-place").first()).toBeVisible();
+  });
+
+  test("nothing on the places screen can be cut, copied or deleted", async ({ page }) => {
+    await openAtPlaces(page);
+    await page.keyboard.press("Control+c");
+    await page.keyboard.press("Delete");
+
+    // You do not cut a drive. Nothing was asked of the daemon, and nothing said otherwise.
+    const asked = await page.evaluate(
+      () =>
+        ((window as unknown as { __hcCalls?: { command: string }[] }).__hcCalls ?? []).filter(
+          (c) => c.command === "trash" || c.command === "clipboard_write",
+        ).length,
+    );
+    expect(asked).toBe(0);
   });
 });

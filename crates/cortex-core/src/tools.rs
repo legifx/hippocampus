@@ -699,6 +699,88 @@ pub struct FsRenameParams {
     pub name: String,
 }
 
+// ---------------------------------------------------------------------------
+// Places: where a person starts, as opposed to where the filesystem starts.
+// ---------------------------------------------------------------------------
+
+/// What a place is, so a client can draw it without knowing what it means.
+///
+/// The kind is not decoration. "Downloads" and "an external disk" are different things to a
+/// person — one is always there and one may be unplugged mid-copy — and a list that drew them
+/// identically would be hiding the difference that matters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaceKind {
+    Home,
+    Desktop,
+    Documents,
+    Downloads,
+    Pictures,
+    Music,
+    Videos,
+    Trash,
+    /// A mounted volume: an internal disk, a stick, a card.
+    Drive,
+    /// The root of the filesystem. One entry, so that everything technical is behind one row
+    /// rather than spread across the first screen a person sees.
+    Filesystem,
+    /// Somewhere the person marked. Shared with the rest of the desktop.
+    Bookmark,
+}
+
+/// How full a volume is. `None` for anything that is not one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Capacity {
+    pub total_bytes: u64,
+    pub free_bytes: u64,
+}
+
+impl Capacity {
+    /// How much is in use, from 0 to 1. Zero when the total is zero, which happens for
+    /// pseudo-filesystems and is not a division anybody wants to perform.
+    pub fn used_fraction(&self) -> f32 {
+        if self.total_bytes == 0 {
+            return 0.0;
+        }
+        let used = self.total_bytes.saturating_sub(self.free_bytes);
+        (used as f64 / self.total_bytes as f64) as f32
+    }
+}
+
+/// Somewhere worth starting from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Place {
+    pub path: PathBuf,
+    /// What to call it. The filesystem label for a volume, the folder's own name otherwise —
+    /// never the path, because a column of paths is what this screen exists to replace.
+    pub name: String,
+    pub kind: PlaceKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capacity: Option<Capacity>,
+    /// The device behind a mount, for telling two disks of the same size apart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
+}
+
+/// One heading and what is under it.
+///
+/// The grouping is the daemon's, like every other ordering decision here (D4): a frontend that
+/// sorted places into sections would be a second, quietly different opinion about which of them
+/// is personal and which is plumbing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlaceSection {
+    pub title: String,
+    pub places: Vec<Place>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsPlacesParams {}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsPlacesResult {
+    pub sections: Vec<PlaceSection>,
+}
+
 #[cfg(test)]
 mod mode_tests {
     use super::*;

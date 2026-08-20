@@ -15,7 +15,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 async function open(page: Page, hits = 500) {
   await page.setViewportSize({ width: 1200, height: 700 });
-  await page.goto(`/harness.html?hits=${hits}`);
+  await page.goto(`/harness.html?at=/&hits=${hits}`);
   await page.getByLabel("Suche").fill("query");
   await page.waitForSelector(".hc-row");
 }
@@ -36,7 +36,7 @@ async function expectSelected(page: Page, index: number) {
 test.describe("everything is reachable from the keyboard", () => {
   test("the search input has focus the moment the window opens", async ({ page }) => {
     await page.setViewportSize({ width: 1200, height: 700 });
-    await page.goto("/harness.html?hits=10");
+    await page.goto("/harness.html?at=/&hits=10");
     // Wait for the app to exist, not for it to be focused: the assertion is that it takes the
     // focus itself, so waiting for focus would assert nothing.
     await page.waitForSelector(".hc-input");
@@ -138,7 +138,7 @@ test.describe("everything is reachable from the keyboard", () => {
   }) => {
     // At 700 px there is room for one pane, so the switch is observable.
     await page.setViewportSize({ width: 700, height: 700 });
-    await page.goto("/harness.html?hits=50");
+    await page.goto("/harness.html?at=/&hits=50");
     await page.getByLabel("Suche").fill("query");
     await page.waitForSelector(".hc-row");
 

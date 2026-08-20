@@ -108,6 +108,50 @@ setTransport({
           hidden: 1,
         } as T;
       }
+      case "places":
+        // The shape a real machine gives back: personal folders, a stick with a label and a
+        // capacity, and one row for everything technical.
+        return {
+          sections: [
+            {
+              title: "Persönlich",
+              places: [
+                { path: "/home/user", name: "Persönlicher Ordner", kind: "home" },
+                { path: "/home/user/Downloads", name: "Downloads", kind: "downloads" },
+                { path: "/home/user/Dokumente", name: "Dokumente", kind: "documents" },
+                {
+                  path: "/home/user/.local/share/Trash/files",
+                  name: "Papierkorb",
+                  kind: "trash",
+                },
+              ],
+            },
+            {
+              title: "Laufwerke",
+              places: [
+                {
+                  path: "/run/media/user/ESD-USB",
+                  name: "ESD-USB",
+                  kind: "drive",
+                  device: "/dev/sdb1",
+                  capacity: { total_bytes: 31_400_000_000, free_bytes: 21_000_000_000 },
+                },
+              ],
+            },
+            {
+              title: "System",
+              places: [
+                {
+                  path: "/",
+                  name: "Dateisystem",
+                  kind: "filesystem",
+                  device: "/dev/nvme0n1p2",
+                  capacity: { total_bytes: 423_000_000_000, free_bytes: 275_000_000_000 },
+                },
+              ],
+            },
+          ],
+        } as T;
       case "zones":
         return { zones: [{ id: 1, name: "Projects", root: "/home/user/Projects", hue: 210, nodes: 9 }] } as T;
       case "extract_status":
@@ -241,4 +285,8 @@ type HarnessWindow = {
 
 const root = document.getElementById("root");
 if (!root) throw new Error("the harness document has no #root");
-createRoot(root).render(<App />);
+// `?at=/a/path` opens there instead of the places screen. Most of the browser tests are about
+// browsing a directory, and starting each of them at the places screen would mean every one
+// began by navigating out of it.
+const at = params.get("at");
+createRoot(root).render(<App startPath={at ?? undefined} />);

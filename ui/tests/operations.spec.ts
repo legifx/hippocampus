@@ -17,7 +17,7 @@ type Recorded = { command: string; args: Record<string, unknown> };
 
 async function open(page: Page, width = 1200) {
   await page.setViewportSize({ width, height: 700 });
-  await page.goto("/harness.html");
+  await page.goto("/harness.html?at=/");
   await page.waitForSelector(".hc-row");
 }
 

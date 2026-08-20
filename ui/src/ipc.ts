@@ -128,6 +128,49 @@ export type FsEntry = {
   broken?: boolean;
 };
 
+export type PlaceKind =
+  | "home"
+  | "desktop"
+  | "documents"
+  | "downloads"
+  | "pictures"
+  | "music"
+  | "videos"
+  | "trash"
+  | "drive"
+  | "filesystem"
+  | "bookmark";
+
+export type Capacity = {
+  total_bytes: number;
+  free_bytes: number;
+};
+
+/** Somewhere worth starting from. */
+export type Place = {
+  path: string;
+  name: string;
+  kind: PlaceKind;
+  capacity?: Capacity | null;
+  device?: string | null;
+};
+
+/**
+ * One heading and what is under it.
+ *
+ * The grouping is the daemon's, like every other ordering decision (D4). A frontend that sorted
+ * places into sections would be a second opinion about which of them is personal and which is
+ * plumbing, and the two would drift.
+ */
+export type PlaceSection = {
+  title: string;
+  places: Place[];
+};
+
+export type FsPlacesResult = {
+  sections: PlaceSection[];
+};
+
 /** The orders the daemon can put a listing in. The frontend never sorts (D4). */
 export type SortBy = "name" | "size" | "modified" | "none";
 
@@ -327,6 +370,9 @@ export const ipc = {
       conflict,
       dryRun,
     }),
+
+  /** Where a person would like to start, rather than where the filesystem starts. */
+  places: () => transport.invoke<FsPlacesResult>("places"),
 
   cancelOperation: (operation: number) =>
     transport.invoke<{ cancelled: boolean }>("cancel_operation", { operation }),

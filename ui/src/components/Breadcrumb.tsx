@@ -11,19 +11,42 @@ import { zoneAccent } from "../zone";
 export type BreadcrumbProps = {
   path: string;
   onNavigate: (path: string) => void;
+  /** Back to the places screen, which is what sits above `/`. */
+  onPlaces: () => void;
   /** The zone this directory belongs to, if the daemon knows one (D15). */
   hue: number | null;
   /** How many segments to show before eliding from the left. */
   maxSegments?: number;
 };
 
-export function Breadcrumb({ path, onNavigate, hue, maxSegments = 4 }: BreadcrumbProps) {
+export function Breadcrumb({
+  path,
+  onNavigate,
+  onPlaces,
+  hue,
+  maxSegments = 4,
+}: BreadcrumbProps) {
   const segments = toSegments(path);
   const shown = segments.slice(-maxSegments);
   const elided = segments.length - shown.length;
 
   return (
     <nav className="hc-crumbs" aria-label="Pfad">
+      {/* Always first, from anywhere: the way back to the folders somebody actually uses, one
+          key or one click away however deep they have gone. */}
+      <span className="hc-crumb-group">
+        <button
+          type="button"
+          className="hc-crumb hc-crumb-places"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            onPlaces();
+          }}
+        >
+          Orte
+        </button>
+        <span className="hc-crumb-sep">/</span>
+      </span>
       {elided > 0 && (
         <button
           type="button"

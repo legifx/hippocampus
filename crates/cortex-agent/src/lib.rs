@@ -16,6 +16,7 @@ pub mod batch;
 pub mod brain_tools;
 pub mod fs_tools;
 pub mod plans;
+pub mod places;
 pub mod policy;
 pub mod surface;
 pub mod transfer;

@@ -10,7 +10,7 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | M6 — Human View (pulled ahead of M5 at the owner's request, D43) |
-| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 823 tests. |
+| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 853 tests. |
 | **Last updated** | 2026-08-20 |
 | **Blocked on** | nothing |
 
@@ -55,6 +55,13 @@ and a run that waited reports `comparable=false` instead of a budget verdict, be
 measured two services racing rather than this one starting (D51). §1 re-measured after the
 change: 277 ms median, ten of ten inside the budget.
 
+**It opens somewhere a person recognises.** The first screen is a list of places, not `/`:
+Persönlich (home and the XDG user folders that exist, plus the trash), Lesezeichen (read from
+the file Nautilus and Thunar use), Laufwerke (mounted volumes with their label and how full they
+are), and System — one row, called "Dateisystem", holding everything technical. Built by the
+daemon, so `cortex places` prints the same list and a test asserts all three surfaces agree
+(D52). It is not the result list: you do not cut a drive, and a test says so.
+
 **Cut and copy that the desktop can hear.** The system clipboard, in the four formats anything
 reads: `x-special/gnome-copied-files` (the only one carrying the verb), `text/uri-list`,
 `application/x-kde-cutselection` and plain text. Copy here, paste in Nautilus; cut in Thunar,
@@ -95,7 +102,9 @@ The safest choice is first and Enter takes it, each option has a letter, Escape 
 
 ### What M6 still needs
 
-1. **Mounts via udisks2** and `xdg-mime` for "open with".
+1. **Mounting and unmounting via udisks2** — the drives are *listed* now, but a stick that is
+   not mounted yet does not appear, and there is no way to eject one — and `xdg-mime` for
+   "open with".
 2. **Archives** — extract zip and tar at minimum.
 3. **Network locations**, which may be staged.
 4. **Thumbnails in the list**, not only in the preview pane.

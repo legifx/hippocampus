@@ -261,6 +261,139 @@
   will-change: scroll-position;
 }
 
+/* ---------------------------------------------------------------------------
+   The places screen. Not the result list: a dozen rows rather than ten thousand, grouped under
+   headings the daemon chose, and nothing here is selectable in the way a file is.
+   --------------------------------------------------------------------------- */
+
+.hc-places {
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  min-width: 0;
+  padding: 6px 6px 14px;
+  outline: none;
+}
+
+.hc-places-section {
+  margin-bottom: 4px;
+}
+
+.hc-places-title {
+  padding: 12px 12px 5px;
+  color: var(--hc-text-faint);
+  /* Small and quiet: a heading here is a divider, not a thing to read. */
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.hc-place {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  height: 34px;
+  border-radius: var(--hc-radius-row);
+  cursor: default;
+}
+
+.hc-place-current {
+  background: var(--hc-surface-hi);
+}
+
+.hc-place-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A mark per kind, so the eye finds Downloads without reading the word. Shapes rather than
+   pictures: an icon set is a dependency and a maintenance burden, and these have to survive
+   being 8 px tall on a 400 px column. */
+.hc-place-mark {
+  width: 10px;
+  height: 10px;
+  justify-self: center;
+  border-radius: 2px;
+  background: var(--hc-text-faint);
+}
+
+.hc-place-mark[data-kind="home"] {
+  border-radius: 50%;
+  background: var(--hc-text-dim);
+}
+
+.hc-place-mark[data-kind="downloads"] {
+  background: var(--hc-info);
+}
+
+.hc-place-mark[data-kind="documents"] {
+  background: var(--hc-text-dim);
+}
+
+.hc-place-mark[data-kind="pictures"],
+.hc-place-mark[data-kind="videos"],
+.hc-place-mark[data-kind="music"] {
+  background: var(--hc-success);
+  opacity: 0.7;
+}
+
+.hc-place-mark[data-kind="trash"] {
+  background: none;
+  border: 1px solid var(--hc-text-faint);
+}
+
+.hc-place-mark[data-kind="drive"] {
+  border-radius: 50%;
+  background: var(--hc-warning);
+}
+
+.hc-place-mark[data-kind="filesystem"] {
+  background: none;
+  border: 1px solid var(--hc-text-faint);
+  transform: rotate(45deg);
+}
+
+.hc-place-mark[data-kind="bookmark"] {
+  background: var(--hc-info);
+  opacity: 0.6;
+}
+
+.hc-place-space {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+/* "Nearly full" is the only thing anybody reads off a capacity, and a bar says it without
+   being read. */
+.hc-place-bar {
+  display: block;
+  width: 56px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--hc-stroke-lift);
+  overflow: hidden;
+}
+
+.hc-place-fill {
+  display: block;
+  height: 100%;
+  background: var(--hc-text-dim);
+}
+
+/* At 400 px the name is what identifies a drive; the bar is the first thing to go. */
+[data-width="narrow"] .hc-place-bar {
+  display: none;
+}
+
+.hc-crumb-places {
+  color: var(--hc-text-dim);
+}
+
 .hc-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

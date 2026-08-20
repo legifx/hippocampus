@@ -35,7 +35,7 @@ const FRAME_MS = 16.7;
 
 async function open(page: Page, hits = 10_000) {
   await page.setViewportSize({ width: 1200, height: 700 });
-  await page.goto(`/harness.html?hits=${hits}`);
+  await page.goto(`/harness.html?at=/&hits=${hits}`);
   await page.waitForSelector(".hc-input");
 }
 

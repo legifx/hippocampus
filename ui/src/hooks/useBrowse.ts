@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { ipc, type FsEntry, type SortBy } from "../ipc";
+import { PLACES } from "./usePlaces";
 
 export type BrowseState = {
   path: string;
@@ -41,6 +42,17 @@ export function useBrowse(initialPath: string) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // The places screen is not a directory, so there is nothing to list. Asking the daemon for
+    // the contents of `places:` would be asking a question with no answer.
+    if (path === PLACES) {
+      setEntries([]);
+      setHidden(0);
+      setTruncated(false);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
     let current = true;
     setLoading(true);
     setError(null);
@@ -88,9 +100,16 @@ export function useBrowse(initialPath: string) {
     });
   }, []);
 
-  /** The directory above this one, or null at the root. */
+  /**
+   * The directory above this one.
+   *
+   * Above `/` is the places screen — which is not a parent directory in any filesystem sense,
+   * and is the right answer to "up" all the same: it is where you came from and where
+   * everything else is reachable from.
+   */
   const parentOf = useCallback((of: string): string | null => {
-    if (of === "/" || of === "") return null;
+    if (of === PLACES) return null;
+    if (of === "/" || of === "") return PLACES;
     const trimmed = of.endsWith("/") ? of.slice(0, -1) : of;
     const cut = trimmed.lastIndexOf("/");
     if (cut < 0) return null;

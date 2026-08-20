@@ -1164,3 +1164,46 @@ program to itself: a run that waited says so, and says nothing about the budget.
 **What it does not change:** `scripts/measure-startup.sh` is unaffected — it stops only the
 overlay, so the daemon is always already listening and no run under it ever waits. Measured
 after this change: **277 ms median, ten runs of ten inside the budget.**
+
+---
+
+### D52 — The overlay opens at a list of places, not at `/`
+**Status:** ACCEPTED.
+
+The first screen is not a directory listing. It is four sections — Persönlich, Lesezeichen,
+Laufwerke, System — built by the daemon and served as `fs.places`.
+
+**Why:** a file manager opens at `/` when nobody decided where it should open. What that shows
+first is `bin boot dev etc lib lost+found opt proc run sbin srv sys tmp usr var`: sixteen
+directories, of which one is ever wanted, and everything a person actually opens is four levels
+below it. The screen answers the wrong question — "what is in this directory" instead of "where
+would you like to go".
+
+**Everything technical is one row.** `/` is still there, last, called "Dateisystem", and
+everything above it is still reachable through it. Nothing is hidden; it is simply not in front
+of somebody looking for their Downloads.
+
+**Why the daemon decides this and not the interface:** D4. Which mounts are volumes and which
+are kernel plumbing, where Downloads actually is on a German desktop, what a drive is called —
+these are judgements, and a judgement made in the frontend is a judgement made twice, because
+the CLI needs it too. `cortex places` prints the same list the window draws, and a test asserts
+all three surfaces agree.
+
+**Read from files, not from D-Bus.** `/proc/mounts`, `/dev/disk/by-label`,
+`~/.config/user-dirs.dirs`, `~/.config/gtk-3.0/bookmarks`, and `statvfs`. No udisks2 on this
+path: the daemon promises no network access and starts in milliseconds, and a D-Bus round trip
+on the way to the first screen would cost both. *Mounting* and *unmounting* do need udisks2, and
+that is the next piece of work rather than this one.
+
+**Bookmarks are the desktop's, not ours.** `~/.config/gtk-3.0/bookmarks` is what Nautilus, Nemo
+and Thunar use, so a bookmark made in any of them shows up here. Nothing writes to that file
+yet — this program is new on the machine and the file belongs to whatever has been managing it.
+
+**It is not the result list, and that is deliberate.** Places are not files: you do not select
+three of them, you do not cut one, and there are a dozen rather than ten thousand. Reusing the
+row machinery would mean explaining, in every operation, why the thing under the cursor cannot
+be copied. It has its own cursor and its own two keys, and a browser test asserts that Ctrl+C
+and Delete ask the daemon for nothing while it is on screen.
+
+**Getting back:** the breadcrumb starts with "Orte" from anywhere, and Backspace at `/` goes
+there — above the root is not "nowhere", it is where everything else is reachable from.

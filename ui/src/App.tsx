@@ -20,6 +20,8 @@ import { Breadcrumb } from "./components/Breadcrumb";
 import { CommandPalette, type Command } from "./components/CommandPalette";
 import { ConflictDialog } from "./components/ConflictDialog";
 import { ContextSidebar } from "./components/ContextSidebar";
+import { PlacesView, useFlatPlaces } from "./components/PlacesView";
+import { usePlaces, PLACES } from "./hooks/usePlaces";
 import { PreviewPane } from "./components/PreviewPane";
 import { ResultList } from "./components/ResultList";
 import { useBrowse } from "./hooks/useBrowse";
@@ -76,11 +78,30 @@ function emptyMessage(
 
 /// Where browsing starts. The home directory is the only defensible guess before the daemon
 /// has been asked which roots it indexes, and it is what every file manager opens on.
-const START_PATH = "/";
+/**
+ * Where the overlay opens.
+ *
+ * Not `/`. The filesystem root is where a file manager opens when nobody decided where it should
+ * open, and what it shows first is sixteen directories of which one is ever wanted. The places
+ * screen shows the folders somebody actually uses, the drives, and one row for everything
+ * technical — see `PlacesView` and D52.
+ */
+const START_PATH = PLACES;
 
-export function App() {
+export type AppProps = {
+  /**
+   * Where to open, for the browser tests.
+   *
+   * Most of them are about browsing a directory, and starting them at the places screen would
+   * mean every one began by navigating out of it — which tests the navigation over and over and
+   * the thing they are about once.
+   */
+  startPath?: string;
+};
+
+export function App({ startPath = START_PATH }: AppProps = {}) {
   const { state, run } = useSearch();
-  const browse = useBrowse(START_PATH);
+  const browse = useBrowse(startPath);
   const [query, setQuery] = useState("");
   const [pane, setPane] = useState<Pane>("preview");
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -105,6 +126,12 @@ export function App() {
 
   // Two modes, one list: a directory when nothing is typed, results when something is (M6).
   const searching = query.trim() !== "";
+
+  // Three screens, one window: the places, a directory, or results. Typing always wins — that
+  // is M6's shape, "search as an overlay, not a separate page".
+  const atPlaces = !searching && browse.state.path === PLACES;
+  const places = usePlaces(atPlaces);
+  const flatPlaces = useFlatPlaces(places.sections);
   const rows: Row[] = useMemo(
     () => (searching ? state.hits.map(rowFromHit) : browse.state.entries.map(rowFromEntry)),
     [searching, state.hits, browse.state.entries],
@@ -342,6 +369,14 @@ export function App() {
     [openSelected, hit, pane, showBoth, comfortable, searching, browse, operations, targets, current],
   );
 
+  const openPlace = useCallback(
+    (place: { path: string } | undefined) => {
+      if (!place) return;
+      browse.goTo(place.path);
+    },
+    [browse],
+  );
+
   const onKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -372,6 +407,40 @@ export function App() {
       // overlay's Enter opens the selected row and prevents the form from submitting, so the
       // rename silently never happens — which is how two browser tests found it.
       if (renaming || creating !== null) return;
+
+      // The places screen has no selection and no operations — you do not cut a drive — so it
+      // takes the movement keys and nothing else, before anything below can act on a list that
+      // is not on screen. Escape, Ctrl+K and typing are handled above and still work.
+      if (atPlaces) {
+        switch (event.key) {
+          case "ArrowDown":
+            event.preventDefault();
+            places.move(1, flatPlaces.length);
+            return;
+          case "ArrowUp":
+            event.preventDefault();
+            places.move(-1, flatPlaces.length);
+            return;
+          case "Home":
+          case "PageUp":
+            event.preventDefault();
+            places.move(-flatPlaces.length, flatPlaces.length);
+            return;
+          case "End":
+          case "PageDown":
+            event.preventDefault();
+            places.move(flatPlaces.length, flatPlaces.length);
+            return;
+          case "Enter":
+          case "ArrowRight":
+            event.preventDefault();
+            openPlace(flatPlaces[places.cursor]);
+            return;
+          default:
+            // Everything else falls through: Ctrl+Z still undoes, Tab still switches panes.
+            break;
+        }
+      }
 
       // Ctrl+A, and the operations, before the navigation keys: a file manager's bindings are
       // mostly modified keys, and checking them first keeps the switch below about movement.
@@ -496,6 +565,10 @@ export function App() {
       targets,
       renaming,
       creating,
+      atPlaces,
+      places,
+      flatPlaces,
+      openPlace,
     ],
   );
 
@@ -633,13 +706,24 @@ export function App() {
 
       <main className="hc-body">
         <div className="hc-column">
-          {!searching && (
+          {!searching && !atPlaces && (
             <Breadcrumb
               path={browse.state.path}
               onNavigate={(next) => browse.goTo(next)}
+              onPlaces={() => browse.goTo(PLACES)}
               hue={null}
             />
           )}
+          {atPlaces ? (
+            <PlacesView
+              sections={places.sections}
+              cursor={places.cursor}
+              onSelect={places.select}
+              onOpen={openPlace}
+              loading={places.loading}
+              error={places.error}
+            />
+          ) : (
           <ResultList
             rows={rows}
             cursor={selected}
@@ -655,6 +739,7 @@ export function App() {
             emptyMessage={emptyMessage(searching, state.loading, browse.state)}
             selectedPaths={targets}
           />
+          )}
         </div>
 
         {showPreview && (showBoth || pane === "preview") && <PreviewPane hit={settled} />}

@@ -1039,6 +1039,12 @@ async fn dispatch(
         // this actor, call the one implementation, translate its refusal — because the tool
         // logic lives in `cortex-agent` and this is only the socket's way in to it. The CLI
         // and the MCP server reach the same code through the same methods.
+        method::FS_PLACES => {
+            let params = parse(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            json(surface(daemon, &ctx.actor, &auditor).places(&params).map_err(tool_error)?)
+        }
+
         method::FS_LIST => {
             let params = parse(params)?;
             let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);

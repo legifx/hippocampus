@@ -225,6 +225,16 @@ pub const TOOLS: &[Tool] = &[
         schema: || object(json!({ "target": target_property() }), &["target"]),
     },
     Tool {
+        name: "fs_places",
+        method: method::FS_PLACES,
+        gated: false,
+        description: "Where the person's own files are: home, Downloads, Documents and the \
+                      rest, the mounted drives, and the filesystem root. Use this instead of \
+                      guessing at `~/Documents` — the folders are named by the desktop's own \
+                      configuration and may not be in English.",
+        schema: || object(json!({}), &[]),
+    },
+    Tool {
         name: "fs_list",
         method: method::FS_LIST,
         gated: false,

@@ -8,7 +8,8 @@ use clap::{Parser, Subcommand};
 use cortex_core::paths::Paths;
 use cortex_core::tools::{
     AnnotateParams, AnnotateResult, DiffParams, DiffResult, FsListParams, FsListResult,
-    FsMoveParams, FsReadParams, FsReadResult, FsStatParams, FsStatResult, FsTrashParams,
+    FsMoveParams, FsPlacesParams, FsPlacesResult, FsReadParams, FsReadResult, FsStatParams,
+    FsStatResult, FsTrashParams,
     FsWriteParams, LinkParams, LinkResult, Mutation, NeighborsParams, NeighborsResult, PinParams,
     PinResult, Target, TimelineParams, TimelineResult, UndoParams, UndoResult, WorkingSetResult,
     WriteMode,
@@ -203,6 +204,8 @@ enum Command {
         #[arg(short, long)]
         limit: Option<usize>,
     },
+    /// The places worth starting from: your folders, the drives, and the filesystem.
+    Places,
     /// List a directory, the way an agent sees it.
     Ls {
         path: std::path::PathBuf,
@@ -1083,6 +1086,36 @@ async fn run(args: Args) -> Result<()> {
             }
         }
 
+        Command::Places => {
+            let result: FsPlacesResult = client.call(method::FS_PLACES, FsPlacesParams {}).await?;
+            if args.json {
+                print_json(&result)?;
+            } else {
+                for section in &result.sections {
+                    println!("\n{}", section.title);
+                    for place in &section.places {
+                        // The capacity where there is one, because "which disk was that" is the
+                        // question a list of mount points does not answer.
+                        let capacity = match place.capacity {
+                            Some(c) => format!(
+                                "  {} von {} frei",
+                                human_bytes(c.free_bytes),
+                                human_bytes(c.total_bytes)
+                            ),
+                            None => String::new(),
+                        };
+                        println!(
+                            "  {:<24} {}{}",
+                            place.name,
+                            place.path.display(),
+                            capacity
+                        );
+                    }
+                }
+                println!();
+            }
+        }
+
         Command::Ls { path, depth, limit } => {
             let result: FsListResult = client
                 .call(
@@ -1739,4 +1772,20 @@ fn format_duration(secs: u64) -> String {
     } else {
         format!("{s}s")
     }
+}
+
+/// Bytes, in the units a person reads.
+///
+/// Powers of a thousand rather than of 1024, because that is what the label on a disk says and
+/// this list is about telling one disk from another.
+fn human_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "kB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1000.0 && unit < UNITS.len() - 1 {
+        value /= 1000.0;
+        unit += 1;
+    }
+    let digits = if unit == 0 || value >= 100.0 { 0 } else { 1 };
+    format!("{value:.digits$} {}", UNITS[unit])
 }

@@ -203,6 +203,15 @@ async fn rename_entry(
         .await
 }
 
+/// Where a person would like to start. The daemon decides what is on it (D52).
+#[tauri::command]
+async fn places(state: tauri::State<'_, AppState>) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(cortex_rpc::protocol::method::FS_PLACES, json!({}))
+        .await
+}
+
 #[tauri::command]
 async fn trash(state: tauri::State<'_, AppState>, path: String) -> Result<Value, BridgeError> {
     state
@@ -683,6 +692,7 @@ pub fn run() {
             timeline,
             node_get,
             list,
+            places,
             transfer,
             cancel_operation,
             mkdir,

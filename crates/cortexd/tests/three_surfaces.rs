@@ -221,6 +221,29 @@ fn one_listing_through_three_surfaces_gives_one_answer() {
 }
 
 #[test]
+fn the_places_are_the_same_through_all_three() {
+    // The screen a person opens onto is built by the daemon (D52) precisely so that there is
+    // one answer to "which of these is personal and which is plumbing". Three answers would be
+    // three opinions, and the CLI's would be the one nobody noticed had drifted.
+    let daemon = Daemon::start();
+
+    let over_socket = daemon.rpc("fs.places", json!({}));
+    let over_cli = daemon.cli(&["places"]);
+    let over_mcp = daemon.mcp("fs_places", json!({}));
+
+    assert_eq!(over_socket, over_cli);
+    assert_eq!(over_socket, over_mcp);
+
+    // And whatever else is on this machine, the last section is the one row that holds
+    // everything technical.
+    let sections = over_socket["sections"].as_array().unwrap();
+    let last = sections.last().unwrap();
+    assert_eq!(last["title"], json!("System"));
+    assert_eq!(last["places"].as_array().unwrap().len(), 1);
+    assert_eq!(last["places"][0]["path"], json!("/"));
+}
+
+#[test]
 fn a_gated_tool_plans_identically_on_all_three() {
     let daemon = Daemon::start();
     let target = daemon.work().join("new.txt").display().to_string();

@@ -114,6 +114,41 @@ impl Surface<'_> {
     // Reading
     // -----------------------------------------------------------------------
 
+    /// Where a person would like to start, rather than where the filesystem starts.
+    ///
+    /// The deny-list applies here as it does everywhere (R1): a place that could not be listed
+    /// is not offered, because a row that refuses when pressed is worse than no row.
+    ///
+    /// Not gated and not audited as a mutation, because it reads no file's contents — it reads
+    /// the mount table, a config file and the names of some directories. It is still an audit
+    /// entry, like every other call at this surface.
+    pub fn places(&self, params: &FsPlacesParams) -> ToolResult<FsPlacesResult> {
+        let tool = "fs.places";
+        let args = serde_json::to_value(params).unwrap_or_default();
+        self.gate_with(tool, &args)?;
+
+        let mut sections = Vec::new();
+        for section in crate::places::sections(&crate::places::home_dir()) {
+            let mut kept = Vec::new();
+            for place in section.places {
+                if self.policy.check_list(&place.path).is_ok() {
+                    kept.push(place);
+                }
+            }
+            if !kept.is_empty() {
+                sections.push(cortex_core::tools::PlaceSection {
+                    title: section.title,
+                    places: kept,
+                });
+            }
+        }
+
+        let count: usize = sections.iter().map(|s| s.places.len()).sum();
+        self.auditor
+            .allowed(self.now, tool, &args, &summarize("places", count, None));
+        Ok(FsPlacesResult { sections })
+    }
+
     pub fn list(&self, params: &FsListParams) -> ToolResult<FsListResult> {
         let tool = "fs.list";
         let args = serde_json::to_value(params).unwrap_or_default();

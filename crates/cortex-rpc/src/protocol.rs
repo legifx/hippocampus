@@ -171,6 +171,9 @@ pub mod method {
     // The agent tools themselves. `fs.write`, `fs.move` and `fs.trash` are gated: called
     // without a plan id they return a plan and change nothing.
     pub const FS_LIST: &str = "fs.list";
+    /// Where a person would like to start: home, their folders, the drives, and one row for
+    /// everything technical. See `cortex-agent/src/places.rs` for why the daemon decides this.
+    pub const FS_PLACES: &str = "fs.places";
     pub const FS_READ: &str = "fs.read";
     pub const FS_STAT: &str = "fs.stat";
     pub const FS_WRITE: &str = "fs.write";
@@ -231,6 +234,7 @@ pub mod method {
         AUDIT_RECENT,
         IDENTIFY,
         FS_LIST,
+        FS_PLACES,
         FS_READ,
         FS_STAT,
         FS_WRITE,

@@ -14,7 +14,7 @@ const WIDTHS = [400, 600, 900, 1400];
 
 async function open(page: import("@playwright/test").Page, width: number, hits = 10_000) {
   await page.setViewportSize({ width, height: 700 });
-  await page.goto(`/harness.html?hits=${hits}`);
+  await page.goto(`/harness.html?at=/&hits=${hits}`);
   await page.getByLabel("Suche").fill("query");
   await page.waitForSelector(".hc-row");
 }
