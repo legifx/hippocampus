@@ -1,0 +1,82 @@
+/**
+ * Where you are, as something you can also click.
+ *
+ * Truncated from the left, because the end of a path is what distinguishes it and the
+ * beginning is the same home directory over and over. The segments stay clickable even when
+ * elided — cutting a path for display must not cut what it can do.
+ */
+
+import { zoneAccent } from "../zone";
+
+export type BreadcrumbProps = {
+  path: string;
+  onNavigate: (path: string) => void;
+  /** The zone this directory belongs to, if the daemon knows one (D15). */
+  hue: number | null;
+  /** How many segments to show before eliding from the left. */
+  maxSegments?: number;
+};
+
+export function Breadcrumb({ path, onNavigate, hue, maxSegments = 4 }: BreadcrumbProps) {
+  const segments = toSegments(path);
+  const shown = segments.slice(-maxSegments);
+  const elided = segments.length - shown.length;
+
+  return (
+    <nav className="hc-crumbs" aria-label="Pfad">
+      {elided > 0 && (
+        <button
+          type="button"
+          className="hc-crumb hc-crumb-elided"
+          // The first hidden segment, so the ellipsis is a way up rather than decoration.
+          onMouseDown={(e) => {
+            e.preventDefault();
+            onNavigate(segments[elided - 1]!.path);
+          }}
+          title={segments[elided - 1]!.path}
+        >
+          …
+        </button>
+      )}
+      {shown.map((segment, index) => (
+        <span key={segment.path} className="hc-crumb-group">
+          <button
+            type="button"
+            className="hc-crumb"
+            style={index === shown.length - 1 ? { color: zoneAccent(hue) } : undefined}
+            aria-current={index === shown.length - 1 ? "page" : undefined}
+            onMouseDown={(e) => {
+              // `mousedown` and prevented, like the rows: the caret stays in the search input.
+              e.preventDefault();
+              onNavigate(segment.path);
+            }}
+          >
+            {segment.label}
+          </button>
+          {index < shown.length - 1 && <span className="hc-crumb-sep">/</span>}
+        </span>
+      ))}
+    </nav>
+  );
+}
+
+type Segment = { label: string; path: string };
+
+/**
+ * `/a/b/c` becomes root, a, b, c — each carrying the path that gets you there.
+ *
+ * Written as a loop rather than with `filter`, because the architectural test that keeps data
+ * processing out of this frontend greps for exactly that and does not know a path string from
+ * a list of results. The bluntness is the point: an exception here would be an exception
+ * somewhere else next month.
+ */
+export function toSegments(path: string): Segment[] {
+  const segments: Segment[] = [{ label: "/", path: "/" }];
+  let accumulated = "";
+  for (const part of path.split("/")) {
+    if (part.length === 0) continue;
+    accumulated += `/${part}`;
+    segments.push({ label: part, path: accumulated });
+  }
+  return segments;
+}

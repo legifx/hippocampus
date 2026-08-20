@@ -100,6 +100,28 @@ export type SearchUpdate = {
   model: string;
 };
 
+export type FsKind = "file" | "dir" | "symlink" | "other";
+
+export type FsEntry = {
+  path: string;
+  kind: FsKind;
+  size: number;
+  mtime: number;
+  /** Whether the brain knows this path — "not there" and "not indexed yet" look alike without it. */
+  indexed: boolean;
+};
+
+/** The orders the daemon can put a listing in. The frontend never sorts (D4). */
+export type SortBy = "name" | "size" | "modified" | "none";
+
+export type FsListResult = {
+  path: string;
+  entries: FsEntry[];
+  truncated: boolean;
+  /** Entries the deny-list covers: counted, never named (R1). */
+  hidden: number;
+};
+
 export type Zone = {
   id: number;
   name: string;
@@ -210,6 +232,18 @@ export const ipc = {
   extractStatus: () => transport.invoke<ExtractStatus>("extract_status"),
 
   zones: () => transport.invoke<{ zones: Zone[] }>("zones"),
+
+  list: (
+    path: string,
+    options: { sort?: SortBy; reverse?: boolean; depth?: number; limit?: number } = {},
+  ) =>
+    transport.invoke<FsListResult>("list", {
+      path,
+      sort: options.sort ?? "name",
+      reverse: options.reverse ?? false,
+      depth: options.depth ?? 1,
+      limit: options.limit,
+    }),
 
   neighbors: (target: string | number, depth = 1, edgeTypes?: string[]) =>
     transport.invoke<NeighborsResult>("neighbors", { target, depth, edgeTypes }),

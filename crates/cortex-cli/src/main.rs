@@ -1087,7 +1087,14 @@ async fn run(args: Args) -> Result<()> {
             let result: FsListResult = client
                 .call(
                     method::FS_LIST,
-                    FsListParams { path, glob: None, depth: Some(depth), limit },
+                    FsListParams {
+                        path,
+                        glob: None,
+                        depth: Some(depth),
+                        limit,
+                        sort: Default::default(),
+                        reverse: false,
+                    },
                 )
                 .await?;
             if args.json {

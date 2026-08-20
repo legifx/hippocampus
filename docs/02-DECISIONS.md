@@ -923,3 +923,34 @@ Ctrl+Alt+Space hotkey-overlay-title="Hippocampus" { spawn "hippocampus" "--show"
 `--toggle` and `--hide` move the window. Somebody who wants it types one more word; a stray
 invocation — a script, a completion, a restart race — otherwise puts a search box in front of
 whoever is sitting at the machine.
+
+---
+
+### D43 — M6 is pulled ahead of M5, at the owner's request
+**Status:** ACCEPTED
+
+The order becomes M4 → **M6 (Human View)** → M5 (Memory) → M7 …
+
+**Why:** the owner used the overlay and said what it is: a search engine, not a file manager.
+That is exactly what M4 was specified to be — "a launcher, not a file manager" — but it means
+the thing cannot yet be used for the job its name promises, and M5 makes the search cleverer
+rather than making it a file manager. Asked which he wanted first, he chose the explorer.
+
+**The warning this overrides, stated rather than skipped.** M6's own text says *"Do not start it
+before M0–M5 are green"*, and gives the reason: "a file manager that cannot do the basics will
+not be used, no matter how good the brain is — and the basics are more work than the brain."
+That risk is unchanged by reordering. What reordering costs concretely:
+
+- **The context sidebar cannot show salience**, because the salience engine is M5. It shows
+  what the brain knows — edges, notes, episodes — and says nothing where it would otherwise say
+  "why this is salient".
+- **Nothing decays or is tiered**, so the cold-tier indicator has nothing to indicate yet.
+
+Neither blocks a file manager. Both are places where M6's surface will have a hole until M5
+lands, and the holes should be visible in the interface rather than filled with a plausible
+number.
+
+**Consequence for M6's Definition of Done:** §3 — one week of exclusive daily use — is unchanged
+and is still the real gate. §5 — all M4 performance gates still hold in the full application —
+is now the gate that keeps the reorder honest, because a file manager bolted onto a launcher is
+exactly where those budgets go.

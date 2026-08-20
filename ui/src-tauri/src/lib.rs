@@ -107,6 +107,35 @@ async fn node_get(state: tauri::State<'_, AppState>, path: String) -> Result<Val
         .await
 }
 
+/// A directory, ordered by the daemon.
+///
+/// The ordering argument goes through rather than being applied here: a file manager that
+/// sorted its own listing would be the frontend data processing D4 forbids, and two clients
+/// would eventually disagree about what "by name" means.
+#[tauri::command]
+async fn list(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    sort: Option<String>,
+    reverse: Option<bool>,
+    depth: Option<u32>,
+    limit: Option<usize>,
+) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(
+            cortex_rpc::protocol::method::FS_LIST,
+            json!({
+                "path": path,
+                "sort": sort.unwrap_or_else(|| "name".into()),
+                "reverse": reverse.unwrap_or(false),
+                "depth": depth.unwrap_or(1),
+                "limit": limit,
+            }),
+        )
+        .await
+}
+
 /// A capped slice of a file, for the preview pane.
 ///
 /// It goes through the daemon's `fs.read` rather than reading the file here, which looks like a
@@ -453,6 +482,7 @@ pub fn run() {
             neighbors,
             timeline,
             node_get,
+            list,
             read_text,
             preview,
             explain,

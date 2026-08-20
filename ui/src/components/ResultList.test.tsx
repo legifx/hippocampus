@@ -8,10 +8,16 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ResultList } from "./ResultList";
+import { rowFromHit, type Row } from "../row";
 import type { SearchHit } from "../ipc";
 
 const ROW = 28;
 const VIEWPORT = 560;
+
+/** The rows a search of `count` results would produce. */
+function sampleRows(count: number): Row[] {
+  return hits(count).map(rowFromHit);
+}
 
 function hits(count: number): SearchHit[] {
   return Array.from({ length: count }, (_, i) => ({
@@ -42,10 +48,10 @@ describe("ResultList", () => {
     withViewport(VIEWPORT);
     const { container } = render(
       <ResultList
-        hits={hits(10_000)}
+        rows={sampleRows(10_000)}
         selected={0}
         onSelect={() => {}}
-        onOpen={() => {}}
+        onActivate={() => {}}
         rowHeight={ROW}
         zoneHues={new Map([[1, 210]])}
         emptyMessage="nichts"
@@ -65,10 +71,10 @@ describe("ResultList", () => {
     withViewport(VIEWPORT);
     const { container } = render(
       <ResultList
-        hits={hits(50)}
+        rows={sampleRows(50)}
         selected={3}
         onSelect={() => {}}
-        onOpen={() => {}}
+        onActivate={() => {}}
         rowHeight={ROW}
         zoneHues={new Map()}
         emptyMessage="nichts"
@@ -84,13 +90,13 @@ describe("ResultList", () => {
     withViewport(VIEWPORT);
     // D4's second condition: the frontend does not sort. The input here is deliberately not in
     // any order a sort would produce, and it must come out unchanged.
-    const scrambled = [hits(3)[2]!, hits(3)[0]!, hits(3)[1]!];
+    const scrambled = [sampleRows(3)[2]!, sampleRows(3)[0]!, sampleRows(3)[1]!];
     const { container } = render(
       <ResultList
-        hits={scrambled}
+        rows={scrambled}
         selected={0}
         onSelect={() => {}}
-        onOpen={() => {}}
+        onActivate={() => {}}
         rowHeight={ROW}
         zoneHues={new Map()}
         emptyMessage="nichts"
@@ -103,13 +109,13 @@ describe("ResultList", () => {
 
   it("marks a cold result so the tiering model is legible", () => {
     withViewport(VIEWPORT);
-    const cold = hits(1).map((h) => ({ ...h, tier: "cold" }));
+    const cold = sampleRows(1).map((r) => ({ ...r, tier: "cold" }));
     render(
       <ResultList
-        hits={cold}
+        rows={cold}
         selected={0}
         onSelect={() => {}}
-        onOpen={() => {}}
+        onActivate={() => {}}
         rowHeight={ROW}
         zoneHues={new Map()}
         emptyMessage="nichts"
@@ -122,10 +128,10 @@ describe("ResultList", () => {
     withViewport(VIEWPORT);
     render(
       <ResultList
-        hits={[]}
+        rows={[]}
         selected={0}
         onSelect={() => {}}
-        onOpen={() => {}}
+        onActivate={() => {}}
         rowHeight={ROW}
         zoneHues={new Map()}
         emptyMessage="Nichts gefunden"
@@ -139,10 +145,10 @@ describe("ResultList", () => {
     const onSelect = vi.fn();
     const { container } = render(
       <ResultList
-        hits={hits(5)}
+        rows={sampleRows(5)}
         selected={0}
         onSelect={onSelect}
-        onOpen={() => {}}
+        onActivate={() => {}}
         rowHeight={ROW}
         zoneHues={new Map()}
         emptyMessage="nichts"

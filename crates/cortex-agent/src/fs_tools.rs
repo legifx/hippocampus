@@ -176,7 +176,7 @@ impl Surface<'_> {
             }
         }
 
-        entries.sort_by(|a, b| a.path.cmp(&b.path));
+        sort_entries(&mut entries, params.sort, params.reverse);
         self.auditor.allowed(
             self.now,
             tool,
@@ -878,6 +878,47 @@ fn kind_of(md: &std::fs::Metadata) -> FsKind {
         FsKind::Symlink
     } else {
         FsKind::Other
+    }
+}
+
+/// Order a listing.
+///
+/// Directories first in every order except `None`. That is a convention rather than a law, and
+/// it is the one every file manager follows, because a directory is a place and a file is a
+/// thing and mixing them by size answers a question nobody asked.
+fn sort_entries(entries: &mut [FsEntry], sort: SortBy, reverse: bool) {
+    let dirs_first = |a: &FsEntry, b: &FsEntry| {
+        let rank = |e: &FsEntry| u8::from(e.kind != FsKind::Dir);
+        rank(a).cmp(&rank(b))
+    };
+    // The tie-break is the name, always: two files of the same size must not swap places
+    // between two listings of the same directory.
+    let by_name = |a: &FsEntry, b: &FsEntry| {
+        let name = |e: &FsEntry| {
+            e.path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_lowercase())
+                .unwrap_or_default()
+        };
+        name(a).cmp(&name(b))
+    };
+
+    match sort {
+        SortBy::None => {}
+        SortBy::Name => entries.sort_by(|a, b| dirs_first(a, b).then_with(|| by_name(a, b))),
+        SortBy::Size => {
+            entries.sort_by(|a, b| dirs_first(a, b).then(b.size.cmp(&a.size)).then_with(|| by_name(a, b)))
+        }
+        SortBy::Modified => entries
+            .sort_by(|a, b| dirs_first(a, b).then(b.mtime.cmp(&a.mtime)).then_with(|| by_name(a, b))),
+    }
+
+    if reverse && sort != SortBy::None {
+        // Reversed within each group, so directories stay together at the top. A reversal that
+        // moved them to the bottom would be a different sort, not the same one backwards.
+        let split = entries.iter().position(|e| e.kind != FsKind::Dir).unwrap_or(entries.len());
+        entries[..split].reverse();
+        entries[split..].reverse();
     }
 }
 

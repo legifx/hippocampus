@@ -1,25 +1,27 @@
 /**
- * The result list: virtualised, unstaggered, and it does no thinking.
+ * The list: virtualised, unstaggered, and it does no thinking.
  *
- * Two rules from the design system are visible in the markup and both are performance rules
- * that override aesthetics (§8): no `box-shadow` on a row — selection is a background change
- * and a border — and no stagger when results update, because staggering two hundred rows costs
- * the entire keystroke budget.
+ * It renders [`Row`]s, which is what makes the directory and the search results the same list
+ * rather than two pages (M6). Two rules from the design system are visible in the markup and
+ * both are performance rules that override aesthetics (§8): no `box-shadow` on a row —
+ * selection is a background change and a border — and no stagger when the list updates, because
+ * staggering two hundred rows costs the entire keystroke budget.
  *
- * The rows are given in the order the daemon returned them. This component never sorts.
+ * The rows arrive in the order the daemon chose. This component never sorts.
  */
 
 import { memo, useLayoutEffect } from "react";
-import type { SearchHit } from "../ipc";
-import { elideStart, formatAge, formatSize, splitPath, tierLabel } from "../format";
+import { elideStart, formatAge, formatSize, tierLabel } from "../format";
 import { useVirtual } from "../hooks/useVirtual";
+import type { Row } from "../row";
 import { zoneBorder, zoneTint } from "../zone";
 
 export type ResultListProps = {
-  hits: SearchHit[];
+  rows: Row[];
   selected: number;
   onSelect: (index: number) => void;
-  onOpen: (hit: SearchHit) => void;
+  /** Enter, or a double click: descend into a directory, open a file. */
+  onActivate: (row: Row) => void;
   rowHeight: number;
   /** Hue per zone id, as the daemon derived it (D15). */
   zoneHues: Map<number, number>;
@@ -27,15 +29,15 @@ export type ResultListProps = {
 };
 
 export function ResultList({
-  hits,
+  rows,
   selected,
   onSelect,
-  onOpen,
+  onActivate,
   rowHeight,
   zoneHues,
   emptyMessage,
 }: ResultListProps) {
-  const virtual = useVirtual({ count: hits.length, rowHeight });
+  const virtual = useVirtual({ count: rows.length, rowHeight });
 
   // Keeping the selected row visible is the whole of keyboard navigation's feel, and it belongs
   // here rather than in the key handler: this is the component that knows where the row is.
@@ -46,7 +48,7 @@ export function ResultList({
     if (selected >= 0) scrollToIndex(selected);
   }, [selected, scrollToIndex]);
 
-  if (hits.length === 0) {
+  if (rows.length === 0) {
     return (
       <div className="hc-empty" role="status">
         {emptyMessage}
@@ -55,7 +57,7 @@ export function ResultList({
   }
 
   const { start, end, padTop, totalHeight } = virtual.window;
-  const visible = hits.slice(start, end);
+  const visible = rows.slice(start, end);
 
   return (
     <div
@@ -63,24 +65,24 @@ export function ResultList({
       ref={virtual.ref}
       onScroll={virtual.onScroll}
       role="listbox"
-      aria-label="Ergebnisse"
+      aria-label="Einträge"
       aria-activedescendant={`hc-row-${selected}`}
       tabIndex={-1}
     >
       <div style={{ height: totalHeight, position: "relative" }}>
         <div style={{ transform: `translateY(${padTop}px)` }}>
-          {visible.map((hit, offset) => {
+          {visible.map((row, offset) => {
             const index = start + offset;
             return (
-              <Row
-                key={hit.node_id}
+              <ListRow
+                key={row.key}
                 index={index}
-                hit={hit}
+                row={row}
                 selected={index === selected}
-                hue={hit.zone_id === null ? null : zoneHues.get(hit.zone_id) ?? null}
+                hue={row.zoneId === null ? null : zoneHues.get(row.zoneId) ?? null}
                 rowHeight={rowHeight}
                 onSelect={onSelect}
-                onOpen={onOpen}
+                onActivate={onActivate}
               />
             );
           })}
@@ -90,34 +92,33 @@ export function ResultList({
   );
 }
 
-type RowProps = {
+type ListRowProps = {
   index: number;
-  hit: SearchHit;
+  row: Row;
   selected: boolean;
   hue: number | null;
   rowHeight: number;
   onSelect: (index: number) => void;
-  onOpen: (hit: SearchHit) => void;
+  onActivate: (row: Row) => void;
 };
 
-const Row = memo(function Row({
+const ListRow = memo(function ListRow({
   index,
-  hit,
+  row,
   selected,
   hue,
   rowHeight,
   onSelect,
-  onOpen,
-}: RowProps) {
-  const { dir, name } = splitPath(hit.path);
-  const tier = tierLabel(hit.tier);
+  onActivate,
+}: ListRowProps) {
+  const tier = row.tier ? tierLabel(row.tier) : null;
 
   return (
     <div
       id={`hc-row-${index}`}
       role="option"
       aria-selected={selected}
-      className={selected ? "hc-row hc-row-selected" : "hc-row"}
+      className={rowClass(row, selected)}
       style={{
         height: rowHeight,
         borderLeftColor: zoneBorder(hue),
@@ -130,16 +131,31 @@ const Row = memo(function Row({
         e.preventDefault();
         onSelect(index);
       }}
-      onDoubleClick={() => onOpen(hit)}
+      onDoubleClick={() => onActivate(row)}
     >
-      <span className="hc-row-name hc-row-text">{name}</span>
-      <span className="hc-row-dir hc-meta">{elideStart(dir, 48)}</span>
-      {hit.snippet && <span className="hc-row-snippet hc-meta">{hit.snippet}</span>}
+      <span className="hc-row-name hc-row-text">
+        {row.isDir && <span className="hc-row-dirmark" aria-hidden="true" />}
+        {row.name}
+      </span>
+      {row.dir && <span className="hc-row-dir hc-meta">{elideStart(row.dir, 48)}</span>}
+      {row.snippet && <span className="hc-row-snippet hc-meta">{row.snippet}</span>}
       <span className="hc-row-meta hc-meta">
         {tier && <span className="hc-pill hc-tier">{tier}</span>}
-        <span className="hc-num">{formatSize(hit.size)}</span>
-        <span className="hc-num">{formatAge(hit.mtime)}</span>
+        {!row.indexed && (
+          <span className="hc-pill hc-unindexed" title="Der Index kennt diese Datei noch nicht">
+            neu
+          </span>
+        )}
+        <span className="hc-num">{row.isDir ? "" : formatSize(row.size)}</span>
+        <span className="hc-num">{formatAge(row.mtime)}</span>
       </span>
     </div>
   );
 });
+
+function rowClass(row: Row, selected: boolean): string {
+  const classes = ["hc-row"];
+  if (selected) classes.push("hc-row-selected");
+  if (row.isDir) classes.push("hc-row-directory");
+  return classes.join(" ");
+}

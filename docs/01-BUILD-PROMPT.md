@@ -60,8 +60,8 @@ The numbering differs from the source spec because the order does; the mapping i
 | **M2** | Meaning: extraction, chunking, embeddings, hybrid search | M2 |
 | **M3** | Agent Surface: MCP, policy engine, undo journal, audit | M4 |
 | **M4** | Search Overlay: first GUI, launcher-style, preview pane | (new — Option B core deliverable) |
-| **M5** | Memory: salience, decay, tiering, consolidation, local graph | M5 |
 | **M6** | Human View: the full file manager | M3 |
+| **M5** | Memory: salience, decay, tiering, consolidation, local graph | M5 |
 | **M7** | Federation: outbox protocol in Core, bridge in Extension | M6 |
 | **M8** | Agent View: brain-state visualisation | M7 |
 | **M9** | Release: packaging, onboarding, second-user install | M8 |
@@ -476,7 +476,10 @@ daily value, and it is the honest test of whether the daemon is good.
 
 **A file manager that cannot do the basics will not be used, no matter how good the brain is —
 and the basics are more work than the brain.** This is the largest scope risk in the project.
-Do not start it before M0–M5 are green.
+
+*This milestone originally read "do not start it before M0–M5 are green". It was pulled ahead of
+M5 at the owner's request after using M4 (D43). The scope risk is unchanged; what the reorder
+costs is written up there.*
 
 ### Scope — mandatory, none of it optional
 - Copy / move / rename with progress, cancellation and a conflict dialog

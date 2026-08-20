@@ -16,14 +16,17 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Ambient } from "./components/Ambient";
+import { Breadcrumb } from "./components/Breadcrumb";
 import { CommandPalette, type Command } from "./components/CommandPalette";
 import { ContextSidebar } from "./components/ContextSidebar";
 import { PreviewPane } from "./components/PreviewPane";
 import { ResultList } from "./components/ResultList";
+import { useBrowse } from "./hooks/useBrowse";
 import { throttled, useDeferred } from "./hooks/useDeferred";
 import { useSearch } from "./hooks/useSearch";
 import { useViewport } from "./hooks/useViewport";
-import { ipc, type SearchHit } from "./ipc";
+import { ipc, type SearchHit, type SortBy } from "./ipc";
+import { rowFromEntry, rowFromHit, type Row } from "./row";
 
 const ROW_HEIGHT_COMPACT = 28;
 const ROW_HEIGHT_COMFORTABLE = 34;
@@ -34,8 +37,31 @@ type Pane = "preview" | "context";
 /** The daemon needs to know somebody is here, not how fast they type. */
 const pingSometimes = throttled(5000);
 
+const SORT_LABELS: Record<SortBy, string> = {
+  name: "Name",
+  size: "Größe",
+  modified: "Datum",
+  none: "unsortiert",
+};
+
+/** What an empty list says. Which of the two modes is empty changes what is worth saying. */
+function emptyMessage(
+  searching: boolean,
+  loading: boolean,
+  browse: { loading: boolean; error: string | null },
+): string {
+  if (loading || browse.loading) return "…";
+  if (browse.error) return browse.error;
+  return searching ? "Nichts gefunden" : "Dieser Ordner ist leer";
+}
+
+/// Where browsing starts. The home directory is the only defensible guess before the daemon
+/// has been asked which roots it indexes, and it is what every file manager opens on.
+const START_PATH = "/";
+
 export function App() {
   const { state, run } = useSearch();
+  const browse = useBrowse(START_PATH);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
   const [pane, setPane] = useState<Pane>("preview");
@@ -53,7 +79,41 @@ export function App() {
   const showBoth = width >= 980;
 
   const rowHeight = comfortable ? ROW_HEIGHT_COMFORTABLE : ROW_HEIGHT_COMPACT;
-  const hit: SearchHit | null = state.hits[selected] ?? null;
+
+  // Two modes, one list: a directory when nothing is typed, results when something is (M6).
+  const searching = query.trim() !== "";
+  const rows: Row[] = useMemo(
+    () => (searching ? state.hits.map(rowFromHit) : browse.state.entries.map(rowFromEntry)),
+    [searching, state.hits, browse.state.entries],
+  );
+  const current: Row | null = rows[selected] ?? null;
+
+  // The panes want a `SearchHit`, which a directory entry is not. Only a search result carries
+  // a score and a tier, so a browsed row is given the shape with those left honestly empty.
+  const hit: SearchHit | null = useMemo(() => {
+    if (!current) return null;
+    const fromSearch = searching ? state.hits[selected] : undefined;
+    if (fromSearch) return fromSearch;
+    return {
+      node_id: -1,
+      path: current.path,
+      kind: current.isDir ? "dir" : "file",
+      size: current.size,
+      mtime: current.mtime,
+      zone_id: current.zoneId,
+      tier: current.tier ?? "stm",
+      score: {
+        path_rank: null,
+        lexical_rank: null,
+        vector_rank: null,
+        fused: 0,
+        salience_boost: 1,
+        rerank: null,
+        final_score: 0,
+      },
+      snippet: null,
+    };
+  }, [current, searching, state.hits, selected]);
 
   // The list follows the arrow key; the panes follow the list once it stops. Holding a key
   // otherwise fires one `brain.neighbors` and one preview render per row passed over, and
@@ -141,10 +201,24 @@ export function App() {
     [run],
   );
 
+  /// Enter, and a double click: descend into a directory, hand a file to the desktop.
+  const activate = useCallback(
+    (row: Row) => {
+      if (row.isDir) {
+        setQuery("");
+        run("");
+        setSelected(0);
+        browse.goTo(row.path);
+        return;
+      }
+      ipc.openPath(row.path).catch(() => {});
+    },
+    [browse, run],
+  );
+
   const openSelected = useCallback(() => {
-    if (!hit) return;
-    ipc.openPath(hit.path).catch(() => {});
-  }, [hit]);
+    if (current) activate(current);
+  }, [current, activate]);
 
   const commands: Command[] = useMemo(
     () => [
@@ -185,9 +259,18 @@ export function App() {
             .catch(() => {});
         },
       },
+      ...(searching
+        ? []
+        : (["name", "size", "modified"] as SortBy[]).map((order) => ({
+            id: `sort-${order}`,
+            label: `Sortieren: ${SORT_LABELS[order]}`,
+            binding: "—",
+            detail: browse.state.sort === order ? "nochmal wählen kehrt um" : undefined,
+            run: () => browse.orderBy(order),
+          }))),
       { id: "dismiss", label: "Schließen", binding: "Esc", run: () => ipc.dismiss().catch(() => {}) },
     ],
-    [openSelected, hit, pane, showBoth, comfortable],
+    [openSelected, hit, pane, showBoth, comfortable, searching, browse],
   );
 
   const onKeyDown = useCallback(
@@ -209,7 +292,7 @@ export function App() {
       switch (event.key) {
         case "ArrowDown":
           event.preventDefault();
-          setSelected((i) => Math.min(i + 1, Math.max(state.hits.length - 1, 0)));
+          setSelected((i) => Math.min(i + 1, Math.max(rows.length - 1, 0)));
           break;
         case "ArrowUp":
           event.preventDefault();
@@ -217,7 +300,7 @@ export function App() {
           break;
         case "PageDown":
           event.preventDefault();
-          setSelected((i) => Math.min(i + 10, Math.max(state.hits.length - 1, 0)));
+          setSelected((i) => Math.min(i + 10, Math.max(rows.length - 1, 0)));
           break;
         case "PageUp":
           event.preventDefault();
@@ -232,7 +315,7 @@ export function App() {
         case "End":
           if (event.ctrlKey) {
             event.preventDefault();
-            setSelected(Math.max(state.hits.length - 1, 0));
+            setSelected(Math.max(rows.length - 1, 0));
           }
           break;
         case "Enter":
@@ -242,6 +325,28 @@ export function App() {
         case "Tab":
           event.preventDefault();
           setPane((p) => (p === "preview" ? "context" : "preview"));
+          break;
+        case "Backspace":
+          // Only when there is nothing to delete, so it never eats a character somebody meant
+          // to remove. With an empty input it is the obvious "up one level".
+          if (query === "" && !searching) {
+            event.preventDefault();
+            setSelected(0);
+            browse.goUp();
+          }
+          break;
+        case "ArrowLeft":
+          if (event.altKey) {
+            event.preventDefault();
+            setSelected(0);
+            browse.goBack();
+          }
+          break;
+        case "ArrowRight":
+          if (event.altKey && current?.isDir) {
+            event.preventDefault();
+            activate(current);
+          }
           break;
         case "c":
           if (event.ctrlKey && hit) {
@@ -257,7 +362,7 @@ export function App() {
           break;
       }
     },
-    [paletteOpen, query, onQuery, state.hits.length, openSelected, hit],
+    [paletteOpen, query, onQuery, rows.length, openSelected, current, activate, browse, searching],
   );
 
   return (
@@ -281,14 +386,24 @@ export function App() {
           aria-label="Suche"
         />
         <span className="hc-meta hc-status">
-          {state.error ? (
-            <span className="hc-error">{state.error}</span>
-          ) : (
+          {state.error || browse.state.error ? (
+            <span className="hc-error">{state.error ?? browse.state.error}</span>
+          ) : searching ? (
             <>
-              <span className="hc-num">{state.hits.length}</span>
+              <span className="hc-num">{rows.length}</span>
               <span className="hc-num">{state.elapsedMs} ms</span>
               <span>{state.mode}</span>
               {state.refining && <span className="hc-faint">…</span>}
+            </>
+          ) : (
+            <>
+              <span className="hc-num">{rows.length}</span>
+              <span>{browse.state.sort}</span>
+              {browse.state.hidden > 0 && (
+                <span className="hc-faint" title="Von der Deny-Liste verdeckt">
+                  +{browse.state.hidden}
+                </span>
+              )}
             </>
           )}
         </span>
@@ -301,21 +416,27 @@ export function App() {
       )}
 
       <main className="hc-body">
-        <ResultList
-          hits={state.hits}
-          selected={selected}
-          onSelect={setSelected}
-          onOpen={(h) => ipc.openPath(h.path).catch(() => {})}
-          rowHeight={rowHeight}
-          zoneHues={zoneHues}
-          emptyMessage={
-            state.loading
-              ? "…"
-              : query.trim() === ""
-                ? "Tippen, um zu suchen"
-                : "Nichts gefunden"
-          }
-        />
+        <div className="hc-column">
+          {!searching && (
+            <Breadcrumb
+              path={browse.state.path}
+              onNavigate={(next) => {
+                setSelected(0);
+                browse.goTo(next);
+              }}
+              hue={null}
+            />
+          )}
+          <ResultList
+            rows={rows}
+            selected={selected}
+            onSelect={setSelected}
+            onActivate={activate}
+            rowHeight={rowHeight}
+            zoneHues={zoneHues}
+            emptyMessage={emptyMessage(searching, state.loading, browse.state)}
+          />
+        </div>
 
         {showPreview && (showBoth || pane === "preview") && <PreviewPane hit={settled} />}
         {showContext && <ContextSidebar hit={settled} />}

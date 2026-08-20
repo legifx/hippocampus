@@ -123,6 +123,61 @@
   grid-template-columns: minmax(0, 1fr) minmax(0, var(--hc-preview-max)) minmax(0, 320px);
 }
 
+/* ------------------------------------------------------------ breadcrumb */
+
+.hc-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.hc-crumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 2px;
+  padding: 6px 10px 4px;
+  overflow: hidden;
+  font-size: 12.5px;
+  color: var(--hc-text-dim);
+}
+
+.hc-crumb-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.hc-crumb {
+  background: none;
+  border: none;
+  padding: 1px 5px;
+  border-radius: 7px;
+  color: inherit;
+  font: inherit;
+  cursor: default;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 22ch;
+}
+
+.hc-crumb:hover {
+  background: var(--hc-surface-hi);
+  color: var(--hc-text);
+}
+
+.hc-crumb[aria-current="page"] {
+  color: var(--hc-text);
+  font-weight: 550;
+}
+
+.hc-crumb-sep {
+  color: var(--hc-text-faint);
+}
+
 /* ---------------------------------------------------------------- list */
 
 .hc-list {
@@ -204,9 +259,28 @@
   display: none;
 }
 
-.hc-tier {
+.hc-tier,
+.hc-unindexed {
   color: var(--hc-text-faint);
   border-color: var(--hc-stroke);
+}
+
+/* A directory reads as a place rather than a thing: slightly brighter, and marked. Colour is
+   never the only signal (D15), so there is a shape as well as a weight. */
+.hc-row-directory .hc-row-name {
+  color: var(--hc-text);
+  font-weight: 560;
+}
+
+.hc-row-dirmark {
+  display: inline-block;
+  width: 0;
+  height: 0;
+  margin-right: 7px;
+  vertical-align: 1px;
+  border-left: 5px solid var(--hc-text-faint);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
 }
 
 .hc-empty,

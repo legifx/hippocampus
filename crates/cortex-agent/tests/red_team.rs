@@ -397,6 +397,8 @@ fn listing_hides_denied_entries_and_counts_them() {
             glob: None,
             depth: None,
             limit: None,
+            sort: Default::default(),
+            reverse: false,
         })
         .unwrap();
 
@@ -421,4 +423,100 @@ fn every_refusal_is_audited_even_when_nothing_else_happened() {
 
     assert_eq!(f.store.audit_count().unwrap(), before + 1);
     assert!(f.refusals()[0].contains("not_absolute"));
+}
+
+// ---------------------------------------------------------------------------
+// Browsing. M6 turns the launcher into a file manager, and the order a listing comes back in
+// is the daemon's decision — a frontend that sorted would be doing the data processing D4
+// forbids, and two clients would eventually disagree about what "by name" means.
+// ---------------------------------------------------------------------------
+
+fn listing(f: &Fixture, sort: SortBy, reverse: bool) -> Vec<String> {
+    f.surface(true)
+        .list(&FsListParams {
+            path: f.allowed.clone(),
+            glob: None,
+            depth: None,
+            limit: None,
+            sort,
+            reverse,
+        })
+        .unwrap()
+        .entries
+        .iter()
+        .map(|e| e.path.file_name().unwrap().to_string_lossy().to_string())
+        .collect()
+}
+
+/// A directory with a shape that tells the orders apart: two directories, three files whose
+/// name, size and age each imply a different sequence.
+fn browsable() -> Fixture {
+    let f = Fixture::new();
+    std::fs::create_dir_all(f.allowed.join("Zebra")).unwrap();
+    std::fs::create_dir_all(f.allowed.join("alpha")).unwrap();
+    std::fs::write(f.allowed.join("big.bin"), vec![0u8; 3000]).unwrap();
+    std::fs::write(f.allowed.join("Middle.txt"), vec![0u8; 2000]).unwrap();
+    std::fs::write(f.allowed.join("tiny.md"), b"x").unwrap();
+
+    // Ages, so `modified` has something to order by. Newest is the smallest file.
+    let epoch = std::time::UNIX_EPOCH;
+    for (name, secs) in [("big.bin", 1_000), ("Middle.txt", 2_000), ("tiny.md", 3_000)] {
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(f.allowed.join(name))
+            .unwrap();
+        file.set_modified(epoch + std::time::Duration::from_secs(secs)).unwrap();
+    }
+    f
+}
+
+#[test]
+fn a_listing_is_ordered_by_name_with_directories_first() {
+    let f = browsable();
+    assert_eq!(
+        listing(&f, SortBy::Name, false),
+        // Case-insensitive: `Zebra` after `alpha`, not before it because of its capital.
+        vec!["alpha", "Zebra", "big.bin", "Middle.txt", "tiny.md"]
+    );
+}
+
+#[test]
+fn ordering_by_size_and_by_age_keeps_directories_at_the_top() {
+    let f = browsable();
+    assert_eq!(
+        listing(&f, SortBy::Size, false),
+        vec!["alpha", "Zebra", "big.bin", "Middle.txt", "tiny.md"],
+        "largest first, and a directory is a place rather than a size"
+    );
+    assert_eq!(
+        listing(&f, SortBy::Modified, false),
+        vec!["alpha", "Zebra", "tiny.md", "Middle.txt", "big.bin"],
+        "newest first — 'sorted by date' has only ever meant that"
+    );
+}
+
+#[test]
+fn reversing_keeps_the_directories_together() {
+    let f = browsable();
+    let reversed = listing(&f, SortBy::Name, true);
+    assert_eq!(
+        reversed,
+        vec!["Zebra", "alpha", "tiny.md", "Middle.txt", "big.bin"],
+        "a reversal that moved the directories to the bottom would be a different sort"
+    );
+}
+
+#[test]
+fn the_order_is_stable_across_two_identical_listings() {
+    let f = browsable();
+    // Two files of the same size must not swap places between two listings of one directory.
+    std::fs::write(f.allowed.join("same-a.bin"), vec![0u8; 3000]).unwrap();
+    std::fs::write(f.allowed.join("same-b.bin"), vec![0u8; 3000]).unwrap();
+
+    let first = listing(&f, SortBy::Size, false);
+    let second = listing(&f, SortBy::Size, false);
+    assert_eq!(first, second);
+    let a = first.iter().position(|n| n == "same-a.bin").unwrap();
+    let b = first.iter().position(|n| n == "same-b.bin").unwrap();
+    assert!(a < b, "the tie-break is the name, always");
 }

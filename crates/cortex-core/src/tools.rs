@@ -24,6 +24,36 @@ pub struct FsListParams {
     pub depth: Option<u32>,
     #[serde(default)]
     pub limit: Option<usize>,
+    /// How to order the answer.
+    ///
+    /// Here rather than in the client, and that is D4's second condition rather than a
+    /// preference: a file manager sorting its own listing is a file manager doing data
+    /// processing, and two clients would eventually disagree about what "by name" means. The
+    /// daemon decides once, and every surface shows the same order.
+    #[serde(default)]
+    pub sort: SortBy,
+    #[serde(default)]
+    pub reverse: bool,
+}
+
+/// The orders a listing can be asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SortBy {
+    /// Case-insensitive by file name, with directories first. What a file manager opens with.
+    Name,
+    Size,
+    /// Most recently modified first — the one order where the default is descending, because
+    /// "sorted by date" has only ever meant "newest at the top".
+    Modified,
+    /// The order the filesystem gave them. Cheap, and honest about being arbitrary.
+    None,
+}
+
+impl Default for SortBy {
+    fn default() -> Self {
+        SortBy::Name
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

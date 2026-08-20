@@ -9,10 +9,46 @@ If you finish work without editing this file, the next agent starts from nothing
 
 | | |
 |---|---|
-| **Active milestone** | M4 — Search Overlay |
-| **Status** | **Complete.** All eight Definition-of-Done items are met. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 652 tests. |
+| **Active milestone** | M6 — Human View (pulled ahead of M5 at the owner's request, D43) |
+| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 652 tests. |
 | **Last updated** | 2026-08-18 |
 | **Blocked on** | nothing |
+
+## Where M6 stands
+
+**Browsing works.** An empty query shows a directory; typing replaces the list with results and
+clearing brings the directory back. That is M6's shape — "search as an overlay, not a separate
+page" — and it is one list rather than two pages, which is why the row renderer does not know
+which mode produced its rows.
+
+- Enter descends into a directory, Backspace goes up (only when there is nothing to delete),
+  Alt+Left goes back through history, and the breadcrumb segments are clickable.
+- **Ordering is the daemon's**: `fs.list` gained `sort` (name, size, modified, none) and
+  `reverse`, with directories first in every order and the file name as the tie-break so two
+  listings of one directory never disagree. A frontend that sorted would be the data processing
+  D4 forbids.
+- Entries the deny-list covers are counted in the status line and never named (R1).
+- A file the index has not seen yet is marked `neu`, so "not there" and "not indexed" look
+  different.
+
+Nine browser tests cover it, including the 400 px case, because the breadcrumb is the new thing
+that could push the window sideways.
+
+### What M6 still needs — all of the mandatory list except listing
+
+1. **Copy, move and rename** with progress, cancellation and a conflict dialog. The daemon has
+   `fs.move` but no copy at all, and no long-running operation with progress.
+2. **The XDG Trash specification.** `fs.trash` currently moves into the state directory, which
+   is right for the undo journal and wrong for a file manager: a trashed file must land in
+   `~/.local/share/Trash` with a `.trashinfo`, where every other tool can see it.
+3. **Permissions, ownership and symlinks** displayed.
+4. **Mounts via udisks2**, `xdg-mime` for "open with", Wayland drag and drop, clipboard.
+5. **Archives** — extract zip and tar at minimum.
+6. **Network locations**, which may be staged.
+
+And two holes the reorder creates, which should stay visible rather than be filled with a
+plausible number (D43): the sidebar cannot show salience, and the cold-tier indicator has
+nothing to indicate, because both are M5.
 
 ## Where M4 stands
 

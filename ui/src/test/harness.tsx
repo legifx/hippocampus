@@ -45,6 +45,31 @@ setTransport({
         // thing that decides which rows match.
         return { hits: query ? ALL : [], mode: "auto", elapsed_ms: 3, partial: false } as T;
       }
+      case "list": {
+        // A directory the layout tests can navigate: two folders, three files, and names long
+        // enough to threaten a 400 px column.
+        const at = String(args?.path ?? "/");
+        const base = at === "/" ? "" : at.replace(/\/$/, "");
+        const entry = (name: string, kind: string, size: number, i: number) => ({
+          path: `${base}/${name}`,
+          kind,
+          size,
+          mtime: 1_700_000_000 - i * 86_400,
+          indexed: i % 3 !== 0,
+        });
+        return {
+          path: at,
+          entries: [
+            entry("a-rather-long-directory-name-for-testing", "dir", 4096, 0),
+            entry("zweiter-ordner", "dir", 4096, 1),
+            entry("notes-with-a-long-enough-name-to-elide.md", "file", 4096, 2),
+            entry("bild.png", "file", 2_400_000, 3),
+            entry("kurz.txt", "file", 12, 4),
+          ],
+          truncated: false,
+          hidden: 1,
+        } as T;
+      }
       case "zones":
         return { zones: [{ id: 1, name: "Projects", root: "/home/user/Projects", hue: 210, nodes: 9 }] } as T;
       case "extract_status":

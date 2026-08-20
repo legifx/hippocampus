@@ -171,7 +171,11 @@ test.describe("everything is reachable from the keyboard", () => {
     // Two meanings, in the order a person expects: clear what I typed, then close.
     await page.keyboard.press("Escape");
     await expect(page.getByLabel("Suche")).toHaveValue("");
-    await expect(page.locator(".hc-row")).toHaveCount(0);
+
+    // Clearing does not empty the window — it goes back to the directory. Search is an overlay
+    // over the list rather than a page of its own (M6), so there is always something to look at.
+    await expect(page.locator(".hc-crumbs")).toBeVisible();
+    await expect(page.locator(".hc-row").first()).toBeVisible();
   });
 
   test("a pointer selection does not cost the caret", async ({ page }) => {
@@ -218,7 +222,8 @@ test.describe("the overlay is resident", () => {
     });
 
     await expect(page.getByLabel("Suche")).toHaveValue("");
-    await expect(page.locator(".hc-row")).toHaveCount(0);
+    // Back to browsing, not to an empty window.
+    await expect(page.locator(".hc-crumbs")).toBeVisible();
 
     // And it is ready to type into, without a click.
     await page.keyboard.type("neu");
