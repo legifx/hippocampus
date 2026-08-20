@@ -1207,3 +1207,72 @@ and Delete ask the daemon for nothing while it is on screen.
 
 **Getting back:** the breadcrumb starts with "Orte" from anywhere, and Backspace at `/` goes
 there — above the root is not "nowhere", it is where everything else is reachable from.
+
+---
+
+### D53 — The store keeps several connections, because WAL only helps if it does
+**Status:** ACCEPTED. Corrects an error present since M1.
+
+`Store` held one `Mutex<Connection>`. It now holds a small pool — up to four for a file-backed
+database, exactly one for an in-memory one.
+
+**Why:** the pragmas ask for WAL, and the comment above them says why: *"WAL lets readers run
+while a writer is active, which is the entire access pattern here: one ingest writer, many short
+query readers."* That is correct and the code did the opposite of it. A single connection behind
+a mutex serialises every reader behind the writer, which is precisely what WAL exists to avoid.
+The comment described the intended design; nothing implemented it.
+
+**What it cost**, from a week of the journal on a real machine: searches at up to **932 ms**
+against an 80 ms budget, `extract.status` — a heartbeat — at up to **988 ms**, and
+`activity.ping` at 933 ms. None of those calls is slow. They were waiting.
+
+**Why the benchmarks never saw it:** every gate in `bench/latency` measured a store that nothing
+else was touching, and the daemon is never in that state. A gate has been added that measures a
+search *while a writer works*, which is the only condition that matters.
+
+**Four, and 16 MiB of page cache each.** SQLite's page cache is per connection, so four at
+16 MiB come to the 64 MiB the single connection used to have to itself. Measured: the cache size
+makes no difference here at all — 5.8 ms at 64 MiB against 5.9 ms at 16 MiB, because the
+operating system's page cache is doing the work — so the smaller figure costs nothing and keeps
+the daemon's footprint where it was.
+
+**An in-memory store gets exactly one.** `:memory:` is not a name that can be opened twice: a
+second connection would be a second, empty database. Callers therefore serialise there exactly
+as they used to everywhere, which is why the test suite is unaffected.
+
+**Do not take two handles on one thread.** `conn()` blocks when all are out, so nesting
+deadlocks at capacity — and would be wrong before then, because the second handle is a different
+connection and would not see the first one's open transaction. Nothing nests today: under the
+old single mutex it would have hung immediately.
+
+---
+
+### D54 — A hidden window runs nothing
+**Status:** ACCEPTED.
+
+The shell emits `window:visible` on every show and hide. The frontend stops its polling and all
+CSS animation while the answer is false.
+
+**Why:** hiding a GTK window does not suspend the page inside it. WebKit keeps running the
+document, so an infinite animation animates forever and a `setInterval` fires forever — and the
+overlay is *resident*, so "forever" means from login to logout, for a window nobody can see.
+
+**What it cost, measured:** with `WEBKIT_DISABLE_DMABUF_RENDERER=1` set — which drops WebKit to
+software compositing — the breath layer alone held **99% of a CPU core with the window hidden**.
+That is the whole of "everything feels slow": a resident overlay eating a core makes every other
+application on the machine slower, including itself when it finally appears.
+
+**That variable is also gone** (see the unit file). It was set against a real WebKitGTK/NVIDIA
+pairing whose symptom was glitches, with a comment claiming it "costs nothing on hardware where
+it works". It cost a core. If the glitches come back on some machine, the override is documented
+in the unit and the visibility rule above means the cost is at least only paid while somebody is
+looking.
+
+**`document.visibilityState` is not used**, because it does not change: the document is visible
+as far as WebKit is concerned whatever the window manager did with the window around it. The
+shell knows, so the shell says.
+
+**The heartbeat poll was also wrong on its own terms.** It ran every four seconds and its comment
+said it "costs nothing". It is two aggregate queries over a hundred thousand rows each, and it
+existed to set the period of an animation. It now runs every eight seconds, only while the
+window is on screen, and the query behind it has an index (migration 5): 26.8 ms to 4.8 ms.

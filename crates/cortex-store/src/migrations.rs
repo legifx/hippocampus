@@ -35,6 +35,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "annotations",
         sql: include_str!("schema/0004_annotations.sql"),
     },
+    Migration {
+        version: 5,
+        name: "extract_progress_index",
+        sql: include_str!("schema/0005_extract_progress_index.sql"),
+    },
 ];
 
 /// The schema version this build expects.

@@ -22,6 +22,7 @@ import { ConflictDialog } from "./components/ConflictDialog";
 import { ContextSidebar } from "./components/ContextSidebar";
 import { PlacesView, useFlatPlaces } from "./components/PlacesView";
 import { usePlaces, PLACES } from "./hooks/usePlaces";
+import { useVisibility } from "./hooks/useVisibility";
 import { PreviewPane } from "./components/PreviewPane";
 import { ResultList } from "./components/ResultList";
 import { useBrowse } from "./hooks/useBrowse";
@@ -126,6 +127,9 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
 
   // Two modes, one list: a directory when nothing is typed, results when something is (M6).
   const searching = query.trim() !== "";
+  // Nothing periodic runs while nobody is looking. See `useVisibility` for what that was
+  // costing before it was measured.
+  const visible = useVisibility();
 
   // Three screens, one window: the places, a directory, or results. Typing always wins — that
   // is M6's shape, "search as an overlay, not a separate page".
@@ -238,8 +242,24 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
       })
       .catch(() => {});
 
-    // The breath layer's period is the indexing load (design system §6). Polling it once every
-    // few seconds is enough for a heartbeat and costs nothing.
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+
+
+  // The indexing heartbeat, on its own timer, alive only while the window is.
+  //
+  // This used to run every four seconds, round the clock. It is two full table scans in the
+  // daemon — over a hundred thousand nodes and as many chunks — and the overlay is resident,
+  // so it was running for a hidden window, to set the period of an animation nobody could see.
+  // The journal has it at up to 988 ms per call while the indexer was writing, blocking every
+  // other call behind it on the same socket.
+  useEffect(() => {
+    if (!visible) return;
+    let disposed = false;
+
     const poll = () => {
       ipc
         .extractStatus()
@@ -251,13 +271,13 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
         .catch(() => {});
     };
     poll();
-    const timer = setInterval(poll, 4000);
+    const timer = setInterval(poll, 8000);
 
     return () => {
       disposed = true;
       clearInterval(timer);
     };
-  }, []);
+  }, [visible]);
 
   const onQuery = useCallback(
     (next: string) => {
@@ -581,6 +601,10 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
       // let go of. An overlay would cover the breadcrumb, which is the one thing a person needs
       // to read at that moment — where it would land.
       data-dropping={operations.dragging ? "yes" : undefined}
+      // Nothing moves while nobody is looking. A hidden GTK window keeps its page running, so
+      // an infinite animation is an infinite animation — the CSS below stops them all rather
+      // than trusting each one to know.
+      data-visible={visible ? "yes" : "no"}
       onKeyDown={onKeyDown}
     >
       <Ambient load={load} />

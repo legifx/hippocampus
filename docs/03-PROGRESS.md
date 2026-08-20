@@ -10,7 +10,7 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | M6 — Human View (pulled ahead of M5 at the owner's request, D43) |
-| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 853 tests. |
+| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 856 tests. |
 | **Last updated** | 2026-08-20 |
 | **Blocked on** | nothing |
 
@@ -54,6 +54,39 @@ systemd — a core dump in the journal at every login, for a race. It now waits 
 and a run that waited reports `comparable=false` instead of a budget verdict, because that run
 measured two services racing rather than this one starting (D51). §1 re-measured after the
 change: 277 ms median, ten of ten inside the budget.
+
+**The lag had one big cause and two small ones, and all of them are measured.**
+
+The owner reported that everything felt slow. The journal answered it, because a previous
+session had put the logging there for exactly this:
+
+| call | n | avg | max |
+|---|---|---|---|
+| `extract.status` | 155 | 142 ms | **988 ms** |
+| `search` | 5 | 417 ms | **932 ms** |
+| `activity.ping` | 2 | 582 ms | 933 ms |
+
+None of those calls is slow. They were waiting. What was found, in order of size:
+
+1. **The overlay was burning a whole CPU core while hidden.** `WEBKIT_DISABLE_DMABUF_RENDERER=1`
+   in the service unit drops WebKit to software compositing, and the breath layer then repaints
+   a full-window gradient on the CPU at sixty frames a second — for a *resident* window that is
+   off screen almost all of the time. Measured: 99% of a core hidden, 0% with the renderer
+   enabled. The variable is gone, and the window now stops every animation and every poll while
+   it is not on screen (D54).
+2. **One SQLite connection behind one mutex** (D53), so every reader waited for the indexer,
+   which is exactly what the WAL pragma three lines above it exists to prevent. The store now
+   keeps a small pool. A new gate in `bench/latency` measures a search *while a writer works*,
+   which no gate did before — every other one measures a store nothing else is touching, and the
+   daemon is never in that state.
+3. **A four-second poll, round the clock, for an animation nobody was looking at**, whose query
+   scanned a hundred thousand rows because the only index on `extract_state` was a partial one
+   built for a different question. Migration 5 adds the right one: 26.8 ms to 4.8 ms.
+
+**What is not fixed and is known.** The RPC read loop handles one request at a time per
+connection, so a slow call still blocks whatever is queued behind it on the same socket. With
+the three above fixed there is no longer a call slow enough for that to show, so it stays as a
+noted limit rather than a speculative rewrite of request handling.
 
 **It opens somewhere a person recognises.** The first screen is a list of places, not `/`:
 Persönlich (home and the XDG user folders that exist, plus the trash), Lesezeichen (read from

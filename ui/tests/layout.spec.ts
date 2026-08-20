@@ -7,7 +7,7 @@
  * appears at that size.
  */
 
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 /** The widths §4 names, plus the minimum the window config allows. */
 const WIDTHS = [400, 600, 900, 1400];
@@ -134,5 +134,69 @@ test.describe("the DOM stays bounded", () => {
       () => (document.querySelector(".hc-list > div") as HTMLElement).offsetHeight,
     );
     expect(height).toBe(10_000 * 28);
+  });
+});
+
+/**
+ * A resident window spends most of its life hidden, and a hidden GTK window is not a suspended
+ * page: WebKit keeps running the document. Whatever this interface does periodically, it does
+ * forever, for nobody — which measured, on this machine, as 99% of a CPU core with nothing on
+ * screen.
+ */
+test.describe("while nobody is looking", () => {
+  async function conceal(page: Page) {
+    await page.evaluate(() => {
+      (window as unknown as { __hcEmit?: (e: string, p?: unknown) => void }).__hcEmit?.(
+        "window:visible",
+        false,
+      );
+    });
+  }
+
+  test("nothing animates once the window is put away", async ({ page }) => {
+    await page.setViewportSize({ width: 1200, height: 700 });
+    await page.goto("/harness.html?at=/");
+    await page.waitForSelector(".hc-row");
+
+    const breath = page.locator(".hc-breath");
+    await expect
+      .poll(() => breath.evaluate((el) => getComputedStyle(el).animationName))
+      .toBe("hc-breathe");
+
+    await conceal(page);
+    await expect(page.locator(".hc-overlay")).toHaveAttribute("data-visible", "no");
+    await expect
+      .poll(() => breath.evaluate((el) => getComputedStyle(el).animationName))
+      .toBe("none");
+  });
+
+  test("the daemon is left alone until the window comes back", async ({ page }) => {
+    await page.setViewportSize({ width: 1200, height: 700 });
+    await page.goto("/harness.html?at=/");
+    await page.waitForSelector(".hc-row");
+    await conceal(page);
+
+    const asked = () =>
+      page.evaluate(
+        () =>
+          ((window as unknown as { __hcCalls?: { command: string }[] }).__hcCalls ?? []).filter(
+            (c) => c.command === "extract_status",
+          ).length,
+      );
+    const before = await asked();
+
+    // Longer than the poll's own interval would be if it were still running.
+    await page.waitForTimeout(1200);
+    expect(await asked()).toBe(before);
+
+    // And it resumes when the window does — a heartbeat that never came back would be worse
+    // than one that costs something.
+    await page.evaluate(() => {
+      (window as unknown as { __hcEmit?: (e: string, p?: unknown) => void }).__hcEmit?.(
+        "window:visible",
+        true,
+      );
+    });
+    await expect.poll(asked).toBeGreaterThan(before);
   });
 });

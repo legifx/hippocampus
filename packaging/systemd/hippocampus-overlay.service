@@ -11,11 +11,24 @@ Wants=hippocampus-cortexd.service
 
 [Service]
 Type=simple
-# WebKitGTK's DMABUF renderer and the proprietary NVIDIA driver are a known bad pair: the
-# symptoms are glitches, black areas and rendering that falls back to something very slow.
-# Turning it off costs nothing on hardware where it works and fixes the machines where it does
-# not. Remove this line and restart to compare.
-Environment=WEBKIT_DISABLE_DMABUF_RENDERER=1
+# `WEBKIT_DISABLE_DMABUF_RENDERER=1` used to be set here, against a known bad pairing of
+# WebKitGTK's DMABUF renderer with the proprietary NVIDIA driver — glitches and black areas.
+#
+# It is gone because "costs nothing on hardware where it works" was wrong, and expensively so.
+# Disabling that renderer drops WebKit to software compositing, and the breath layer — one
+# full-window gradient whose opacity rises and falls — then repaints on the CPU at sixty frames
+# a second. Measured on this machine: **99% of a core, continuously, with the window hidden.**
+# A resident overlay that burns a core while nobody is looking at it makes the whole desktop
+# feel slow, which is exactly the complaint that led to measuring it.
+#
+# If your driver still produces glitches or black areas in the overlay, put it back:
+#
+#   systemctl --user edit hippocampus-overlay.service
+#   [Service]
+#   Environment=WEBKIT_DISABLE_DMABUF_RENDERER=1
+#
+# and expect the cost above. The frontend stops animating while the window is hidden, so the
+# cost is then paid only while it is on screen — but it is still paid.
 # Resident and hidden. The window is summoned with the hotkey; starting it visible at login
 # would put a search box in front of somebody who has not asked for one.
 ExecStart=%h/.local/bin/hippocampus

@@ -196,6 +196,83 @@ fn main() {
             detail: format!("P50 {b50:?}, P95 {b95:?}, P99 {b99:?}"),
         });
 
+        // ---- Searching while the daemon writes ------------------------------------------
+        //
+        // The gate every other one here was missing. Each measurement above is taken against a
+        // store that nothing else is touching, and the daemon is *never* in that state: it
+        // indexes, extracts and embeds in the background, and the search a person is waiting
+        // for happens at the same time as all of it.
+        //
+        // Which is exactly what was going wrong. The journal from a week of real use shows
+        // searches at 932 ms against an 80 ms budget, and `extract.status` — a status call, a
+        // heartbeat, nothing — at 988 ms. Neither is slow on its own; they were waiting.
+        {
+            use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+            let stop = AtomicBool::new(false);
+            let batches = AtomicU64::new(0);
+
+            std::thread::scope(|scope| {
+                // A writer doing what the indexer does: batches of upserts, in a transaction,
+                // one after another. Not a synthetic hammer — this is the shape of the work
+                // that is running whenever anything on the machine changes.
+                scope.spawn(|| {
+                    let mut generation = 0i64;
+                    while !stop.load(Ordering::Relaxed) {
+                        generation += 1;
+                        // A duty cycle, not a hammer. The indexer spends most of its time
+                        // reading files, extracting text and embedding it; the database is the
+                        // punctuation. A writer that never pauses starves the reader completely
+                        // — which the first version of this gate demonstrated by not finishing
+                        // in half an hour — and measures a situation the daemon is never in.
+                        std::thread::sleep(Duration::from_millis(10));
+                        let _ = store.batch(|tx| {
+                            for (i, path) in paths.iter().take(256).enumerate() {
+                                tx.upsert_node(
+                                    &NodeUpsert {
+                                        kind: cortex_core::model::NodeKind::File,
+                                        path: PathBuf::from(path),
+                                        parent_id: None,
+                                        mime: None,
+                                        size: i as i64,
+                                        mtime: generation,
+                                        ctime: 0,
+                                        inode: 0,
+                                        dev: 0,
+                                        zone_id: None,
+                                    },
+                                    generation,
+                                )?;
+                            }
+                            Ok(())
+                        });
+                        batches.fetch_add(1, Ordering::Relaxed);
+                    }
+                });
+
+                let (w50, w95, w99) = measure(&content_queries, args.reps.min(60), |q| {
+                    let expression = lexical::match_expression(q, false).unwrap();
+                    let hits = store.search_chunks(&expression, 100).unwrap();
+                    std::hint::black_box(hits.len());
+                });
+                stop.store(true, Ordering::Relaxed);
+
+                gates.push(Gate {
+                    name: "BM25 top-100, while the indexer writes",
+                    // The same budget as the quiet case. A reader that has to wait for a writer
+                    // is the thing being gated against, and "slower because something else is
+                    // happening" is precisely the experience this is meant to forbid: WAL exists
+                    // so that readers do not wait, and the pragmas already ask for it.
+                    budget: Duration::from_millis(30),
+                    measured: w95,
+                    detail: format!(
+                        "P50 {w50:?}, P95 {w95:?}, P99 {w99:?}, {} write batches alongside",
+                        batches.load(Ordering::Relaxed)
+                    ),
+                });
+            });
+        }
+
         // ---- Vector ANN top-100 -----------------------------------------------------------
         // Built from pseudo-random unit vectors rather than from the model. Approximate-nearest-
         // neighbour latency is a function of the graph — its size, its dimensionality and its

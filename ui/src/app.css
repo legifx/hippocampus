@@ -47,6 +47,18 @@
   will-change: opacity;
 }
 
+/* Off screen: nothing animates.
+   A hidden window in GTK is not a suspended page — WebKit keeps running the document, so an
+   infinite animation runs for as long as the process does, which for a resident overlay is
+   until logout. `animation: none` rather than `animation-play-state: paused`, because a paused
+   animation still keeps its layer alive. */
+[data-visible="no"] *,
+[data-visible="no"]::before,
+[data-visible="no"]::after {
+  animation: none !important;
+  transition: none !important;
+}
+
 .hc-breath-animated {
   animation-name: hc-breathe;
   animation-timing-function: ease-in-out;

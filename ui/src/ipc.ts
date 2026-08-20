@@ -371,6 +371,17 @@ export const ipc = {
       dryRun,
     }),
 
+  /**
+   * Whether the window is on screen.
+   *
+   * A hidden GTK window does not stop the page inside it: WebKit keeps running the document, so
+   * a CSS animation keeps animating and a `setInterval` keeps firing. For a *resident* overlay
+   * that is forever. Measured before this existed, with software compositing: 99% of a core
+   * with nothing on screen.
+   */
+  onVisibility: (handler: (visible: boolean) => void) =>
+    transport.listen("window:visible", (payload) => handler(payload === true)),
+
   /** Where a person would like to start, rather than where the filesystem starts. */
   places: () => transport.invoke<FsPlacesResult>("places"),
 

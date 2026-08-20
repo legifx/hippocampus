@@ -322,7 +322,7 @@ async fn activity_ping(state: tauri::State<'_, AppState>) -> Result<Value, Bridg
 /// This is a launcher: opening the result is the whole point of it, and the window closes
 /// afterwards because leaving it up would make it a window manager's problem.
 #[tauri::command]
-fn open_path(window: tauri::Window, path: String) -> Result<(), String> {
+fn open_path(window: tauri::WebviewWindow, path: String) -> Result<(), String> {
     let target = std::path::Path::new(&path);
     if !target.exists() {
         return Err(format!("{path} is not there any more"));
@@ -331,13 +331,13 @@ fn open_path(window: tauri::Window, path: String) -> Result<(), String> {
         .arg(target)
         .spawn()
         .map_err(|e| format!("could not open {path}: {e}"))?;
-    let _ = window.hide();
+    conceal(&window);
     Ok(())
 }
 
 #[tauri::command]
-fn dismiss(window: tauri::Window) {
-    let _ = window.hide();
+fn dismiss(window: tauri::WebviewWindow) {
+    conceal(&window);
 }
 
 // ---------------------------------------------------------------------------
@@ -449,7 +449,7 @@ fn startup_report(state: tauri::State<'_, AppState>) -> startup::Report {
 /// because the same binding then serves both directions.
 pub fn summon<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>, toggle: bool) {
     if toggle && window.is_visible().unwrap_or(false) {
-        let _ = window.hide();
+        conceal(window);
         return;
     }
 
@@ -464,7 +464,26 @@ pub fn summon<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>, toggle: bool)
     // A launcher summoned again starts empty. Keeping the last query would mean every summon
     // begins by deleting somebody else's search.
     let _ = window.emit("window:shown", ());
+    let _ = window.emit("window:visible", true);
     tracing::info!(us = started.elapsed().as_micros() as u64, "summoned");
+}
+
+/// Put the window away, and say so.
+///
+/// The event is the point. A hidden GTK window does not stop the page inside it: WebKit keeps
+/// running the document, so a CSS animation keeps animating and a `setInterval` keeps firing —
+/// for a resident overlay, forever, at whatever they cost.
+///
+/// Measured before this existed: with the DMABUF renderer disabled, which drops WebKit to
+/// software compositing, the breath layer alone held **99% of a core with the window hidden**.
+/// The renderer is no longer disabled, so the same layer is now nearly free — but "nearly free
+/// while nobody is looking" is still worse than "not running", and the next machine that has to
+/// disable it should not pay a core for the privilege.
+pub fn conceal<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
+    // Told first, hidden second: the page gets its last frame to stop things in, rather than
+    // being asked to stop after it can no longer be scheduled.
+    let _ = window.emit("window:visible", false);
+    let _ = window.hide();
 }
 
 /// A launcher that has to be found in a window list is not a launcher. Under a tiling
@@ -598,7 +617,7 @@ pub fn run() {
             // otherwise puts a search box in front of whoever is sitting there. It cost an
             // interruption to learn that once.
             if argv.iter().any(|a| a == "--hide") {
-                let _ = window.hide();
+                conceal(&window);
             } else if argv.iter().any(|a| a == "--show" || a == "--toggle") {
                 summon(&window, argv.iter().any(|a| a == "--toggle"));
             } else {
@@ -677,7 +696,7 @@ pub fn run() {
                         // that quits when the compositor asks it to close has stopped being
                         // resident without telling anybody.
                         api.prevent_close();
-                        let _ = hidden.hide();
+                        conceal(&hidden);
                     }
                 });
             }
