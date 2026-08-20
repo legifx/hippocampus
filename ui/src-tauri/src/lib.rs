@@ -252,15 +252,52 @@ fn startup_report(state: tauri::State<'_, AppState>) -> startup::Report {
 
 /// The summoning hotkey.
 ///
+/// What a summon does, wherever it came from: a compositor binding, a global hotkey, or a
+/// second invocation of the binary.
+///
+/// Toggling rather than showing, because a key pressed by accident should undo itself, and
+/// because the same binding then serves both directions.
+pub fn summon<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>, toggle: bool) {
+    if toggle && window.is_visible().unwrap_or(false) {
+        let _ = window.hide();
+        return;
+    }
+
+    // The number the resident model exists for. M4 §1's 300 ms is about a cold start and stays
+    // red (D41); this is what a person actually waits for once the process is resident.
+    let started = std::time::Instant::now();
+    let _ = window.show();
+    // Showing is not focusing on Wayland, and an overlay that appears without the caret in it
+    // makes the first keystroke disappear.
+    let _ = window.set_focus();
+
+    // A launcher summoned again starts empty. Keeping the last query would mean every summon
+    // begins by deleting somebody else's search.
+    let _ = window.emit("window:shown", ());
+    tracing::info!(us = started.elapsed().as_micros() as u64, "summoned");
+}
+
 /// A launcher that has to be found in a window list is not a launcher. Under a tiling
 /// compositor the window is opened and closed constantly, so the binding toggles: pressed while
 /// the overlay is up, it puts it away again, which is what a person who pressed it by accident
 /// expects.
 ///
-/// `Ctrl+Alt+Space` because it collides with nothing on a stock desktop. The compositor may own
-/// the binding first — niri users bind their own — and if it does, registration fails and the
-/// overlay says so rather than starting a hotkey nobody can press.
+/// `Ctrl+Alt+Space` because it collides with nothing on a stock desktop.
+///
+/// **On Wayland this is not registered at all**, and that is not a limitation being worked
+/// around — it is how Wayland works. A client cannot grab a key globally; the compositor
+/// dispatches input and only it can decide that a combination means something. The library
+/// behind this plugin falls back to an X11 grab, which under a Wayland session lands in
+/// XWayland and never fires, while reporting success. Registering it anyway would mean logging
+/// "summon with the hotkey" for a hotkey that cannot work, which is exactly what happened here
+/// once and cost an evening.
 const HOTKEY: &str = "ctrl+alt+space";
+
+/// Is this a Wayland session, where the compositor owns the key bindings?
+fn on_wayland() -> bool {
+    std::env::var_os("WAYLAND_DISPLAY").is_some()
+        || std::env::var("XDG_SESSION_TYPE").map(|t| t == "wayland").unwrap_or(false)
+}
 
 fn global_shortcut<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
     use tauri_plugin_global_shortcut::ShortcutState;
@@ -274,26 +311,7 @@ fn global_shortcut<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
             let Some(window) = app.get_webview_window("overlay") else {
                 return;
             };
-            match window.is_visible() {
-                Ok(true) => {
-                    let _ = window.hide();
-                }
-                _ => {
-                    // The number the resident model exists for. M4 §1's 300 ms is about a cold
-                    // start and stays red (D41); this is what a person actually waits for once
-                    // the process is resident, and it is measured rather than assumed.
-                    let started = std::time::Instant::now();
-                    let _ = window.show();
-                    // Showing is not focusing on Wayland, and an overlay that appears without
-                    // the caret in it makes the first keystroke disappear.
-                    let _ = window.set_focus();
-
-                    // A launcher summoned again starts empty. Keeping the last query would mean
-                    // every summon begins by deleting somebody else's search.
-                    let _ = window.emit("window:shown", ());
-                    tracing::info!(us = started.elapsed().as_micros() as u64, "summoned");
-                }
-            }
+            summon(&window, true);
         })
         .build()
 }
@@ -309,7 +327,7 @@ fn global_shortcut<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
 /// Parsed by hand rather than with `clap`: it is one flag, and a dependency for one flag in the
 /// binary whose startup time is a milestone gate would be an odd trade.
 fn show_at_startup() -> bool {
-    std::env::args().any(|arg| arg == "--show")
+    std::env::args().any(|arg| arg == "--show" || arg == "--toggle")
 }
 
 pub fn run() {
@@ -323,6 +341,25 @@ pub fn run() {
     let startup = startup::Startup::begin();
 
     tauri::Builder::default()
+        // Registered first, so it runs before anything else has a chance to fail: a second
+        // invocation must reach the resident process even if that process is unhappy.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            let Some(window) = app.get_webview_window("overlay") else {
+                return;
+            };
+            // Only an explicit flag moves the window. A bare second launch does nothing, and
+            // that asymmetry is deliberate: somebody who wanted the window types one more word,
+            // whereas a stray invocation — a shell completion, a script, a restart race —
+            // otherwise puts a search box in front of whoever is sitting there. It cost an
+            // interruption to learn that once.
+            if argv.iter().any(|a| a == "--hide") {
+                let _ = window.hide();
+            } else if argv.iter().any(|a| a == "--show" || a == "--toggle") {
+                summon(&window, argv.iter().any(|a| a == "--toggle"));
+            } else {
+                tracing::info!("already running; `hippocampus --show` summons it");
+            }
+        }))
         .plugin(global_shortcut())
         .setup(move |app| {
             startup.mark_setup();
@@ -359,15 +396,25 @@ pub fn run() {
                     return Err(Box::new(e) as Box<dyn std::error::Error>);
                 }
             }
-            // The compositor may already own this combination. That is a normal outcome, not a
-            // failure: the window still works, it just has to be started rather than summoned.
-            match app.global_shortcut().register(HOTKEY) {
-                Ok(()) => tracing::info!(hotkey = HOTKEY, "summon with the hotkey"),
-                Err(e) => tracing::warn!(
-                    hotkey = HOTKEY,
-                    error = %e,
-                    "the hotkey is taken; start the overlay from the compositor instead"
-                ),
+            if on_wayland() {
+                // Say what to do, with the line to paste. A message that only says "not
+                // supported" leaves somebody to find out for themselves that their compositor
+                // is where the binding belongs.
+                tracing::info!(
+                    "Wayland: the compositor owns key bindings, so no global hotkey is \
+                     registered. Bind one to `hippocampus --show`. For niri, in config.kdl: \
+                     Ctrl+Alt+Space hotkey-overlay-title=\"Hippocampus\" {{ spawn \
+                     \"hippocampus\" \"--show\"; }}"
+                );
+            } else {
+                match app.global_shortcut().register(HOTKEY) {
+                    Ok(()) => tracing::info!(hotkey = HOTKEY, "summon with the hotkey"),
+                    Err(e) => tracing::warn!(
+                        hotkey = HOTKEY,
+                        error = %e,
+                        "the hotkey is taken; bind one to `hippocampus --show` instead"
+                    ),
+                }
             }
 
             if show_at_startup() {

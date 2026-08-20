@@ -10,15 +10,24 @@ npm run tauri build -- --no-bundle  # a standalone binary in ../target/release/h
 
 The daemon has to be running (`cortexd`). This is a client; it holds no index of its own.
 
-**The overlay is resident.** It starts hidden and is summoned with `ctrl+alt+space`; Escape
-clears the query, then puts it away. `--show` presents the window at startup, which is what you
-want when running it by hand. Closing it hides it — Tauri exits with its last window, and a
+**The overlay is resident.** It starts hidden and is summoned by the compositor; Escape clears
+the query, then puts it away. Closing it hides it — Tauri exits with its last window, and a
 launcher that quits when the compositor asks it to close has stopped being resident without
 saying so.
 
-Why resident: the cold start is 418 ms against a 300 ms budget, and 316 ms of that is the
-toolkit rather than this code (D41). Paying it once at login is the mitigation;
-`scripts/install-user.sh` sets up the systemd user units that do it.
+**On Wayland the compositor owns the key binding** (D42). A client cannot grab a key globally,
+and the global-shortcut plugin's X11 fallback lands in XWayland and never fires — it reports
+success and does nothing. So bind a key to `hippocampus --toggle`; for niri:
+
+```kdl
+Ctrl+Alt+Space hotkey-overlay-title="Hippocampus" { spawn "hippocampus" "--toggle"; }
+```
+
+A second invocation reaches the resident process. Only `--show`, `--toggle` and `--hide` move
+the window: a bare `hippocampus` while one is running does nothing, because a stray invocation
+otherwise puts a search box in front of whoever is at the machine.
+
+`scripts/install-user.sh` installs the binaries and the systemd user units.
 
 **Build it through the Tauri CLI, not with `cargo`.** `cargo build --release -p hippocampus-ui`
 produces a binary that compiles, starts, and then shows *"Could not connect to localhost"*:

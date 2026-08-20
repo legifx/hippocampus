@@ -10,7 +10,7 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | M4 — Search Overlay |
-| **Status** | **Seven of eight.** Everything is built and tested; **§1 is measured and red** — 418 ms cold start against a 300 ms budget, of which 316 ms is the toolkit rather than this code (D41). 652 tests. |
+| **Status** | **Complete.** All eight Definition-of-Done items are met. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 652 tests. |
 | **Last updated** | 2026-08-18 |
 | **Blocked on** | nothing |
 
@@ -18,7 +18,7 @@ If you finish work without editing this file, the next agent starts from nothing
 
 | DoD | State | Where it is proven |
 |---|---|---|
-| §1 Cold start < 300 ms | **RED — 418 ms** | measured, decomposed and recorded in D41: 171 ms toolkit init, 145 ms webview spawn, 102 ms page, under 1 ms for the daemon |
+| §1 Cold start < 300 ms | met — **265 ms** | ten runs of the installed release binary on an idle machine, min 260, max 280 (D41); the 418 ms first recorded here was measured under concurrent build load |
 | §2 Keystroke → row < 80 ms P95 | **frontend share met** | `tests/perf.spec.ts` — 2 ms median, under 16 ms p95 against a 24 ms allowance; the daemon's ~20 ms is measured in `bench/latency` |
 | §3 10 000 rows, bounded DOM, 60 fps | met | `tests/layout.spec.ts`, `useVirtual.test.ts` — under 40 rows, under 400 nodes, worst scroll update 9 ms |
 | §4 400–1400 px, no overflow | met | `tests/layout.spec.ts` — four widths plus the full-width-to-400 shrink, in a real browser |
@@ -28,6 +28,27 @@ If you finish work without editing this file, the next agent starts from nothing
 | §8 No data processing in the frontend | met | `src/test/architecture.test.ts` — dependencies, source, one door, one palette |
 
 D4's two conditions are met and its GTK4 fallback is retired (D37).
+
+### §1: the first number was wrong
+
+It was recorded here as 418 ms and failing, and that measurement was taken while the same
+machine compiled the workspace and ran three test suites. Ten runs on an idle machine give
+**265 ms, all ten inside the budget**; the decomposition and the conditions are in D41.
+
+Two things follow. The GTK4 question is closed — the stack was never the problem. And the
+resident model, where the overlay starts hidden at login and is summoned rather than launched,
+stays: not as a mitigation for a budget it turned out to meet, but because that is what a
+launcher is.
+
+### Summoning is the compositor's job on Wayland
+
+The global hotkey never worked and reported that it had (D42). A Wayland client cannot grab a
+key — the plugin falls back to an X11 grab that lands in XWayland and never fires. Under Wayland
+the overlay now registers nothing and logs the line to paste into the compositor's
+configuration; summoning goes through `hippocampus --show`, which reaches the resident process
+through `tauri-plugin-single-instance`. Only an explicit flag moves the window: a bare second
+invocation does nothing, because a stray one otherwise puts a search box in front of whoever is
+at the machine.
 
 ### What is there
 
@@ -247,7 +268,40 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
 
+### 2026-08-20 — §1 was measured wrong, and the hotkey never worked
+
+Two corrections, both found by somebody actually using the thing.
+
+**The cold start is 265 ms, not 418, and §1 passes.** The original measurement ran while the
+same machine was compiling the workspace and running three test suites — it measured the load.
+Ten runs on an idle machine: median 265, min 260, max 280, ten of ten inside the budget. D41 is
+rewritten around the correction and the GTK4 question it raised is closed. The resident model
+stays, because that is what a launcher is, and no longer because of a budget it turned out to
+meet.
+
+The same mistake had already appeared once that week — the frontend's render test failed in the
+parallel Playwright run and passed alone — and it was diagnosed correctly there and not here.
+
+**The global hotkey could never have worked** (D42). A Wayland client cannot grab a key; the
+plugin falls back to an X11 grab that, with XWayland running, *succeeds*, lands in XWayland and
+never fires. The overlay logged "summon with the hotkey" and the first person to press it found
+nothing happening and nothing in the journal. It now registers nothing under Wayland and prints
+the compositor line to paste; summoning is `hippocampus --show` through the single-instance
+plugin.
+
+**And a footgun found by walking into it:** a bare second invocation used to present the window,
+so a measurement loop opened it ten times on somebody's desktop. Only `--show`, `--toggle` and
+`--hide` move the window now.
+
+Everything is installed as systemd user services — `scripts/install-user.sh`, the daemon on
+`default.target` and the overlay on `graphical-session.target`.
+
 ### 2026-08-18 — M4 §1 measured, and it fails
+
+**Superseded — see the entry above and D41.** The 418 ms below was measured on a machine that
+was compiling at the time. On an idle machine the cold start is 265 ms and §1 is met. The entry
+is left as it was written, because a progress log that quietly edits what it believed last week
+cannot be trusted about what it believes today.
 
 The overlay's cold start is **418 ms** against a 300 ms budget. It is recorded as red (D41).
 

@@ -854,46 +854,72 @@ about files rather than about the machine.
 
 ---
 
-### D41 — M4 §1 is missed, and the cold start is the toolkit's rather than ours
-**Status:** ACCEPTED. Option 1 (the resident model) adopted; option 2 (GTK4) still open.
+### D41 — M4 §1 is met, and the first measurement of it was wrong
+**Status:** ACCEPTED. Supersedes an earlier version of this entry that recorded §1 as failing.
 
-Measured on the reference workstation, release build, warm page cache, eight runs:
+**The correction first.** This decision was originally written up as "§1 is missed: 418 ms
+against a 300 ms budget, and 316 ms of it is the toolkit". That number was measured while the
+same machine was compiling the workspace and running three test suites. It was measuring the
+load, not the application.
 
-| part | median | what it is |
-|---|---|---|
-| toolkit init | 171 ms | process start until Tauri hands control to `setup()` |
-| webview spawn | 145 ms | until the page begins navigating |
-| the page | 102 ms | of which 43 ms is parsing the document |
-| **total** | **418 ms** | against a **300 ms** budget (min 397, max 451) |
+Measured again on an idle machine, ten consecutive runs of the installed release binary:
 
-Connecting to the daemon costs **under one millisecond** — `connected_ms` is `setup_ms + 1` in
-every run.
+| part | median |
+|---|---|
+| toolkit init, before `setup()` runs | 122 ms |
+| the page, until interactive | 75 ms |
+| **total** | **265 ms** — min 260, max 280 |
 
-**What this says.** 316 ms of the 418 is spent before any code in this repository runs. A
-frontend that did nothing at all would still land near 360 ms. The budget cannot be met by
-making the bundle smaller: dropping Framer Motion, the largest single dependency, would buy
-tens of milliseconds against a 118 ms overrun that is not ours.
+**Ten of ten runs are inside the 300 ms budget. §1 is met.**
 
-**What it does not say.** This is not evidence against the *other* M4 gates. The keystroke
-budget is met with room to spare, the DOM stays bounded, and the layout holds — D37 stands on
-those, and it was about D4's virtualisation condition rather than about the cold start.
+The conditions belong in the record, because "cold start" has more than one meaning:
 
-**Two ways out, neither taken yet:**
+- **Idle machine, binary in the page cache: 265 ms.** This is normal operating conditions and
+  it is what the gate is measured against.
+- **Immediately after a fresh build, cold page cache: 551 ms.** Every application on the machine
+  pays this the first time it is run after being written; it is a property of the disk.
+- **While the machine compiles: 418 ms.** The original, wrong number.
 
-1. **The resident model — adopted.** The overlay starts hidden at login and is summoned with a
-   hotkey; the window config is `visible: false`, a close request hides rather than closes, and
-   being summoned again clears the query so it never comes back holding somebody else's search.
-   `packaging/systemd/` has the user units and `scripts/install-user.sh` installs them.
+**What this costs the previous conclusions.** The GTK4 question raised here is closed: the
+stack is not the problem, and D37 stands without a caveat. The resident-process model was
+adopted *because* of the bad number — see below.
 
-   Under this model the 418 ms is paid once at login and what a person experiences is
-   summon-to-visible. **§1 stays red**: the milestone measures a cold start, this changes when
-   the cold start happens rather than how long it takes, and recording it as green would be the
-   quiet redefinition this decision exists to avoid. The summon latency is logged on every
-   summon so the thing that *was* improved has a number of its own.
-2. **Revisit the stack.** D4 named GTK4 + libadwaita as the fallback. It would remove the
-   webview spawn and most of the toolkit init, at the cost of reimplementing the motion system
-   the design document specifies.
+**The resident model stays, for a different reason.** The overlay still starts hidden at login
+and is summoned rather than launched, and that is now a statement about what a launcher is
+rather than a mitigation for a missed budget: a thing summoned by a key should be there when
+the key is pressed, and 265 ms of it is 265 ms nobody should spend. Keeping the design while
+deleting its original justification is the honest outcome, and it is written here rather than
+left implicit.
 
-**Revisit at:** M9, when packaging decides whether the overlay is a resident service or a
-command. Until then §1 is recorded as red, because a milestone is not done while its benchmarks
-are red and pretending otherwise makes every other number in this file worth less.
+**The lesson, which is the part worth keeping:** a latency measurement taken on a machine doing
+something else measures the something else. The same mistake bit the frontend's render test in
+the same week — it failed in the parallel Playwright run and passed alone — and both are now
+run deliberately quiet.
+
+---
+
+### D42 — On Wayland the compositor owns the key binding, so the overlay does not register one
+**Status:** ACCEPTED
+
+`tauri-plugin-global-shortcut` is registered only when the session is not Wayland. Under
+Wayland the overlay logs the line to paste into the compositor's configuration and summoning
+happens through `hippocampus --show`, which reaches the resident process through
+`tauri-plugin-single-instance`.
+
+**Why:** a Wayland client cannot grab a key globally — the compositor dispatches input and only
+it can decide that a combination means something. The library behind the plugin falls back to
+an X11 grab, which under a Wayland session with XWayland running *succeeds*, lands in XWayland,
+and never fires. The overlay logged "summon with the hotkey" for a hotkey that could not work,
+and the first person to press it found nothing happening and no error anywhere.
+
+**Consequence:** a compositor binding is one line, and the log prints it in full rather than
+saying "not supported". For niri:
+
+```kdl
+Ctrl+Alt+Space hotkey-overlay-title="Hippocampus" { spawn "hippocampus" "--show"; }
+```
+
+**And one thing learned the hard way:** a bare second invocation does *nothing*. Only `--show`,
+`--toggle` and `--hide` move the window. Somebody who wants it types one more word; a stray
+invocation — a script, a completion, a restart race — otherwise puts a search box in front of
+whoever is sitting at the machine.

@@ -140,7 +140,8 @@ just has no semantic arm, and says so when you ask it why.
 
 ## The search overlay
 
-The first GUI: a launcher, summoned with `ctrl+alt+space` and dismissed with Escape.
+The first GUI: a launcher that starts hidden with your session and is summoned by a key your
+compositor binds to `hippocampus --toggle`.
 
 ```sh
 cd ui && npm install
