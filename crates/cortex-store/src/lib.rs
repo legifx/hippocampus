@@ -279,6 +279,47 @@ mod tests {
     }
 
     #[test]
+    fn two_writers_wait_for_each_other_rather_than_failing() {
+        // The hazard the pool creates and the single mutex hid. Two `batch` calls on two
+        // connections would, as deferred transactions, have one of them return SQLITE_BUSY the
+        // instant it tried to write — with no retry, because SQLite refuses to let a reader
+        // block while upgrading. Taking the write lock up front turns that into a wait.
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store::open(&tmp.path().join("cortex.db")).unwrap();
+        let done = AtomicUsize::new(0);
+
+        std::thread::scope(|scope| {
+            let store = &store;
+            let done = &done;
+            for worker in 0..4 {
+                scope.spawn(move || {
+                    for round in 0..20 {
+                        store
+                            .batch(|tx| {
+                                tx.append_episode(
+                                    round,
+                                    &cortex_core::model::Actor::System,
+                                    cortex_core::model::Action::Modify,
+                                    None,
+                                    None,
+                                    &serde_json::json!({ "worker": worker }),
+                                )?;
+                                Ok(())
+                            })
+                            .expect("a concurrent writer must wait, not fail");
+                        done.fetch_add(1, Ordering::Relaxed);
+                    }
+                });
+            }
+        });
+
+        assert_eq!(done.load(Ordering::Relaxed), 80);
+        assert_eq!(store.recent_episodes(100).unwrap().len(), 80, "every write landed");
+    }
+
+    #[test]
     fn a_reader_does_not_wait_for_a_writer() {
         // The property WAL is configured for and the single mutex used to prevent. A writer
         // holding a transaction open must not stop a reader from answering — that is what cost

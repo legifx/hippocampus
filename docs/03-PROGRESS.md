@@ -10,7 +10,7 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | M6 — Human View (pulled ahead of M5 at the owner's request, D43) |
-| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 856 tests. |
+| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 857 tests. |
 | **Last updated** | 2026-08-20 |
 | **Blocked on** | nothing |
 
@@ -82,6 +82,22 @@ None of those calls is slow. They were waiting. What was found, in order of size
 3. **A four-second poll, round the clock, for an animation nobody was looking at**, whose query
    scanned a hundred thousand rows because the only index on `extract_state` was a partial one
    built for a different question. Migration 5 adds the right one: 26.8 ms to 4.8 ms.
+
+**What the new gate says.** Within one run, BM25 top-100 quiet against the same query while a
+writer works: **+70% before the pool, +13% after**, and the writer got two and a half times as
+much done in the same wall time because it was no longer fighting the reader. The *absolute*
+numbers from before and after are not comparable, and saying so is the point: the first version
+of that gate wrote changed rows into the benchmark corpus, so every run left the database
+different from the one the next run would measure. It writes back the values already there now,
+and two consecutive runs agree to within a millisecond. A benchmark that alters what it measures
+is worse than no benchmark, because it produces numbers.
+
+**A hazard the pool created, and the fix.** Two `batch` calls on two connections are two
+writers. Rusqlite's default `DEFERRED` transaction begins as a reader and takes the write lock
+on its first write — and SQLite then returns `SQLITE_BUSY` *immediately* rather than waiting,
+because a reader that blocked while upgrading could deadlock. `busy_timeout` does not apply.
+Every transaction is now `IMMEDIATE`, which takes the lock up front so contention is a wait; a
+test runs four threads writing eighty times and asserts all eighty land.
 
 **What is not fixed and is known.** The RPC read loop handles one request at a time per
 connection, so a slow call still blocks whatever is queued behind it on the same socket. With

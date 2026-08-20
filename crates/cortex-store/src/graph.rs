@@ -193,7 +193,7 @@ impl Store {
         now: i64,
     ) -> Result<i64> {
         let mut conn = self.conn();
-        let tx = conn.transaction()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
         tx.execute(
             "INSERT INTO nodes (kind, path, size, mtime, ctime, inode, dev, first_seen, last_seen)

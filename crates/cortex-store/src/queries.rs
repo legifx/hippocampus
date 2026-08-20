@@ -110,7 +110,15 @@ impl Store {
     /// behaviour a partially-applied index repair should have.
     pub fn batch<T>(&self, f: impl FnOnce(&Batch<'_>) -> Result<T>) -> Result<T> {
         let mut conn = self.conn();
-        let tx = conn.transaction()?;
+        // `IMMEDIATE`, not the default `DEFERRED`. A deferred transaction begins as a reader
+        // and takes the write lock on its first write — and if another connection holds it by
+        // then, SQLite returns `SQLITE_BUSY` *immediately* rather than waiting, because a
+        // reader that waited to become a writer could deadlock. `busy_timeout` does not help
+        // there. Taking the write lock up front means contention is a wait, as intended.
+        //
+        // This did not matter while the whole store was one connection behind one mutex; it
+        // matters now that it is a pool (D53).
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let result = {
             let batch = Batch { tx: &tx };
             f(&batch)?
@@ -399,7 +407,7 @@ impl Store {
         zones.sort_by_key(|z| z.root_path.components().count());
 
         let mut conn = self.conn();
-        let tx = conn.transaction()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
         // Clear first, so that a node which has left every zone does not keep a stale colour.
         tx.execute("UPDATE nodes SET zone_id = NULL WHERE zone_id IS NOT NULL", [])?;
@@ -458,7 +466,7 @@ impl Store {
         };
 
         let mut conn = self.conn();
-        let tx = conn.transaction()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let mut linked = 0;
 
         for (id, path, parent_id) in current {
@@ -531,7 +539,7 @@ impl Store {
     /// All of it is re-derived from the filesystem.
     pub fn clear_derived(&self, keep_embeddings: bool) -> Result<()> {
         let mut conn = self.conn();
-        let tx = conn.transaction()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
         // The FTS index is contentless and has no foreign key to cascade through, so it has to
         // be told. `delete-all` is the documented command for exactly this; deleting rows one by

@@ -206,42 +206,59 @@ fn main() {
         // Which is exactly what was going wrong. The journal from a week of real use shows
         // searches at 932 ms against an 80 ms budget, and `extract.status` — a status call, a
         // heartbeat, nothing — at 988 ms. Neither is slow on its own; they were waiting.
+        //
+        // **What is compared is the gap, not the number.** The absolute figure drifts with the
+        // corpus — this gate writes to the same database it reads from, because contending is
+        // the entire point — so its budget is the quiet measurement above plus a margin. A
+        // reader that waits for a writer shows up as a multiple, not as a few milliseconds, and
+        // a budget derived from the same run cannot be confounded by a corpus that grew.
         {
             use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
             let stop = AtomicBool::new(false);
             let batches = AtomicU64::new(0);
 
+
             std::thread::scope(|scope| {
                 // A writer doing what the indexer does: batches of upserts, in a transaction,
                 // one after another. Not a synthetic hammer — this is the shape of the work
                 // that is running whenever anything on the machine changes.
                 scope.spawn(|| {
-                    let mut generation = 0i64;
                     while !stop.load(Ordering::Relaxed) {
-                        generation += 1;
                         // A duty cycle, not a hammer. The indexer spends most of its time
                         // reading files, extracting text and embedding it; the database is the
                         // punctuation. A writer that never pauses starves the reader completely
                         // — which the first version of this gate demonstrated by not finishing
                         // in half an hour — and measures a situation the daemon is never in.
                         std::thread::sleep(Duration::from_millis(10));
+
+                        // The same rows, with the values they already hold. The write work is
+                        // real — a transaction, a commit, the same index churn the indexer
+                        // causes — and the corpus is in the state it started in when this
+                        // finishes. The first version wrote *changed* rows, which left the
+                        // benchmark database different after every run and made two runs of the
+                        // same code disagree by 50%. A benchmark that alters what it measures
+                        // is worse than no benchmark, because it produces numbers.
                         let _ = store.batch(|tx| {
-                            for (i, path) in paths.iter().take(256).enumerate() {
+                            for path in paths.iter().take(256) {
+                                let path = PathBuf::from(path);
+                                let Ok(metadata) = std::fs::metadata(&path) else {
+                                    continue;
+                                };
                                 tx.upsert_node(
                                     &NodeUpsert {
                                         kind: cortex_core::model::NodeKind::File,
-                                        path: PathBuf::from(path),
+                                        path,
                                         parent_id: None,
                                         mime: None,
-                                        size: i as i64,
-                                        mtime: generation,
+                                        size: metadata.len() as i64,
+                                        mtime: 0,
                                         ctime: 0,
                                         inode: 0,
                                         dev: 0,
                                         zone_id: None,
                                     },
-                                    generation,
+                                    0,
                                 )?;
                             }
                             Ok(())
@@ -259,11 +276,12 @@ fn main() {
 
                 gates.push(Gate {
                     name: "BM25 top-100, while the indexer writes",
-                    // The same budget as the quiet case. A reader that has to wait for a writer
-                    // is the thing being gated against, and "slower because something else is
-                    // happening" is precisely the experience this is meant to forbid: WAL exists
-                    // so that readers do not wait, and the pragmas already ask for it.
-                    budget: Duration::from_millis(30),
+                    // Half again as long as the same query with nothing else running. A reader
+                    // that waits for a writer is not 50% slower, it is several times slower —
+                    // measured before the connection pool, the gap was +70% with a writer at a
+                    // 10% duty cycle, and in production it was searches of 932 ms against a
+                    // budget of 80.
+                    budget: b95 + b95 / 2,
                     measured: w95,
                     detail: format!(
                         "P50 {w50:?}, P95 {w95:?}, P99 {w99:?}, {} write batches alongside",
