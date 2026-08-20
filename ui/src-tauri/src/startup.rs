@@ -19,6 +19,8 @@ pub struct Startup {
     setup_ms: Arc<AtomicU64>,
     connected_ms: Arc<AtomicU64>,
     interactive_ms: Arc<AtomicU64>,
+    /// Milliseconds spent waiting for a daemon that was not listening yet.
+    waited_ms: Arc<AtomicU64>,
 }
 
 /// "Not yet", stored in an atomic that has to hold a duration otherwise.
@@ -41,6 +43,24 @@ pub struct Report {
     /// The budget this is measured against, so the frontend does not hard-code it.
     pub budget_ms: u64,
     pub within_budget: bool,
+    /// Milliseconds this run spent waiting for the daemon's socket to appear.
+    ///
+    /// Nonzero only at a login, where both services start together and the daemon's socket
+    /// arrives a moment after the daemon does. A run that waited is not a cold-start
+    /// measurement of this application — it is a measurement of two services racing — and
+    /// [`Report::comparable`] is how the difference is stated rather than hidden.
+    pub waited_for_daemon_ms: u64,
+}
+
+impl Report {
+    /// Whether this run's number means anything next to the budget.
+    ///
+    /// The project has already reported a startup number twice from a run that was not
+    /// comparable (D41), both times by quoting a figure without the conditions it was taken
+    /// under. This is the same mistake made by the program about itself, so the program says so.
+    pub fn comparable(&self) -> bool {
+        self.waited_for_daemon_ms == 0
+    }
 }
 
 /// M4's benchmark table: GUI cold start → interactive.
@@ -53,6 +73,7 @@ impl Startup {
             setup_ms: Arc::new(AtomicU64::new(UNSET)),
             connected_ms: Arc::new(AtomicU64::new(UNSET)),
             interactive_ms: Arc::new(AtomicU64::new(UNSET)),
+            waited_ms: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -65,6 +86,11 @@ impl Startup {
         let elapsed = self.began.elapsed().as_millis() as u64;
         self.setup_ms.store(elapsed, Ordering::Relaxed);
         elapsed
+    }
+
+    /// Record that the daemon was not listening yet, and for how long this run waited.
+    pub fn mark_waited(&self, ms: u64) {
+        self.waited_ms.store(ms, Ordering::Relaxed);
     }
 
     pub fn mark_connected(&self) -> u64 {
@@ -96,6 +122,7 @@ impl Startup {
             // A run that has not reached interactive yet is not "within budget" — it has no
             // number at all, and reporting `true` for it would make the gate meaningless.
             within_budget: interactive.is_some_and(|ms| ms <= BUDGET_MS),
+            waited_for_daemon_ms: self.waited_ms.load(Ordering::Relaxed),
         }
     }
 }
@@ -129,6 +156,21 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(15));
         let second = startup.mark_interactive();
         assert_eq!(first, second, "a re-render must not restate the cold start");
+    }
+
+    #[test]
+    fn a_run_that_waited_for_the_daemon_is_not_a_cold_start_measurement() {
+        // At a login both services start together and the socket arrives a moment after the
+        // daemon does. The number that run produces is two services racing, not this one
+        // starting, and quoting it against the budget is the mistake D41 is about.
+        let startup = Startup::begin();
+        startup.mark_interactive();
+        assert!(startup.report().comparable());
+
+        startup.mark_waited(600);
+        let report = startup.report();
+        assert_eq!(report.waited_for_daemon_ms, 600);
+        assert!(!report.comparable(), "it measured the wait, not the start");
     }
 
     #[test]

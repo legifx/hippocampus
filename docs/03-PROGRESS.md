@@ -10,7 +10,7 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | M6 — Human View (pulled ahead of M5 at the owner's request, D43) |
-| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 821 tests. |
+| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 823 tests. |
 | **Last updated** | 2026-08-20 |
 | **Blocked on** | nothing |
 
@@ -47,6 +47,13 @@ folder, Ctrl+Z to undo. Copying shows a bar with a real denominator and Escape c
 **Underneath.** `fs.transfer` answers with a handle and reports through notifications throttled
 to ten a second; `fs.mkdir` and `fs.rename` answer immediately. Every one of them writes an undo
 entry, and a batch writes one per source so a partly-failed batch is still undoable.
+
+**No more crash at login.** Both services start together and the daemon's socket appears a
+moment after the daemon does, so the overlay lost the race, aborted and was restarted by
+systemd — a core dump in the journal at every login, for a race. It now waits for the socket,
+and a run that waited reports `comparable=false` instead of a budget verdict, because that run
+measured two services racing rather than this one starting (D51). §1 re-measured after the
+change: 277 ms median, ten of ten inside the budget.
 
 **Cut and copy that the desktop can hear.** The system clipboard, in the four formats anything
 reads: `x-special/gnome-copied-files` (the only one carrying the verb), `text/uri-list`,

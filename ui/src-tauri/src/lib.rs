@@ -410,7 +410,17 @@ fn mark_interactive(
         page_ms = page_ms.unwrap_or(0),
         dom_ready_ms = dom_ready_ms.unwrap_or(0),
         budget_ms = report.budget_ms,
-        within_budget = report.within_budget,
+        // Stated rather than quietly reported as a miss: a run that spent half a second waiting
+        // for another service to open its socket measured that service, not this one. Leaving
+        // the verdict in would put a `within_budget=false` in the journal at every login for a
+        // reason that has nothing to do with the code — which is how a number gets believed.
+        within_budget = if report.comparable() {
+            Some(report.within_budget)
+        } else {
+            None
+        },
+        waited_for_daemon_ms = report.waited_for_daemon_ms,
+        comparable = report.comparable(),
         "cold start"
     );
     elapsed
@@ -463,6 +473,61 @@ pub fn summon<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>, toggle: bool)
 /// "summon with the hotkey" for a hotkey that cannot work, which is exactly what happened here
 /// once and cost an evening.
 const HOTKEY: &str = "ctrl+alt+space";
+
+/// How long to keep trying to reach the daemon before giving up.
+///
+/// Long enough to cover a daemon that is starting alongside this process, short enough that a
+/// machine with no daemon at all does not appear to hang. It costs nothing when the socket is
+/// already there, which is every case except the first few hundred milliseconds after a login.
+const CONNECT_PATIENCE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The interval between attempts. Small, because the usual wait is one or two of them.
+const CONNECT_RETRY: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// Connect, allowing for a daemon that is still on its way up.
+///
+/// The first failure is not logged. It is expected at every login and a warning that appears
+/// every time and means nothing is a warning nobody reads. A failure that persists past the
+/// first retry is logged once, so a machine where the daemon is genuinely absent says so.
+async fn connect_with_patience(
+    socket: &std::path::Path,
+    emitter: tauri::AppHandle,
+    startup: &startup::Startup,
+) -> Result<Bridge, BridgeError> {
+    let began = std::time::Instant::now();
+    let deadline = began + CONNECT_PATIENCE;
+    let mut announced = false;
+
+    loop {
+        let emitter = emitter.clone();
+        let attempt = Bridge::connect(socket, move |method, params| {
+            // A better answer arriving after the first one (D7) is an event, not a return
+            // value — there is nothing left waiting to return it to.
+            let _ = emitter.emit(&method.replace('.', ":"), params);
+        })
+        .await;
+
+        match attempt {
+            Ok(bridge) => {
+                if announced {
+                    // The cold-start number for this run includes the wait, so it is not a
+                    // measurement of this application starting. Recording that is what keeps
+                    // it out of the budget verdict.
+                    startup.mark_waited(began.elapsed().as_millis() as u64);
+                }
+                return Ok(bridge);
+            }
+            Err(e) if std::time::Instant::now() >= deadline => return Err(e),
+            Err(_) => {
+                if !announced {
+                    announced = true;
+                    tracing::info!("waiting for the daemon's socket");
+                }
+                tokio::time::sleep(CONNECT_RETRY).await;
+            }
+        }
+    }
+}
 
 /// Is this a Wayland session, where the compositor owns the key bindings?
 fn on_wayland() -> bool {
@@ -539,16 +604,16 @@ pub fn run() {
             let socket = paths.socket();
 
             // Connecting is the one thing that can fail in a way the person needs to know
-            // about, and it must not stop the window from appearing: a window that says "the
-            // daemon is not running" is useful, and no window at all is not.
+            // about. It is also the one thing that fails for a moment at every login and then
+            // stops: both services start together, the daemon is "started" the instant it is
+            // spawned, and its socket appears a moment later — so the first attempt loses a
+            // race that the second one wins. Waiting a little is the whole fix, and without it
+            // the overlay aborts at login and is restarted by systemd, which works and looks
+            // like a crash in the journal because it is one.
             let emitter = handle.clone();
+            let waiting = startup.clone();
             let bridge = tauri::async_runtime::block_on(async move {
-                Bridge::connect(&socket, move |method, params| {
-                    // A better answer arriving after the first one (D7) is an event, not a
-                    // return value — there is nothing left waiting to return it to.
-                    let _ = emitter.emit(&method.replace('.', ":"), params);
-                })
-                .await
+                connect_with_patience(&socket, emitter, &waiting).await
             });
 
             match bridge {

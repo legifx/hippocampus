@@ -195,7 +195,13 @@ setTransport({
           note: null,
         } as T;
       case "startup_report":
-        return { connected_ms: 12, interactive_ms: 90, budget_ms: 300, within_budget: true } as T;
+        return {
+          connected_ms: 12,
+          interactive_ms: 90,
+          budget_ms: 300,
+          within_budget: true,
+          waited_for_daemon_ms: 0,
+        } as T;
       case "mark_interactive":
         return 90 as T;
       default:

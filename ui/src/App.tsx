@@ -294,8 +294,12 @@ export function App() {
             .startupReport()
             .then((report) =>
               setDaemonError(
-                `Kaltstart ${report.interactive_ms} ms (Budget ${report.budget_ms} ms) — ` +
-                  `Verbindung nach ${report.connected_ms} ms`,
+                report.waited_for_daemon_ms > 0
+                  ? `Kaltstart ${report.interactive_ms} ms — davon ` +
+                      `${report.waited_for_daemon_ms} ms Warten auf den Dienst, also nicht ` +
+                      `mit dem Budget von ${report.budget_ms} ms vergleichbar`
+                  : `Kaltstart ${report.interactive_ms} ms (Budget ${report.budget_ms} ms) — ` +
+                      `Verbindung nach ${report.connected_ms} ms`,
               ),
             )
             .catch(() => {});

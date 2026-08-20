@@ -276,6 +276,14 @@ export type StartupReport = {
   interactive_ms: number;
   budget_ms: number;
   within_budget: boolean;
+  /**
+   * How long this run waited for the daemon's socket.
+   *
+   * Nonzero only at a login, where both services start together. A run that waited measured two
+   * services racing rather than this one starting, and its number does not belong next to the
+   * budget — which is why it is reported rather than dropped.
+   */
+  waited_for_daemon_ms: number;
 };
 
 // ---------------------------------------------------------------------------

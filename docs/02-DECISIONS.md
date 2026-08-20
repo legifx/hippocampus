@@ -1139,3 +1139,28 @@ was looking.
 **Dragging *out*** offers `text/uri-list` and `text/plain` from the page's `dataTransfer`.
 Whether that reaches the compositor is WebKitGTK's business, not this application's: the browser
 tests prove the page offers it and can prove nothing beyond that, because they run in Chromium.
+
+---
+
+### D51 — A start that waited for the daemon is not reported against the budget
+**Status:** ACCEPTED. Extends D41.
+
+The overlay retries the daemon's socket for up to five seconds before giving up, and a run that
+had to wait records how long. Its cold-start line then reports `waited_for_daemon_ms` and
+`comparable=false`, and omits the budget verdict entirely.
+
+**Why the retry:** both user services start together at login. `After=` orders the *start jobs*,
+and a `Type=simple` daemon counts as started the moment it is spawned — its socket appears a
+moment later. So the overlay lost the race, aborted, and was restarted by systemd. That worked,
+and it left a core dump in the journal at every login. Waiting a hundred milliseconds is the
+whole fix.
+
+**Why the number is disqualified rather than corrected:** subtracting the wait would produce a
+plausible figure from a run that measured two services racing. This project has already reported
+a startup number twice from a run whose conditions made it meaningless (D41), and the fix then
+was to state the conditions rather than adjust the number. This is the same rule, applied by the
+program to itself: a run that waited says so, and says nothing about the budget.
+
+**What it does not change:** `scripts/measure-startup.sh` is unaffected — it stops only the
+overlay, so the daemon is always already listening and no run under it ever waits. Measured
+after this change: **277 ms median, ten runs of ten inside the budget.**
