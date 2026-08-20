@@ -11,7 +11,7 @@
  */
 
 import { memo, useLayoutEffect } from "react";
-import { elideStart, formatAge, formatSize, tierLabel } from "../format";
+import { elideStart, fileUri, formatAge, formatSize, tierLabel } from "../format";
 import { useVirtual } from "../hooks/useVirtual";
 import type { Row } from "../row";
 import { zoneBorder, zoneTint } from "../zone";
@@ -31,6 +31,14 @@ export type ResultListProps = {
   /** Hue per zone id, as the daemon derived it (D15). */
   zoneHues: Map<number, number>;
   emptyMessage: string;
+  /**
+   * Every selected path, for dragging out of the window.
+   *
+   * Passed in rather than derived from `selected`, because deriving it would mean walking the
+   * rows here — which is the data processing D4 keeps out of this frontend, and which the
+   * component above has already done once for every other operation.
+   */
+  selectedPaths: string[];
 };
 
 export function ResultList({
@@ -42,6 +50,7 @@ export function ResultList({
   rowHeight,
   zoneHues,
   emptyMessage,
+  selectedPaths,
 }: ResultListProps) {
   const virtual = useVirtual({ count: rows.length, rowHeight });
 
@@ -91,6 +100,7 @@ export function ResultList({
                 rowHeight={rowHeight}
                 onSelect={onSelect}
                 onActivate={onActivate}
+                selectedPaths={selectedPaths}
               />
             );
           })}
@@ -109,6 +119,7 @@ type ListRowProps = {
   rowHeight: number;
   onSelect: (index: number, modifiers: { shift: boolean; ctrl: boolean }) => void;
   onActivate: (row: Row) => void;
+  selectedPaths: string[];
 };
 
 const ListRow = memo(function ListRow({
@@ -120,6 +131,7 @@ const ListRow = memo(function ListRow({
   rowHeight,
   onSelect,
   onActivate,
+  selectedPaths,
 }: ListRowProps) {
   const tier = row.tier ? tierLabel(row.tier) : null;
 
@@ -142,6 +154,22 @@ const ListRow = memo(function ListRow({
         onSelect(index, { shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey });
       }}
       onDoubleClick={() => onActivate(row)}
+      draggable
+      onDragStart={(event) => {
+        // Dragging a row that is part of the selection drags the whole selection; dragging one
+        // that is not drags only it. That is what every file manager does, and the alternative
+        // — always dragging the selection — moves files somebody was not pointing at.
+        const paths = selected && selectedPaths.length > 0 ? selectedPaths : [row.path];
+        let uris = "";
+        for (const path of paths) {
+          uris += `${fileUri(path)}\r\n`;
+        }
+        // `text/uri-list` is what the rest of the desktop reads; the plain text is for the
+        // things that only take text, which is most editors and every terminal.
+        event.dataTransfer.setData("text/uri-list", uris);
+        event.dataTransfer.setData("text/plain", paths.join("\n"));
+        event.dataTransfer.effectAllowed = "copy";
+      }}
     >
       <span className="hc-row-name hc-row-text">
         {row.isDir && <span className="hc-row-dirmark" aria-hidden="true" />}

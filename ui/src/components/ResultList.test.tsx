@@ -56,6 +56,7 @@ describe("ResultList", () => {
         rowHeight={ROW}
         zoneHues={new Map([[1, 210]])}
         emptyMessage="nichts"
+        selectedPaths={[]}
       />,
     );
 
@@ -80,6 +81,7 @@ describe("ResultList", () => {
         rowHeight={ROW}
         zoneHues={new Map()}
         emptyMessage="nichts"
+        selectedPaths={[]}
       />,
     );
 
@@ -103,6 +105,7 @@ describe("ResultList", () => {
         rowHeight={ROW}
         zoneHues={new Map()}
         emptyMessage="nichts"
+        selectedPaths={[]}
       />,
     );
 
@@ -123,6 +126,7 @@ describe("ResultList", () => {
         rowHeight={ROW}
         zoneHues={new Map()}
         emptyMessage="nichts"
+        selectedPaths={[]}
       />,
     );
     expect(screen.getByText("cold")).toBeTruthy();
@@ -140,6 +144,7 @@ describe("ResultList", () => {
         rowHeight={ROW}
         zoneHues={new Map()}
         emptyMessage="Nichts gefunden"
+        selectedPaths={[]}
       />,
     );
     expect(screen.getByText("Nichts gefunden")).toBeTruthy();
@@ -158,6 +163,7 @@ describe("ResultList", () => {
         rowHeight={ROW}
         zoneHues={new Map()}
         emptyMessage="nichts"
+        selectedPaths={[]}
       />,
     );
 

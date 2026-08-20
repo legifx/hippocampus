@@ -9,6 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { FsEntry } from "./ipc";
+import { fileUri } from "./format";
 import { formatMode, formatOwner, rowFromEntry } from "./row";
 
 function entry(overrides: Partial<FsEntry> = {}): FsEntry {
@@ -110,5 +111,39 @@ describe("a browsed row", () => {
     const row = rowFromEntry(entry());
     expect(row.mode).toBeNull();
     expect(row.owner).toBeNull();
+  });
+});
+
+/**
+ * `fileUri` has to agree, character for character, with the shell's encoder in
+ * `ui/src-tauri/src/clipboard.rs` — one is used for a drag and the other for the clipboard, and
+ * the same file has to arrive at the other end either way. These are the strings that file
+ * asserts, deliberately copied rather than derived.
+ */
+describe("file URIs", () => {
+  it("encodes what the shell's encoder encodes", () => {
+    expect(fileUri("/home/user/notes.txt")).toBe("file:///home/user/notes.txt");
+    expect(fileUri("/a/two words")).toBe("file:///a/two%20words");
+    expect(fileUri("/a/b#c")).toBe("file:///a/b%23c");
+    expect(fileUri("/a/b?c")).toBe("file:///a/b%3Fc");
+    expect(fileUri("/a/100%")).toBe("file:///a/100%25");
+    expect(fileUri("/a/b\nc")).toBe("file:///a/b%0Ac");
+    expect(fileUri("/a/Grüße")).toBe("file:///a/Gr%C3%BC%C3%9Fe");
+  });
+
+  it("encodes the sub-delimiters encodeURIComponent leaves alone", () => {
+    // Legal unescaped, and escaped anyway: two encoders that disagree about the same file are
+    // two encoders nothing can check against each other.
+    expect(fileUri("/a/it's")).toBe("/a/it%27s".replace("/a", "file:///a"));
+    expect(fileUri("/a/(one)")).toBe("file:///a/%28one%29");
+    expect(fileUri("/a/star*")).toBe("file:///a/star%2A");
+    expect(fileUri("/a/bang!")).toBe("file:///a/bang%21");
+  });
+
+  it("keeps the separators and handles the root", () => {
+    expect(fileUri("/")).toBe("file:///");
+    expect(fileUri("/a/b/c")).toBe("file:///a/b/c");
+    // A doubled separator is not a segment, and inventing one would name a different file.
+    expect(fileUri("/a//b")).toBe("file:///a/b");
   });
 });

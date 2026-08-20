@@ -1079,3 +1079,63 @@ string back — and the wire type would have been chosen for one client's conven
 **How the two are kept honest:** both are tested against the same expected strings, including
 setuid, setgid, sticky and the capital-letter cases, and both are asserted to be exactly ten
 characters wide for every mode from 0 to 0o7777.
+
+---
+
+### D49 — The system clipboard belongs to the shell, not to the daemon
+**Status:** ACCEPTED.
+
+Cut and copy put files on the desktop's clipboard, and paste reads whatever is on it. The code
+that does this lives in `ui/src-tauri/src/clipboard.rs` and talks to GTK directly. The daemon
+knows nothing about it.
+
+**Why not the daemon:** it is headless and must stay that way. It runs as a user service, it is
+meant to be usable from a terminal over a socket, and a clipboard is a property of a *session* —
+one login has one, a machine may have several, and a daemon that acquired a display connection
+to serve one of them would have broken the property that makes it testable and scriptable. The
+shell is the process with a Wayland connection, so the clipboard sits beside the window and the
+hotkey, which are the other two things a browser cannot do.
+
+**Why GTK rather than `wl-copy`:** `wl-copy` would be four lines. It works by forking a process
+that stays alive to serve the data — a second process per copy, outliving the window, holding
+paths that may have moved since — and it is a package that is not installed everywhere. The
+overlay is already a resident GTK process with a Wayland connection; owning the selection is
+what that connection is for.
+
+**Four formats, because there is no standard.** `x-special/gnome-copied-files` is the only one
+that carries the verb, which is what makes "cut" possible at all; `text/uri-list` is the
+freedesktop standard that everything reads; `application/x-kde-cutselection` is how Dolphin
+learns that a cut was meant; `text/plain` is so that pasting into a terminal gives paths. All
+four are offered at once — advertising costs nothing, the receiver picks. Reading goes most
+specific first, so a cut from any of the three families stays a cut.
+
+**A plain `text/uri-list` pastes as a copy.** It carries no verb, and a mover that guessed would
+be a mover that deletes somebody's originals.
+
+**A refusal is reported.** On Wayland a client may only take the selection off the back of a
+recent input event, so a copy from an unfocused window does not happen. The window keeps its own
+copy of what was cut — which is what paste falls back to — and says the copy is good only
+inside this window. Somebody who is not told finds out later, in another application, by pasting
+the wrong thing.
+
+---
+
+### D50 — A drop copies
+**Status:** ACCEPTED.
+
+Files dragged into the window from another application are copied into the directory being
+looked at. Never moved.
+
+**Why not the usual rule** — move within a filesystem, copy across one, Shift to override — is
+that the drop event carries neither the modifier keys nor where the source lives. Both would
+have to be guessed. Guessing "copy" wrongly leaves a duplicate somebody deletes; guessing "move"
+wrongly takes a file out of another application's window while its user is looking at it. Ctrl+X
+and Ctrl+V are still there for a move, and they say what they mean.
+
+**A drop onto a result list is refused rather than redirected.** A list of search results is not
+a place. Copying into whichever directory was browsed last would put the file somewhere nobody
+was looking.
+
+**Dragging *out*** offers `text/uri-list` and `text/plain` from the page's `dataTransfer`.
+Whether that reaches the compositor is WebKitGTK's business, not this application's: the browser
+tests prove the page offers it and can prove nothing beyond that, because they run in Chromium.

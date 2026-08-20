@@ -2227,6 +2227,9 @@ version = "0.0.1"
 dependencies = [
  "cortex-core",
  "cortex-rpc",
+ "gdk",
+ "glib",
+ "gtk",
  "serde",
  "serde_json",
  "tauri",

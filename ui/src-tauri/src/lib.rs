@@ -9,6 +9,7 @@
 //! global hotkey, and opening a file in whatever the desktop thinks should open it.
 
 pub mod bridge;
+pub mod clipboard;
 pub mod preview;
 pub mod startup;
 
@@ -325,12 +326,61 @@ fn open_path(window: tauri::Window, path: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Copy without a clipboard dependency: the frontend owns the clipboard, this is for the path
-/// of the *selected* row, which the frontend already has. Kept as a command only so that the
-/// window can be dismissed in the same gesture.
 #[tauri::command]
 fn dismiss(window: tauri::Window) {
     let _ = window.hide();
+}
+
+// ---------------------------------------------------------------------------
+// The system clipboard. Not forwarded to the daemon, and that is the point: the daemon is
+// headless and a clipboard belongs to a session (D49). These three are the only commands here
+// that do something rather than relay it.
+// ---------------------------------------------------------------------------
+
+/// Put files on the system clipboard so that another application can paste them.
+///
+/// Blocking rather than async: it hops to the GTK thread and waits, which is a thread either
+/// way, and `#[tauri::command(async)]` puts it on the blocking pool where waiting is allowed.
+#[cfg(target_os = "linux")]
+#[tauri::command(async)]
+fn clipboard_write(
+    app: tauri::AppHandle,
+    paths: Vec<std::path::PathBuf>,
+    mode: clipboard::Mode,
+) -> Result<(), clipboard::ClipboardError> {
+    let selection = clipboard::Selection { mode, paths };
+    let taken = clipboard::on_main_thread(&app, move || clipboard::session::set(&selection))?;
+    // A refusal is reported rather than swallowed. On Wayland the selection can only be taken
+    // off the back of a recent input event, so a copy from an unfocused window does not happen
+    // — and a person who is not told discovers it later by pasting the wrong thing.
+    if taken {
+        Ok(())
+    } else {
+        Err(clipboard::ClipboardError::Refused)
+    }
+}
+
+/// What another application put on the clipboard, if it was files.
+///
+/// `None` for anything else — text, an image, a `trash://` URI — because "there is nothing here
+/// to paste" and "the clipboard is empty" are the same answer as far as a file manager is
+/// concerned.
+#[cfg(target_os = "linux")]
+#[tauri::command(async)]
+fn clipboard_read(
+    app: tauri::AppHandle,
+) -> Result<Option<clipboard::Selection>, clipboard::ClipboardError> {
+    clipboard::on_main_thread(&app, clipboard::session::get)
+}
+
+/// Give up the selection, after a cut has been carried out.
+///
+/// The paths on it do not exist any more, so leaving them there means the next paste anywhere
+/// on the desktop fails with a list of files that have moved.
+#[cfg(target_os = "linux")]
+#[tauri::command(async)]
+fn clipboard_clear(app: tauri::AppHandle) -> Result<(), clipboard::ClipboardError> {
+    clipboard::on_main_thread(&app, clipboard::session::clear)
 }
 
 /// The frontend calls this the moment it has painted something a person can act on.
@@ -581,6 +631,9 @@ pub fn run() {
             activity_ping,
             open_path,
             dismiss,
+            clipboard_write,
+            clipboard_read,
+            clipboard_clear,
             mark_interactive,
             startup_report,
         ])

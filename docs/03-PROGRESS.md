@@ -10,7 +10,7 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | M6 — Human View (pulled ahead of M5 at the owner's request, D43) |
-| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 704 tests. |
+| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 821 tests. |
 | **Last updated** | 2026-08-20 |
 | **Blocked on** | nothing |
 
@@ -48,6 +48,20 @@ folder, Ctrl+Z to undo. Copying shows a bar with a real denominator and Escape c
 to ten a second; `fs.mkdir` and `fs.rename` answer immediately. Every one of them writes an undo
 entry, and a batch writes one per source so a partly-failed batch is still undoable.
 
+**Cut and copy that the desktop can hear.** The system clipboard, in the four formats anything
+reads: `x-special/gnome-copied-files` (the only one carrying the verb), `text/uri-list`,
+`application/x-kde-cutselection` and plain text. Copy here, paste in Nautilus; cut in Thunar,
+paste here, and it stays a cut. It lives in the shell rather than the daemon, which is headless
+and has to stay that way (D49). A copy the compositor refuses — Wayland only lets a focused
+window take the selection — still works inside the window and says so.
+
+**Dragging.** Files dropped in from another application are copied into the directory being
+looked at; a drop onto a result list is refused, because a result list is not a place. A drop
+copies rather than moves, and D50 says why: the event carries neither the modifier keys nor the
+source's filesystem, and a wrong guess in the move direction takes somebody else's file. Rows
+offer `text/uri-list` when dragged out — the page's half is tested, the webview's half needs
+trying against a real application.
+
 **Saying what an entry is.** A listing now carries permissions, owner and group, and — for a
 symbolic link — where it points and what is there. The rows show `drwxr-xr-x` in a wide window,
 `name → target` for a link, and a struck-through target with `fehlt` when the target is gone.
@@ -74,11 +88,15 @@ The safest choice is first and Enter takes it, each option has a letter, Escape 
 
 ### What M6 still needs
 
-1. **Mounts via udisks2**, `xdg-mime` for "open with", Wayland drag and drop, and the *system*
-   clipboard — cut and copy currently live in the window and cannot paste into another app.
+1. **Mounts via udisks2** and `xdg-mime` for "open with".
 2. **Archives** — extract zip and tar at minimum.
 3. **Network locations**, which may be staged.
 4. **Thumbnails in the list**, not only in the preview pane.
+
+One thing is built but unverified: dragging a row *out* of the window offers `text/uri-list`,
+and whether WebKitGTK forwards that to the compositor cannot be tested from here — the browser
+tests run in Chromium. It needs one drag into another application to know. Dropping *in* is
+tested and works.
 
 And two holes the reorder creates, which should stay visible rather than be filled with a
 plausible number (D43): the sidebar cannot show salience, and the cold-tier indicator has

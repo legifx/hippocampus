@@ -125,7 +125,8 @@ export function App() {
     return out;
   }, [rows, selection.state.indices]);
 
-  const operations = useOperations(browse.reload);
+  // The directory a drop lands in. Null while searching: a result list is not a place.
+  const operations = useOperations(browse.reload, searching ? null : browse.state.path);
 
   // The panes want a `SearchHit`, which a directory entry is not. Only a search result carries
   // a score and a tier, so a browsed row is given the shape with those left honestly empty.
@@ -499,6 +500,10 @@ export function App() {
       className="hc-overlay"
       data-density={comfortable ? "comfortable" : "compact"}
       data-width={showBoth ? "wide" : showPreview ? "medium" : "narrow"}
+      // A border rather than an overlay: something is being dragged over the window and can be
+      // let go of. An overlay would cover the breadcrumb, which is the one thing a person needs
+      // to read at that moment — where it would land.
+      data-dropping={operations.dragging ? "yes" : undefined}
       onKeyDown={onKeyDown}
     >
       <Ambient load={load} />
@@ -644,6 +649,7 @@ export function App() {
             rowHeight={rowHeight}
             zoneHues={zoneHues}
             emptyMessage={emptyMessage(searching, state.loading, browse.state)}
+            selectedPaths={targets}
           />
         </div>
 

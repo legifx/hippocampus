@@ -322,6 +322,13 @@
   display: none;
 }
 
+/* Something from another application is over the window and can be let go of.
+   An inset ring rather than a covering layer: the breadcrumb underneath is the thing a person
+   reads at that moment, because it says where the drop would land. */
+[data-dropping="yes"] {
+  box-shadow: inset 0 0 0 2px var(--hc-info);
+}
+
 /* Permissions are ten characters of monospace and the first thing to go when space runs out:
    they are read deliberately, not at a glance, and the wide layout is where that happens. */
 .hc-row-mode {

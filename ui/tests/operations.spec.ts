@@ -344,3 +344,253 @@ test.describe("the conflict question", () => {
     expect(transfers[1]!.args.dryRun).toBe(false);
   });
 });
+
+/**
+ * M6: cut and copy reach the desktop, not just this window.
+ *
+ * The formats and the encoding are tested in Rust, where they are pure functions. What can only
+ * be tested here is the *wiring*: that a copy is offered to the desktop, that a paste asks the
+ * desktop first, and that the window still works when the desktop says no.
+ */
+test.describe("the system clipboard", () => {
+  /** Put something there as another file manager would. */
+  async function desktopHolds(page: Page, mode: "copy" | "move", paths: string[]) {
+    await page.evaluate(
+      ([mode, paths]) => {
+        (window as unknown as { __hcClipboard?: unknown }).__hcClipboard = { mode, paths };
+      },
+      [mode, paths] as const,
+    );
+  }
+
+  async function desktopHolding(page: Page) {
+    return page.evaluate(
+      () => (window as unknown as { __hcClipboard?: { mode: string; paths: string[] } | null }).__hcClipboard ?? null,
+    );
+  }
+
+  test("a copy is offered to the desktop, not only remembered here", async ({ page }) => {
+    await open(page);
+    await page.keyboard.press("Control+a");
+    await page.keyboard.press("Control+c");
+
+    await expect
+      .poll(async () => (await desktopHolding(page))?.paths.length)
+      .toBe(5);
+    expect((await desktopHolding(page))?.mode).toBe("copy");
+  });
+
+  test("a cut is offered as a cut", async ({ page }) => {
+    await open(page);
+    await page.keyboard.press("Control+x");
+    await expect.poll(async () => (await desktopHolding(page))?.mode).toBe("move");
+  });
+
+  test("pasting takes what another application copied", async ({ page }) => {
+    await open(page);
+    // Nothing has been copied in this window at all. Everything comes from outside.
+    await desktopHolds(page, "copy", ["/elsewhere/from-another-app.txt"]);
+    await page.keyboard.press("Control+v");
+
+    const transfers = (await calls(page)).filter((c) => c.command === "transfer");
+    expect(transfers.length).toBeGreaterThan(0);
+    expect(transfers[0]!.args.sources).toEqual(["/elsewhere/from-another-app.txt"]);
+    expect(transfers[0]!.args.mode).toBe("copy");
+  });
+
+  test("a cut made in another application stays a cut", async ({ page }) => {
+    await open(page);
+    await desktopHolds(page, "move", ["/elsewhere/cut-there.txt"]);
+    await page.keyboard.press("Control+v");
+
+    const transfers = (await calls(page)).filter((c) => c.command === "transfer");
+    expect(transfers[0]!.args.mode).toBe("move");
+  });
+
+  test("what the desktop holds wins over what this window remembers", async ({ page }) => {
+    await open(page);
+    await page.keyboard.press("Control+c");
+    // Somebody copied something else, somewhere else, in between.
+    await desktopHolds(page, "copy", ["/elsewhere/newer.txt"]);
+    await page.keyboard.press("Control+v");
+
+    const transfers = (await calls(page)).filter((c) => c.command === "transfer");
+    expect(transfers[0]!.args.sources).toEqual(["/elsewhere/newer.txt"]);
+  });
+
+  test("carrying out a cut empties the desktop's clipboard too", async ({ page }) => {
+    await open(page);
+    await page.keyboard.press("Control+x");
+    await expect.poll(async () => (await desktopHolding(page))?.mode).toBe("move");
+
+    await page.keyboard.press("Control+v");
+    // Otherwise the next paste anywhere on the desktop names files that have moved.
+    await expect.poll(async () => await desktopHolding(page)).toBeNull();
+  });
+
+  test("a copy the compositor refuses still works inside the window, and says so", async ({
+    page,
+  }) => {
+    await open(page);
+    await page.evaluate(() => {
+      (window as unknown as { __hcClipboardRefuses?: boolean }).__hcClipboardRefuses = true;
+    });
+
+    await page.keyboard.press("Control+c");
+    // Wayland only lets a focused window take the selection. Losing the ability to paste inside
+    // this window because of that would be the worse of the two failures.
+    await expect(page.locator(".hc-banner")).toContainText("nur in diesem Fenster");
+
+    await page.keyboard.press("Control+v");
+    const transfers = (await calls(page)).filter((c) => c.command === "transfer");
+    expect(transfers.length).toBeGreaterThan(0);
+  });
+
+  test("summoning the window picks up what was copied while it was away", async ({ page }) => {
+    await open(page);
+    await desktopHolds(page, "move", ["/elsewhere/a.txt", "/elsewhere/b.txt"]);
+
+    // The overlay is resident: it is hidden and summoned, and the clipboard may have changed
+    // three applications ago. Focus is when it looks.
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await expect(page.locator(".hc-status")).toContainText("ausgeschnitten");
+  });
+});
+
+/**
+ * Files dragged in from another application.
+ *
+ * The shell intercepts the drop and hands the window a list of paths, so what can be tested
+ * here is what the window does with them. The fixture emits the same event the shell does.
+ */
+test.describe("dropping files in", () => {
+  async function dropOnto(page: Page, paths: string[]) {
+    await page.evaluate((paths) => {
+      (window as unknown as { __hcEmit?: (e: string, p?: unknown) => void }).__hcEmit?.(
+        "tauri://drag-drop",
+        { paths },
+      );
+    }, paths);
+  }
+
+  test("a drop copies into the directory being looked at", async ({ page }) => {
+    await open(page);
+    await dropOnto(page, ["/elsewhere/dropped.txt"]);
+
+    const transfers = (await calls(page)).filter((c) => c.command === "transfer");
+    expect(transfers.length).toBeGreaterThan(0);
+    expect(transfers[0]!.args.sources).toEqual(["/elsewhere/dropped.txt"]);
+    // Copy, not move: the drop event carries neither the modifier keys nor the source's
+    // filesystem, and guessing "move" wrongly takes a file out of somebody else's window.
+    expect(transfers[0]!.args.mode).toBe("copy");
+    expect(transfers[0]!.args.destination).toBe("/");
+  });
+
+  test("a drop lands in the directory that is open now, not the one that was", async ({ page }) => {
+    await open(page);
+    await page.keyboard.press("Enter");
+    await expect(page.locator('.hc-crumb[aria-current="page"]')).not.toHaveText("/");
+
+    await dropOnto(page, ["/elsewhere/dropped.txt"]);
+    const transfers = (await calls(page)).filter((c) => c.command === "transfer");
+    expect(transfers[0]!.args.destination).not.toBe("/");
+  });
+
+  test("a drop onto a result list says there is nowhere to put it", async ({ page }) => {
+    await open(page);
+    await page.getByLabel("Suche").fill("query");
+    await expect(page.locator(".hc-crumbs")).toHaveCount(0);
+
+    await dropOnto(page, ["/elsewhere/dropped.txt"]);
+    // A list of search results is not a place. Copying into whichever directory was browsed
+    // last would put the file somewhere nobody was looking.
+    await expect(page.locator(".hc-banner")).toContainText("Ordner");
+    expect((await calls(page)).filter((c) => c.command === "transfer")).toHaveLength(0);
+  });
+
+  test("something dragged over the window shows that it can be let go of", async ({ page }) => {
+    await open(page);
+    const overlay = page.locator(".hc-overlay");
+    await expect(overlay).not.toHaveAttribute("data-dropping", "yes");
+
+    await page.evaluate(() => {
+      (window as unknown as { __hcEmit?: (e: string, p?: unknown) => void }).__hcEmit?.(
+        "tauri://drag-enter",
+      );
+    });
+    await expect(overlay).toHaveAttribute("data-dropping", "yes");
+
+    await page.evaluate(() => {
+      (window as unknown as { __hcEmit?: (e: string, p?: unknown) => void }).__hcEmit?.(
+        "tauri://drag-leave",
+      );
+    });
+    await expect(overlay).not.toHaveAttribute("data-dropping", "yes");
+  });
+});
+
+/**
+ * Dragging files out of the window.
+ *
+ * What this can prove is that the page puts a `text/uri-list` on the drag. What it cannot prove
+ * is that the webview forwards it to the compositor: these tests run in Chromium and the
+ * overlay runs in WebKitGTK, and the handover from a page's `dataTransfer` to a GTK drag source
+ * is the webview's business. That half is verified by dragging a row into another application.
+ */
+test.describe("dragging files out", () => {
+  /** Start a drag on a row and report what it offered. */
+  async function dragFrom(page: Page, rowId: string) {
+    return page.evaluate((rowId) => {
+      const row = document.querySelector(rowId);
+      if (!row) throw new Error(`no ${rowId}`);
+      const dataTransfer = new DataTransfer();
+      row.dispatchEvent(
+        new DragEvent("dragstart", { dataTransfer, bubbles: true, cancelable: true }),
+      );
+      return {
+        uris: dataTransfer.getData("text/uri-list"),
+        text: dataTransfer.getData("text/plain"),
+      };
+    }, rowId);
+  }
+
+  test("a drag offers the file as a URI the rest of the desktop understands", async ({ page }) => {
+    await open(page);
+    const offered = await dragFrom(page, "#hc-row-0");
+
+    expect(offered.uris).toMatch(/^file:\/\//);
+    expect(offered.uris).toContain("a-rather-long-directory-name-for-testing");
+    // RFC 2483 separates with CRLF, and receivers that get it wrong get it wrong leniently.
+    expect(offered.uris.endsWith("\r\n")).toBe(true);
+    expect(offered.text.startsWith("/")).toBe(true);
+  });
+
+  test("dragging a selected row drags the whole selection", async ({ page }) => {
+    await open(page);
+    await page.keyboard.press("Control+a");
+
+    const offered = await dragFrom(page, "#hc-row-0");
+    expect(offered.uris.trimEnd().split("\r\n")).toHaveLength(5);
+  });
+
+  test("dragging a row outside the selection drags only that row", async ({ page }) => {
+    await open(page);
+    await page.locator("#hc-row-0").click();
+    await page.locator("#hc-row-1").click({ modifiers: ["ControlOrMeta"] });
+
+    // Row 3 is not selected. Dragging it must not take the two that are with it — that is how
+    // a drag moves files somebody was not pointing at.
+    const offered = await dragFrom(page, "#hc-row-3");
+    expect(offered.uris.trimEnd().split("\r\n")).toHaveLength(1);
+    expect(offered.uris).toContain("bild.png");
+  });
+
+  test("a name with a space in it survives the encoding", async ({ page }) => {
+    await open(page);
+    const offered = await dragFrom(page, "#hc-row-2");
+    // The fixture's names have no spaces, so this checks the shape rather than a space: no raw
+    // character that would end a URI early, and one line per file.
+    expect(offered.uris).not.toMatch(/[ \t]/);
+    expect(offered.uris.trimEnd().split("\r\n")).toHaveLength(1);
+  });
+});

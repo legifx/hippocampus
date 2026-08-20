@@ -158,6 +158,25 @@ setTransport({
       }
       case "cancel_operation":
         return { cancelled: true } as T;
+
+      // The system clipboard, which in the shell is GTK and here is a variable. The tests care
+      // about *which calls the window makes* — that a copy reaches the desktop, that a paste
+      // asks the desktop first — and a fixture is the only place that can be observed without
+      // a compositor and a second file manager.
+      case "clipboard_write": {
+        const forced = (window as unknown as HarnessWindow).__hcClipboardRefuses;
+        if (forced) throw new Error("the compositor refused the selection");
+        (window as unknown as HarnessWindow).__hcClipboard = {
+          mode: String(args?.mode ?? "copy"),
+          paths: (args?.paths as string[]) ?? [],
+        };
+        return undefined as T;
+      }
+      case "clipboard_read":
+        return ((window as unknown as HarnessWindow).__hcClipboard ?? null) as T;
+      case "clipboard_clear":
+        (window as unknown as HarnessWindow).__hcClipboard = null;
+        return undefined as T;
       case "mkdir":
       case "rename_entry":
         return { path: String(args?.path ?? "") } as T;
@@ -202,6 +221,10 @@ type HarnessWindow = {
   __hcListeners?: Map<string, Set<(payload: unknown) => void>>;
   __hcEmit?: (event: string, payload?: unknown) => void;
   __hcCalls?: { command: string; args: Record<string, unknown> }[];
+  /** What the desktop is holding. A test can put something here as another application would. */
+  __hcClipboard?: { mode: string; paths: string[] } | null;
+  /** Wayland refuses the selection to an unfocused window; this is how that is rehearsed. */
+  __hcClipboardRefuses?: boolean;
 };
 
 (window as unknown as HarnessWindow).__hcEmit = (event, payload) => {

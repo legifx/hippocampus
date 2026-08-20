@@ -140,6 +140,12 @@ export type FsListResult = {
 };
 
 export type TransferMode = "copy" | "move";
+
+/** Files on the system clipboard, whoever put them there. */
+export type SystemClipboard = {
+  mode: TransferMode;
+  paths: string[];
+};
 export type ConflictChoice = "fail" | "replace" | "keep" | "skip";
 
 /** One destination that already exists, with both sides of the trade. */
@@ -329,6 +335,47 @@ export const ipc = {
     transport.invoke<{ path: string }>("rename_entry", { path, name }),
 
   trash: (path: string) => transport.invoke<unknown>("trash", { path }),
+
+  /**
+   * The *system* clipboard, which is the shell's rather than the daemon's (D49).
+   *
+   * These are the only three calls in this file that do not reach the daemon: it is headless,
+   * and a clipboard belongs to a session. Everything else here is forwarding.
+   */
+  clipboardWrite: (paths: string[], mode: TransferMode) =>
+    transport.invoke<void>("clipboard_write", { paths, mode }),
+
+  /** What is on the clipboard, if it is files. Null for text, an image, or nothing. */
+  clipboardRead: () => transport.invoke<SystemClipboard | null>("clipboard_read"),
+
+  clipboardClear: () => transport.invoke<void>("clipboard_clear"),
+
+  /**
+   * Files dragged in from another application.
+   *
+   * The shell intercepts the drop before the page sees it, which is why this is an event rather
+   * than a DOM handler: a webview is handed a list of paths, not a list of files it could read.
+   * That is the right way round — the daemon does the reading, under the deny-list.
+   */
+  onFilesDropped: (handler: (paths: string[]) => void) =>
+    transport.listen("tauri://drag-drop", (payload) => {
+      const dropped = payload as { paths?: string[] } | null;
+      if (dropped?.paths && dropped.paths.length > 0) handler(dropped.paths);
+    }),
+
+  /** Something is being dragged over the window. For showing that it can be let go of. */
+  onDragOver: (handler: (over: boolean) => void) =>
+    transport
+      .listen("tauri://drag-enter", () => handler(true))
+      .then((offEnter) =>
+        Promise.all([
+          transport.listen("tauri://drag-leave", () => handler(false)),
+          transport.listen("tauri://drag-drop", () => handler(false)),
+        ]).then((offs) => () => {
+          offEnter();
+          for (const off of offs) off();
+        }),
+      ),
 
   undo: (last = 1) => transport.invoke<{ undone: unknown[] }>("undo_last", { last }),
 

@@ -59,6 +59,35 @@ export function elideStart(text: string, max: number): string {
   return `…${text.slice(text.length - max + 1)}`;
 }
 
+/**
+ * A path as a `file://` URI, for handing files to another application.
+ *
+ * The third implementation of this encoding in the project — the daemon has none, the shell has
+ * one for the clipboard, and this one is for a drag. It is here rather than borrowed because a
+ * drag never goes through the shell: the page hands the webview a string and the webview hands
+ * it to the compositor.
+ *
+ * Everything outside RFC 3986's unreserved set is encoded, `/` excepted. The character that
+ * makes this necessary rather than tidy is the newline: a URI list is line-separated, so a file
+ * whose name contains one would otherwise arrive at the other end as two files.
+ */
+export function fileUri(path: string): string {
+  let out = "file://";
+  // `encodeURIComponent` handles the UTF-8 and most of the escaping; the split keeps the
+  // separators. What it leaves behind — ! ' ( ) * — is legal in a URI path and every receiver
+  // accepts it, but the shell's encoder escapes those too, and two encoders that produce
+  // different strings for the same file are two encoders nobody can test against each other.
+  for (const segment of path.split("/")) {
+    if (segment === "") continue;
+    out += `/${encodeURIComponent(segment).replace(/[!'()*]/g, hexEscape)}`;
+  }
+  return path === "/" ? "file:///" : out;
+}
+
+function hexEscape(character: string): string {
+  return `%${character.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`;
+}
+
 /** The tier badge, or nothing. Cold results are marked so the tiering model is legible (M4). */
 export function tierLabel(tier: string): string | null {
   switch (tier) {
