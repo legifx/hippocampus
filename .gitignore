@@ -22,3 +22,7 @@ ui/src-tauri/target/
 .env
 .env.*
 *.local.toml
+
+# Playwright writes these on every run; they are output, not source.
+ui/test-results/
+ui/playwright-report/

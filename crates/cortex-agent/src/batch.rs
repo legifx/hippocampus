@@ -31,23 +31,18 @@ pub struct TransferPlan {
 /// What a path is, for a conflict to describe. `None` when there is nothing there.
 fn describe(path: &Path) -> Option<FsEntry> {
     let md = std::fs::symlink_metadata(path).ok()?;
-    Some(FsEntry {
-        path: path.to_path_buf(),
-        kind: if md.is_dir() {
-            FsKind::Dir
-        } else if md.is_symlink() {
-            FsKind::Symlink
-        } else if md.is_file() {
-            FsKind::File
-        } else {
-            FsKind::Other
-        },
-        size: md.len(),
-        mtime: crate::plans::mtime_of(&md),
-        indexed: false,
-    })
+    Some(crate::fs_tools::entry_from(
+        path.to_path_buf(),
+        &md,
+        &crate::users::Names::from_system(),
+        false,
+    ))
 }
 
+/// What to show when the thing being described has already gone.
+///
+/// A conflict dialog needs two sides even when one of them vanished between the dry run and the
+/// question; showing an empty row would be worse than showing a name with nothing behind it.
 fn placeholder(path: &Path) -> FsEntry {
     FsEntry {
         path: path.to_path_buf(),
@@ -55,6 +50,12 @@ fn placeholder(path: &Path) -> FsEntry {
         size: 0,
         mtime: 0,
         indexed: false,
+        mode: None,
+        owner: None,
+        group: None,
+        target: None,
+        target_kind: None,
+        broken: false,
     }
 }
 

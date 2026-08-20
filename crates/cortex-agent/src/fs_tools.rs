@@ -130,6 +130,10 @@ impl Surface<'_> {
         let mut hidden = 0usize;
         let mut truncated = false;
 
+        // Once per listing, not once per entry: ten thousand files must not mean ten thousand
+        // reads of `/etc/passwd`.
+        let names = crate::users::Names::from_system();
+
         let mut queue = vec![(root.clone(), 1u32)];
         while let Some((dir, level)) = queue.pop() {
             let reader = match std::fs::read_dir(&dir) {
@@ -165,13 +169,7 @@ impl Surface<'_> {
                     .node_by_path(&path)
                     .map(|n| n.is_some())
                     .unwrap_or(false);
-                entries.push(FsEntry {
-                    path,
-                    kind,
-                    size: md.len(),
-                    mtime: crate::plans::mtime_of(&md),
-                    indexed,
-                });
+                entries.push(entry_from(path, &md, &names, indexed));
             }
             if truncated {
                 break;
@@ -922,6 +920,59 @@ fn read_range(path: &Path, offset: u64, want: u64) -> std::io::Result<Vec<u8>> {
     Ok(buf)
 }
 
+/// Everything a listing can say about one entry.
+///
+/// One function rather than three construction sites, because the fields that were added for
+/// M6 — permissions, ownership, where a link points — are the kind that get added in one place
+/// and forgotten in the other two, and then a file shows its owner in a listing and not in a
+/// conflict dialog for no reason anybody can explain.
+///
+/// `md` must come from `symlink_metadata` (or `DirEntry::metadata`, which is the same thing on
+/// Unix). A link described by its target's metadata is a link the reader cannot see is a link.
+pub(crate) fn entry_from(
+    path: PathBuf,
+    md: &std::fs::Metadata,
+    names: &crate::users::Names,
+    indexed: bool,
+) -> FsEntry {
+    let kind = kind_of(md);
+    let mut entry = FsEntry {
+        path,
+        kind,
+        size: md.len(),
+        mtime: crate::plans::mtime_of(md),
+        indexed,
+        mode: None,
+        owner: None,
+        group: None,
+        target: None,
+        target_kind: None,
+        broken: false,
+    };
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        entry.mode = Some(md.mode());
+        entry.owner = Some(names.user(md.uid()));
+        entry.group = Some(names.group(md.gid()));
+    }
+
+    if kind == FsKind::Symlink {
+        // Verbatim, relative if it was written relative: that is what the link says, and
+        // resolving it would be answering a different question than "where does this point".
+        entry.target = std::fs::read_link(&entry.path).ok();
+        // One extra stat, and only for links. `metadata` follows, which is the point — it is
+        // also what reports a dangling link, by failing.
+        match std::fs::metadata(&entry.path) {
+            Ok(target) => entry.target_kind = Some(kind_of(&target)),
+            Err(_) => entry.broken = true,
+        }
+    }
+
+    entry
+}
+
 fn kind_of(md: &std::fs::Metadata) -> FsKind {
     if md.is_dir() {
         FsKind::Dir
@@ -977,11 +1028,10 @@ fn sort_entries(entries: &mut [FsEntry], sort: SortBy, reverse: bool) {
 
 fn entry_at(path: &Path) -> Option<FsEntry> {
     let md = std::fs::symlink_metadata(path).ok()?;
-    Some(FsEntry {
-        path: path.to_path_buf(),
-        kind: kind_of(&md),
-        size: md.len(),
-        mtime: crate::plans::mtime_of(&md),
-        indexed: false,
-    })
+    Some(entry_from(
+        path.to_path_buf(),
+        &md,
+        &crate::users::Names::from_system(),
+        false,
+    ))
 }

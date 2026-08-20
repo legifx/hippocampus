@@ -1006,3 +1006,76 @@ system where a journal row is updated rather than appended, and `Store::replace_
 without knowing this program exists. Ten thousand agent overwrites would fill the trash, which
 is the same thing that happens when a person deletes ten thousand files, and the trash is where
 that is dealt with.
+
+---
+
+### D46 — Names come from `/etc/passwd`, not from `getpwuid`
+**Status:** ACCEPTED.
+
+A listing resolves uid and gid to names by parsing `/etc/passwd` and `/etc/group` once per
+listing, rather than by calling `getpwuid`/`getgrgid`.
+
+**Why:** those calls go through NSS, and on a machine configured with LDAP, SSSD or NIS they can
+block on the network for as long as the resolver's timeout allows. R5 says no network access by
+default, and a directory listing is the wrong place to discover that a directory server is
+unreachable. The listing has a latency budget; a name lookup does not get to spend it.
+
+**What it costs:** ids that live only in a network directory do not resolve, and show as
+numbers. That is the same thing that would be shown if the NSS lookup timed out — it just
+happens in microseconds instead of seconds. A machine whose users are all local, which is every
+machine this is being built for, loses nothing.
+
+**Once per listing, not once per entry.** Ten thousand files must not mean ten thousand reads of
+`/etc/passwd`. `Names::from_system()` is constructed at the top of `fs.list` and passed down.
+
+**A missing or unreadable file is an empty map, never an error.** Not knowing a name is a column
+showing a number. It is not a reason to fail a listing.
+
+---
+
+### D47 — A symlink is reported as itself, and separately as what it points at
+**Status:** ACCEPTED.
+
+`FsEntry.kind` describes the entry; `target`, `target_kind` and `broken` describe where it
+leads. Metadata is read with `symlink_metadata` (or `DirEntry::metadata`, which is the same
+thing on Unix) everywhere, so nothing follows a link by accident.
+
+**Why not report the target's kind as the entry's kind:** it makes a link indistinguishable from
+a copy. That is precisely the difference somebody needs before they decide to delete one of two
+things that look identical, and a file manager that hides it will eventually cost somebody the
+original.
+
+**Why `target_kind` exists anyway:** a link to a directory has to open like a directory. Without
+it the row renders as a file and Enter tries to preview a directory. So the frontend draws the
+row from `kind` and decides what Enter does from both — which is the one place the distinction
+is allowed to collapse, and it collapses in the direction that does what the person meant.
+
+**The target is verbatim.** A relative link is shown relative, because that is what the link
+says; resolving it would answer "where does this end up", which is a different question and one
+whose answer changes when the directory moves.
+
+**A broken link is listed, not hidden.** It looks exactly like a working one until somebody
+tries it, so the listing is the only place it can be noticed.
+
+---
+
+### D48 — `format_mode` exists twice, in Rust and in TypeScript
+**Status:** ACCEPTED. Narrow exception to D4.
+
+D4 forbids data processing in the frontend. Rendering `0o100644` as `-rw-r--r--` is written
+twice: `cortex_core::tools::format_mode` for the CLI and any other client, and `formatMode` in
+`ui/src/row.ts` for the interface.
+
+**Why this does not reverse D4:** the rule is about *deciding* — ranking, matching, filtering,
+sorting — because a frontend that decides becomes a second implementation of the search that
+disagrees with the first. Formatting decides nothing. The daemon sends the same number to every
+client and each renders it; two clients cannot come to different conclusions about a file
+because one of them wrote out ten characters.
+
+**Why not send the string:** the number is the fact and the string is a rendering of it. A
+client that wanted to show an octal mode, or to check a single bit, would have to parse the
+string back — and the wire type would have been chosen for one client's convenience.
+
+**How the two are kept honest:** both are tested against the same expected strings, including
+setuid, setgid, sticky and the capital-letter cases, and both are asserted to be exactly ten
+characters wide for every mode from 0 to 0o7777.

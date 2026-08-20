@@ -119,3 +119,68 @@ test.describe("browsing", () => {
     expect(crumbs).toBeLessThanOrEqual(0);
   });
 });
+
+/**
+ * M6 §1: "permissions, ownership, symbolic links displayed correctly".
+ *
+ * Correctly is the load-bearing word. A link drawn as its target is indistinguishable from a
+ * copy, and that is the difference somebody needs before they decide to delete one of them.
+ */
+test.describe("what a row says beyond its name", () => {
+  /** The fixture puts links one level down, so the root listing stays as the layout tests measure it. */
+  async function descend(page: Page) {
+    await page.keyboard.press("Enter");
+    await expect(page.locator('.hc-crumb[aria-current="page"]')).not.toHaveText("/");
+  }
+
+  test("a link shows where it points, and a broken one says it is broken", async ({ page }) => {
+    await open(page);
+    await descend(page);
+
+    const link = page.locator(".hc-row", { hasText: "verweis-auf-ordner" });
+    await expect(link.locator(".hc-row-link")).toContainText("→");
+    await expect(link.locator(".hc-row-link")).toContainText("anderswo");
+
+    const broken = page.locator(".hc-row", { hasText: "kaputter-verweis" });
+    await expect(broken.locator(".hc-row-link-broken")).toBeVisible();
+    await expect(broken.locator(".hc-row-broken")).toHaveText("fehlt");
+
+    // Relative links are shown as written rather than resolved: that is what the link says.
+    const relative = page.locator(".hc-row", { hasText: "relativer-verweis" });
+    await expect(relative.locator(".hc-row-link")).toContainText("kurz.txt");
+  });
+
+  test("a link to a directory opens like a directory", async ({ page }) => {
+    await open(page);
+    await descend(page);
+
+    // It is still drawn as a link — but the marker and Enter both treat it as the place it is.
+    const link = page.locator(".hc-row", { hasText: "verweis-auf-ordner" });
+    await expect(link).toHaveClass(/hc-row-directory/);
+  });
+
+  test("permissions are shown in a wide window and dropped in a narrow one", async ({ page }) => {
+    await open(page, 1200);
+    await descend(page);
+
+    const first = page.locator(".hc-row").first();
+    await expect(first.locator(".hc-row-mode")).toHaveText("drwxr-xr-x");
+
+    // Ten characters of monospace is the first thing to go when the column narrows: the name
+    // is what identifies a row, and permissions are read deliberately rather than at a glance.
+    await page.setViewportSize({ width: 400, height: 700 });
+    await expect(first.locator(".hc-row-mode")).toBeHidden();
+  });
+
+  test("the sidebar names the owner and the link target", async ({ page }) => {
+    await open(page, 1200);
+    await descend(page);
+
+    const context = page.locator(".hc-context");
+    await expect(context.getByText("someone:someone")).toBeVisible();
+
+    // Down to the broken link — the sidebar settles 120 ms after the selection stops.
+    for (let i = 0; i < 6; i++) await page.keyboard.press("ArrowDown");
+    await expect(context.getByText("/home/user/weg.txt — fehlt")).toBeVisible();
+  });
+});

@@ -146,6 +146,16 @@ const ListRow = memo(function ListRow({
       <span className="hc-row-name hc-row-text">
         {row.isDir && <span className="hc-row-dirmark" aria-hidden="true" />}
         {row.name}
+        {row.linkTarget !== null && (
+          // The arrow and the target, inline: a link that showed only its own name would be
+          // indistinguishable from a copy, which is the difference that matters when somebody
+          // decides to delete one of them.
+          <span className={row.broken ? "hc-row-link hc-row-link-broken" : "hc-row-link"}>
+            {" → "}
+            {elideStart(row.linkTarget, 40)}
+            {row.broken && <span className="hc-pill hc-row-broken">fehlt</span>}
+          </span>
+        )}
       </span>
       {row.dir && <span className="hc-row-dir hc-meta">{elideStart(row.dir, 48)}</span>}
       {row.snippet && <span className="hc-row-snippet hc-meta">{row.snippet}</span>}
@@ -154,6 +164,11 @@ const ListRow = memo(function ListRow({
         {!row.indexed && (
           <span className="hc-pill hc-unindexed" title="Der Index kennt diese Datei noch nicht">
             neu
+          </span>
+        )}
+        {row.mode && (
+          <span className="hc-num hc-row-mode" title={row.owner ?? undefined}>
+            {row.mode}
           </span>
         )}
         <span className="hc-num">{row.isDir ? "" : formatSize(row.size)}</span>

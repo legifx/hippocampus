@@ -59,12 +59,92 @@ impl Default for SortBy {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FsEntry {
     pub path: PathBuf,
+    /// What the entry *is*, not what it points at. A symlink is a symlink here, and where it
+    /// leads is `target`. Reporting a link as its target is the mistake M6 means by "symbolic
+    /// links displayed correctly": it makes a link indistinguishable from a copy, and deleting
+    /// one look like deleting the other.
     pub kind: FsKind,
     pub size: u64,
     pub mtime: i64,
     /// Whether the brain knows this path. An agent that can see the difference can tell
     /// "not found" from "not indexed yet", which is the most common confusion at this surface.
     pub indexed: bool,
+    /// The permission bits, as `stat` gives them. `None` where the platform has no such idea.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<u32>,
+    /// Who owns it. The name where it could be resolved, the number otherwise — a file manager
+    /// that shows `1000` has told you less than it knows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<Owner>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<Owner>,
+    /// Where a symlink points, verbatim — relative if it was written relative, because that is
+    /// what the link says and rewriting it would be answering a different question.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<PathBuf>,
+    /// What the target turns out to be, so a link to a directory can be opened like one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_kind: Option<FsKind>,
+    /// A link whose target is not there. Worth showing rather than hiding: a broken link looks
+    /// exactly like a working one until somebody tries it.
+    #[serde(default)]
+    pub broken: bool,
+}
+
+/// A user or a group: the number, and the name if the system could give one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Owner {
+    pub id: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+impl Owner {
+    pub fn label(&self) -> String {
+        match &self.name {
+            Some(name) => name.clone(),
+            None => self.id.to_string(),
+        }
+    }
+}
+
+/// Render permission bits the way every Unix tool does.
+///
+/// Written out because the format is a contract with the reader's eyes rather than a formatting
+/// preference: `drwxr-xr-x` is read at a glance by anybody who has used a terminal, and a
+/// prettier invention would have to be learned.
+pub fn format_mode(kind: FsKind, mode: u32) -> String {
+    let mut out = String::with_capacity(10);
+    out.push(match kind {
+        FsKind::Dir => 'd',
+        FsKind::Symlink => 'l',
+        FsKind::File => '-',
+        FsKind::Other => '?',
+    });
+
+    for shift in [6, 3, 0] {
+        let bits = (mode >> shift) & 0o7;
+        out.push(if bits & 0o4 != 0 { 'r' } else { '-' });
+        out.push(if bits & 0o2 != 0 { 'w' } else { '-' });
+
+        // The execute column carries setuid, setgid and the sticky bit, which is where a
+        // surprise hides: a file that is `rwsr-xr-x` is not the same as one that is `rwxr-xr-x`.
+        let executable = bits & 0o1 != 0;
+        let special = match shift {
+            6 => mode & 0o4000 != 0,
+            3 => mode & 0o2000 != 0,
+            _ => mode & 0o1000 != 0,
+        };
+        out.push(match (special, executable, shift) {
+            (true, true, 0) => 't',
+            (true, false, 0) => 'T',
+            (true, true, _) => 's',
+            (true, false, _) => 'S',
+            (false, true, _) => 'x',
+            (false, false, _) => '-',
+        });
+    }
+    out
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -617,4 +697,50 @@ pub struct FsRenameParams {
     /// would make "rename" and "move" the same call with different expectations about what
     /// happens when the target is somewhere else entirely.
     pub name: String,
+}
+
+#[cfg(test)]
+mod mode_tests {
+    use super::*;
+
+    #[test]
+    fn the_common_cases_read_the_way_ls_prints_them() {
+        assert_eq!(format_mode(FsKind::File, 0o644), "-rw-r--r--");
+        assert_eq!(format_mode(FsKind::Dir, 0o755), "drwxr-xr-x");
+        assert_eq!(format_mode(FsKind::Symlink, 0o777), "lrwxrwxrwx");
+        assert_eq!(format_mode(FsKind::File, 0o600), "-rw-------");
+        assert_eq!(format_mode(FsKind::File, 0), "----------");
+    }
+
+    #[test]
+    fn a_full_stat_mode_ignores_the_type_bits_it_carries() {
+        // `st_mode` is the permission bits *and* the file type. Formatting it without masking
+        // would give a nonsense first triplet, and the type is already known from `kind`.
+        assert_eq!(format_mode(FsKind::File, 0o100644), "-rw-r--r--");
+        assert_eq!(format_mode(FsKind::Dir, 0o040755), "drwxr-xr-x");
+    }
+
+    #[test]
+    fn setuid_setgid_and_sticky_replace_the_execute_column() {
+        // The distinction that matters: `-rwsr-xr-x` runs as its owner and `-rwxr-xr-x` does
+        // not, and they differ by one character a reader would otherwise never see.
+        assert_eq!(format_mode(FsKind::File, 0o4755), "-rwsr-xr-x");
+        assert_eq!(format_mode(FsKind::File, 0o2755), "-rwxr-sr-x");
+        assert_eq!(format_mode(FsKind::Dir, 0o1777), "drwxrwxrwt", "like /tmp");
+
+        // Capitals where the bit is set but the execute bit is not — an oddity worth showing
+        // rather than smoothing over, because it is usually a mistake.
+        assert_eq!(format_mode(FsKind::File, 0o4644), "-rwSr--r--");
+        assert_eq!(format_mode(FsKind::File, 0o2644), "-rw-r-Sr--");
+        assert_eq!(format_mode(FsKind::Dir, 0o1666), "drw-rw-rwT");
+    }
+
+    #[test]
+    fn every_mode_gives_exactly_ten_characters() {
+        // The column is aligned in the UI, so a mode that formats to nine or eleven characters
+        // would shift every row after it.
+        for mode in 0..0o10000u32 {
+            assert_eq!(format_mode(FsKind::File, mode).chars().count(), 10, "{mode:o}");
+        }
+    }
 }

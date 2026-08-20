@@ -10,8 +10,8 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | M6 — Human View (pulled ahead of M5 at the owner's request, D43) |
-| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 652 tests. |
-| **Last updated** | 2026-08-18 |
+| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 704 tests. |
+| **Last updated** | 2026-08-20 |
 | **Blocked on** | nothing |
 
 ## Where M6 stands
@@ -48,6 +48,24 @@ folder, Ctrl+Z to undo. Copying shows a bar with a real denominator and Escape c
 to ten a second; `fs.mkdir` and `fs.rename` answer immediately. Every one of them writes an undo
 entry, and a batch writes one per source so a partly-failed batch is still undoable.
 
+**Saying what an entry is.** A listing now carries permissions, owner and group, and — for a
+symbolic link — where it points and what is there. The rows show `drwxr-xr-x` in a wide window,
+`name → target` for a link, and a struck-through target with `fehlt` when the target is gone.
+The sidebar names the owner, and `cortex ls` prints the same three columns, in `ls`'s order.
+
+Two details are load-bearing rather than cosmetic:
+
+- **A link stays a link.** `kind` describes the entry itself; the target has its own field.
+  Reporting a link as its target makes it indistinguishable from a copy, which is exactly the
+  difference somebody needs before deciding to delete one of them.
+- **`target_kind` makes a link to a directory openable.** Without it the row renders as a file
+  and Enter tries to preview a directory instead of descending into it.
+
+Names come from `/etc/passwd` rather than `getpwuid`, once per listing (D46) — NSS can block on
+the network and a listing has a latency budget. The `drwxr-xr-x` formatter is written twice, in
+Rust and in TypeScript, tested against the same strings (D48); the reasoning about links is
+D47.
+
 **Asking before overwriting.** `fs.transfer` takes `dry_run`, which answers *which* names are
 already taken instead of moving anything. The interface uses it on every paste: no conflicts and
 the transfer starts; conflicts and a dialog asks, showing both sides — what is there and what
@@ -56,12 +74,11 @@ The safest choice is first and Enter takes it, each option has a letter, Escape 
 
 ### What M6 still needs
 
-1. **Permissions, ownership and symlinks** displayed.
-2. **Mounts via udisks2**, `xdg-mime` for "open with", Wayland drag and drop, and the *system*
+1. **Mounts via udisks2**, `xdg-mime` for "open with", Wayland drag and drop, and the *system*
    clipboard — cut and copy currently live in the window and cannot paste into another app.
-3. **Archives** — extract zip and tar at minimum.
-4. **Network locations**, which may be staged.
-5. **Thumbnails in the list**, not only in the preview pane.
+2. **Archives** — extract zip and tar at minimum.
+3. **Network locations**, which may be staged.
+4. **Thumbnails in the list**, not only in the preview pane.
 
 And two holes the reorder creates, which should stay visible rather than be filled with a
 plausible number (D43): the sidebar cannot show salience, and the cold-tier indicator has

@@ -157,7 +157,12 @@ export function App() {
   // The list follows the arrow key; the panes follow the list once it stops. Holding a key
   // otherwise fires one `brain.neighbors` and one preview render per row passed over, and
   // every one of them describes a row nobody looked at.
-  const settled = useDeferred(hit);
+  // The hit and the row it came from settle together, as one value: they describe the same
+  // file, and two timers could let the sidebar's title and its permissions disagree for a
+  // frame while an arrow key is held down.
+  const focus = useMemo(() => ({ hit, row: current }), [hit, current]);
+  const settledFocus = useDeferred(focus);
+  const settled = settledFocus.hit;
 
   // The first frame a person can act on. M4 §1's timer stops here.
   useEffect(() => {
@@ -643,7 +648,7 @@ export function App() {
         </div>
 
         {showPreview && (showBoth || pane === "preview") && <PreviewPane hit={settled} />}
-        {showContext && <ContextSidebar hit={settled} />}
+        {showContext && <ContextSidebar hit={settled} row={settledFocus.row} />}
       </main>
 
       {operations.pending && (

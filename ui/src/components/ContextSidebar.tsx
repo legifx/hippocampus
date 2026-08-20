@@ -14,12 +14,13 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useState } from "react";
 import { ipc, type NeighborsResult, type SearchHit } from "../ipc";
 import { formatAge, splitPath } from "../format";
+import type { Row } from "../row";
 import { spring, stagger } from "../motion";
 
 /** Everything the schema allows except `annotates`, which arrives separately. */
 const RELATED_EDGES = ["contains", "co_access", "imports", "similar_to", "derived_from"];
 
-export function ContextSidebar({ hit }: { hit: SearchHit | null }) {
+export function ContextSidebar({ hit, row }: { hit: SearchHit | null; row?: Row | null }) {
   const [context, setContext] = useState<NeighborsResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -108,6 +109,35 @@ export function ContextSidebar({ hit }: { hit: SearchHit | null }) {
           </motion.div>
         ))}
       </Section>
+
+      {row && (row.mode || row.owner || row.linkTarget !== null) && (
+        // The `stat` facts, which only a directory listing has: a search result comes from the
+        // index, and the index stores what a file is rather than the permissions it had when it
+        // was last read. An out-of-date mode would be worse than none.
+        <dl className="hc-facts hc-meta">
+          {row.mode && (
+            <div>
+              <dt>Rechte</dt>
+              <dd className="hc-num">{row.mode}</dd>
+            </div>
+          )}
+          {row.owner && (
+            <div>
+              <dt>Besitzer</dt>
+              <dd>{row.owner}</dd>
+            </div>
+          )}
+          {row.linkTarget !== null && (
+            <div>
+              <dt>Verweist auf</dt>
+              <dd className={row.broken ? "hc-error" : undefined}>
+                {row.linkTarget}
+                {row.broken && " — fehlt"}
+              </dd>
+            </div>
+          )}
+        </dl>
+      )}
 
       <dl className="hc-facts hc-meta">
         <div>

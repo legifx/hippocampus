@@ -322,6 +322,36 @@
   display: none;
 }
 
+/* Permissions are ten characters of monospace and the first thing to go when space runs out:
+   they are read deliberately, not at a glance, and the wide layout is where that happens. */
+.hc-row-mode {
+  font-variant-numeric: normal;
+  letter-spacing: 0.02em;
+  color: var(--hc-text-faint);
+}
+
+[data-width="narrow"] .hc-row-mode,
+[data-width="medium"] .hc-row-mode {
+  display: none;
+}
+
+/* Where a link points, in the row itself. Dimmer than the name, because the name is what is
+   being looked for and the target is what explains it. */
+.hc-row-link {
+  color: var(--hc-text-faint);
+}
+
+.hc-row-link-broken {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.hc-row-broken {
+  margin-left: 6px;
+  text-decoration: none;
+  color: var(--hc-warning);
+}
+
 [data-density="comfortable"] .hc-row-snippet {
   display: block;
   grid-area: dir;

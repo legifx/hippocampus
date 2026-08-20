@@ -63,7 +63,37 @@ setTransport({
           size,
           mtime: 1_700_000_000 - i * 86_400,
           indexed: i % 3 !== 0,
+          // Every real listing carries these, so the fixture does too — a permissions column
+          // that only ever appeared against a live daemon would be a column nothing tests.
+          mode: kind === "dir" ? 0o040755 : 0o100644,
+          owner: { id: 1000, name: "someone" },
+          group: { id: 1000, name: "someone" },
         });
+        // Links live one level down, so the root listing keeps the five entries the layout
+        // tests are measured against.
+        const links =
+          base === ""
+            ? []
+            : [
+                {
+                  ...entry("verweis-auf-ordner", "symlink", 12, 5),
+                  mode: 0o120777,
+                  target: "/home/user/anderswo",
+                  target_kind: "dir",
+                },
+                {
+                  ...entry("kaputter-verweis", "symlink", 9, 6),
+                  mode: 0o120777,
+                  target: "/home/user/weg.txt",
+                  broken: true,
+                },
+                {
+                  ...entry("relativer-verweis", "symlink", 8, 7),
+                  mode: 0o120777,
+                  target: "kurz.txt",
+                  target_kind: "file",
+                },
+              ];
         return {
           path: at,
           entries: [
@@ -72,6 +102,7 @@ setTransport({
             entry("notes-with-a-long-enough-name-to-elide.md", "file", 4096, 2),
             entry("bild.png", "file", 2_400_000, 3),
             entry("kurz.txt", "file", 12, 4),
+            ...links,
           ],
           truncated: false,
           hidden: 1,

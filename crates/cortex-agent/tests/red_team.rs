@@ -520,3 +520,123 @@ fn the_order_is_stable_across_two_identical_listings() {
     let b = first.iter().position(|n| n == "same-b.bin").unwrap();
     assert!(a < b, "the tie-break is the name, always");
 }
+
+// ---------------------------------------------------------------------------
+// What a listing says about an entry beyond its name. M6 asks for permissions, ownership and
+// symbolic links "displayed correctly", and correctly is the load-bearing word: a link reported
+// as its target is indistinguishable from a copy, and deleting one then looks like deleting the
+// other.
+// ---------------------------------------------------------------------------
+
+fn entry_named<'a>(result: &'a cortex_core::tools::FsListResult, name: &str) -> &'a FsEntry {
+    for entry in &result.entries {
+        if entry.path.file_name().is_some_and(|n| n == name) {
+            return entry;
+        }
+    }
+    panic!("no entry called {name} in {:?}", result.entries);
+}
+
+fn list_all(f: &Fixture) -> cortex_core::tools::FsListResult {
+    f.surface(true)
+        .list(&FsListParams {
+            path: f.allowed.clone(),
+            glob: None,
+            depth: None,
+            limit: None,
+            sort: Default::default(),
+            reverse: false,
+        })
+        .unwrap()
+}
+
+#[test]
+fn a_symlink_is_reported_as_a_symlink_and_not_as_what_it_points_at() {
+    let f = Fixture::new();
+    let target = f.allowed.join("target.txt");
+    std::fs::write(&target, "hello").unwrap();
+    std::os::unix::fs::symlink(&target, f.allowed.join("link.txt")).unwrap();
+
+    let result = list_all(&f);
+    let link = entry_named(&result, "link.txt");
+
+    assert_eq!(link.kind, FsKind::Symlink, "a link is a link, not a file");
+    assert_eq!(link.target.as_deref(), Some(target.as_path()));
+    assert_eq!(link.target_kind, Some(FsKind::File));
+    assert!(!link.broken);
+
+    // And the target itself is untouched by any of this.
+    assert_eq!(entry_named(&result, "target.txt").kind, FsKind::File);
+    assert!(entry_named(&result, "target.txt").target.is_none());
+}
+
+#[test]
+fn a_link_to_a_directory_says_so_so_that_it_can_be_opened_like_one() {
+    // Without `target_kind` this entry renders as "not a directory", and pressing Enter on it
+    // tries to preview a directory instead of descending into it.
+    let f = Fixture::new();
+    std::fs::create_dir(f.allowed.join("somewhere")).unwrap();
+    std::os::unix::fs::symlink(f.allowed.join("somewhere"), f.allowed.join("shortcut")).unwrap();
+
+    let link = list_all(&f);
+    let link = entry_named(&link, "shortcut");
+    assert_eq!(link.kind, FsKind::Symlink);
+    assert_eq!(link.target_kind, Some(FsKind::Dir));
+}
+
+#[test]
+fn a_broken_link_is_listed_rather_than_hidden() {
+    // A dangling link looks exactly like a working one until somebody tries it, which is the
+    // argument for showing it: the listing is the only place it can be noticed.
+    let f = Fixture::new();
+    std::os::unix::fs::symlink(f.allowed.join("gone.txt"), f.allowed.join("dangling")).unwrap();
+
+    let result = list_all(&f);
+    let link = entry_named(&result, "dangling");
+    assert_eq!(link.kind, FsKind::Symlink);
+    assert!(link.broken, "the link points at nothing and says so");
+    assert_eq!(link.target_kind, None);
+    assert_eq!(link.target.as_deref(), Some(f.allowed.join("gone.txt").as_path()));
+}
+
+#[test]
+fn a_relative_link_is_reported_as_written() {
+    // Rewriting it to an absolute path would answer "where does this end up" instead of "what
+    // does this link say", and the two differ the moment the directory is moved.
+    let f = Fixture::new();
+    std::fs::write(f.allowed.join("target.txt"), "hello").unwrap();
+    std::os::unix::fs::symlink("target.txt", f.allowed.join("relative")).unwrap();
+
+    let link = list_all(&f);
+    assert_eq!(
+        entry_named(&link, "relative").target.as_deref(),
+        Some(std::path::Path::new("target.txt"))
+    );
+}
+
+#[test]
+fn permissions_and_ownership_come_back_with_every_entry() {
+    let f = Fixture::new();
+    let script = f.allowed.join("run.sh");
+    std::fs::write(&script, "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o750)).unwrap();
+
+    let result = list_all(&f);
+    let entry = entry_named(&result, "run.sh");
+
+    let mode = entry.mode.expect("a listing on Unix knows the mode");
+    assert_eq!(mode & 0o777, 0o750);
+    assert_eq!(cortex_core::tools::format_mode(entry.kind, mode), "-rwxr-x---");
+
+    // The owner is whoever is running the test, which is the only thing that can be asserted
+    // portably — and the name, if this machine has an `/etc/passwd` that mentions them.
+    let owner = entry.owner.as_ref().expect("an owner");
+    assert_eq!(owner.id, unsafe { libc_getuid() });
+    assert!(entry.group.is_some());
+}
+
+/// `getuid` without a dependency on libc: it cannot fail and takes no arguments.
+extern "C" {
+    #[link_name = "getuid"]
+    fn libc_getuid() -> u32;
+}

@@ -102,13 +102,30 @@ export type SearchUpdate = {
 
 export type FsKind = "file" | "dir" | "symlink" | "other";
 
+/** A user or a group: the number, and the name where the system could give one. */
+export type Owner = {
+  id: number;
+  name?: string | null;
+};
+
 export type FsEntry = {
   path: string;
+  /** What the entry *is*. A symlink is a symlink; where it leads is `target`. */
   kind: FsKind;
   size: number;
   mtime: number;
   /** Whether the brain knows this path — "not there" and "not indexed yet" look alike without it. */
   indexed: boolean;
+  /** Permission bits as `stat` gives them, already formatted by the daemon. */
+  mode?: number | null;
+  owner?: Owner | null;
+  group?: Owner | null;
+  /** Where a symlink points, verbatim — relative if it was written relative. */
+  target?: string | null;
+  /** What the target turns out to be, so a link to a directory can be opened like one. */
+  target_kind?: FsKind | null;
+  /** A link whose target is not there. */
+  broken?: boolean;
 };
 
 /** The orders the daemon can put a listing in. The frontend never sorts (D4). */

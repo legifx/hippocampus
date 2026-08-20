@@ -1101,9 +1101,27 @@ async fn run(args: Args) -> Result<()> {
                 print_json(&result)?;
             } else {
                 for entry in &result.entries {
+                    // The columns `ls` has, in the order `ls` has them, because this is the
+                    // surface a person reaches for when they want to check permissions and any
+                    // rearrangement would make them read it twice.
+                    let mode = match entry.mode {
+                        Some(mode) => cortex_core::tools::format_mode(entry.kind, mode),
+                        None => format!("{:<10}", format!("{:?}", entry.kind).to_lowercase()),
+                    };
+                    let owner = match (&entry.owner, &entry.group) {
+                        (Some(user), Some(group)) => format!("{} {}", user.label(), group.label()),
+                        _ => String::new(),
+                    };
+                    let link = match &entry.target {
+                        Some(target) => format!(
+                            " -> {}{}",
+                            target.display(),
+                            if entry.broken { " (missing)" } else { "" }
+                        ),
+                        None => String::new(),
+                    };
                     println!(
-                        "{:<10} {:>10}  {}{}",
-                        format!("{:?}", entry.kind).to_lowercase(),
+                        "{mode} {owner:<16} {:>10}  {}{link}{}",
                         entry.size,
                         entry.path.display(),
                         if entry.indexed { "" } else { "  (not indexed)" }
