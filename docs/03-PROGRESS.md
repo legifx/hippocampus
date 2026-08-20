@@ -14,6 +14,46 @@ If you finish work without editing this file, the next agent starts from nothing
 | **Last updated** | 2026-08-20 |
 | **Blocked on** | nothing |
 
+## Start here
+
+**The owner's stated priority, in their words: everything stable and working first, the look of
+the interface afterwards.** They are not happy with the appearance yet and have deliberately
+deferred it. Do not spend a session on visual design unless they ask for it.
+
+**Four things are waiting on the owner rather than on code.** Ask; do not assume, and do not
+re-derive them by reasoning:
+
+1. **Does the overlay render correctly?** `WEBKIT_DISABLE_DMABUF_RENDERER=1` was removed from
+   the service unit (D54). It had been set against a WebKitGTK/NVIDIA pairing whose symptom is
+   glitches and black areas. It cost a whole CPU core. If the glitches are back, the override is
+   documented in `packaging/systemd/hippocampus-overlay.service` — put it back and say so here.
+2. **Does the system clipboard survive the window being hidden?** Copy in the overlay, then
+   `wl-paste --list-types` in a terminal. Wayland only lets a focused window take the selection;
+   whether the compositor keeps it after the surface unmaps is not something the documentation
+   settles. If it does not, `gtk_clipboard_set_can_store` or delaying the hide are the levers.
+3. **Does a drag out of the window reach another application?** The page offers `text/uri-list`
+   and the browser tests prove that much; they run in Chromium and the overlay runs in
+   WebKitGTK, so whether the webview forwards it to the compositor can only be found out by
+   dragging a row into something.
+4. **Is the scrolling right now?** Five separate causes of "it feels slow" have been found and
+   fixed (below). The last one was measured, not guessed, and at 420 px per frame there is still
+   72 px of gap. Pushing that further means a larger DOM, which is a trade to put to the owner
+   rather than to make.
+
+**How to answer a report of slowness.** Not by reasoning about it. The bridge logs any daemon
+call over 50 ms and any preview over 50 ms, and every one of the five causes was found in the
+journal:
+
+```
+journalctl --user -u hippocampus-overlay --since "-1d" -o cat \
+  | sed -E 's/\x1b\[[0-9;]*m//g' | grep -E "slow call|slow preview"
+```
+
+Equal durations across different methods finishing together is a queue, not slowness. A single
+call that is genuinely slow is a different problem. And check what the processes are actually
+doing before believing either — the largest cause of all was a hidden window burning a core, and
+no amount of reading the code would have shown it.
+
 ## Where M6 stands
 
 **Browsing works.** An empty query shows a directory; typing replaces the list with results and
