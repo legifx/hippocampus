@@ -8,6 +8,7 @@ mod extract_stage;
 mod indexer;
 mod ingest;
 mod lock;
+mod operations;
 mod semantics;
 mod server;
 

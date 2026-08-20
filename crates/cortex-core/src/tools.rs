@@ -472,3 +472,111 @@ pub struct DiffResult {
     /// True when `limit` cut the answer short and another call would return more.
     pub more: bool,
 }
+
+// ---------------------------------------------------------------------------
+// Transfers. Copying and moving are the two operations that can take a minute, so they are the
+// two that answer with a handle instead of a result.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransferMode {
+    Copy,
+    Move,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FsTransferParams {
+    /// What to move or copy. Several, because selecting five files and dragging them is one
+    /// operation to the person doing it and should be one operation here.
+    pub sources: Vec<PathBuf>,
+    /// The directory they end up in.
+    pub destination: PathBuf,
+    pub mode: TransferMode,
+    #[serde(default)]
+    pub conflict: ConflictChoice,
+    /// A confirmed plan, for an agent. A human's client has already asked.
+    #[serde(default)]
+    pub plan: Option<String>,
+}
+
+/// What to do when something is already there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConflictChoice {
+    /// Stop and say so. The default, because the other two each lose something.
+    Fail,
+    Replace,
+    /// Keep both: the arrival becomes `name (2).ext`.
+    Keep,
+    /// Leave the existing one alone and count it as done.
+    Skip,
+}
+
+impl Default for ConflictChoice {
+    fn default() -> Self {
+        ConflictChoice::Fail
+    }
+}
+
+/// The answer to starting a transfer: a handle, immediately.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransferStarted {
+    pub operation: u64,
+    /// What it is going to move, measured before the first byte.
+    pub total_files: u64,
+    pub total_bytes: u64,
+}
+
+/// Sent as the transfer runs. Throttled by the daemon — a notification per chunk would be a
+/// thousand messages a second saying nothing new.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransferProgress {
+    pub operation: u64,
+    pub files_done: u64,
+    pub bytes_done: u64,
+    pub total_files: u64,
+    pub total_bytes: u64,
+    /// Zero to one.
+    pub fraction: f64,
+    pub current: Option<PathBuf>,
+}
+
+/// Sent once, however it ended.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransferDone {
+    pub operation: u64,
+    pub moved: Vec<PathBuf>,
+    /// Sources that could not be transferred, each with the reason. A batch that stopped at the
+    /// first problem would leave a person guessing which of five files arrived.
+    pub failed: Vec<TransferFailure>,
+    pub cancelled: bool,
+    /// The journal entries that can undo what did happen.
+    pub undo_ids: Vec<i64>,
+    pub elapsed_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransferFailure {
+    pub source: PathBuf,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OperationCancelParams {
+    pub operation: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FsMkdirParams {
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FsRenameParams {
+    pub path: PathBuf,
+    /// The new name, not a path: renaming is within a directory, and accepting a path here
+    /// would make "rename" and "move" the same call with different expectations about what
+    /// happens when the target is somewhere else entirely.
+    pub name: String,
+}

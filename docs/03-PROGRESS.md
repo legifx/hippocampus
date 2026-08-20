@@ -34,17 +34,31 @@ which mode produced its rows.
 Nine browser tests cover it, including the 400 px case, because the breadcrumb is the new thing
 that could push the window sideways.
 
-### What M6 still needs — all of the mandatory list except listing
+### What works now
 
-1. **Copy, move and rename** with progress, cancellation and a conflict dialog. The daemon has
-   `fs.move` but no copy at all, and no long-running operation with progress.
-2. **The XDG Trash specification.** `fs.trash` currently moves into the state directory, which
-   is right for the undo journal and wrong for a file manager: a trashed file must land in
-   `~/.local/share/Trash` with a `.trashinfo`, where every other tool can see it.
-3. **Permissions, ownership and symlinks** displayed.
-4. **Mounts via udisks2**, `xdg-mime` for "open with", Wayland drag and drop, clipboard.
-5. **Archives** — extract zip and tar at minimum.
-6. **Network locations**, which may be staged.
+**Selecting.** Shift extends from an anchor that stays put, Ctrl toggles, Ctrl+A takes the
+directory, Escape narrows back to one. The cursor and the selection are drawn differently
+because they are different things. The selection is forgotten whenever the list changes, so
+"delete these three" can never mean whatever landed in those three positions.
+
+**Operating.** Ctrl+X / Ctrl+C / Ctrl+V, Delete to the trash, F2 to rename, Ctrl+Shift+N for a
+folder, Ctrl+Z to undo. Copying shows a bar with a real denominator and Escape cancels it.
+
+**Underneath.** `fs.transfer` answers with a handle and reports through notifications throttled
+to ten a second; `fs.mkdir` and `fs.rename` answer immediately. Every one of them writes an undo
+entry, and a batch writes one per source so a partly-failed batch is still undoable.
+
+### What M6 still needs
+
+1. **A conflict dialog.** The daemon takes `fail`, `replace`, `keep` and `skip`; the interface
+   only ever sends `fail`, so a paste onto an existing name reports a failure rather than
+   asking. The machinery is there and the question is not being put.
+2. **Permissions, ownership and symlinks** displayed.
+3. **Mounts via udisks2**, `xdg-mime` for "open with", Wayland drag and drop, and the *system*
+   clipboard — cut and copy currently live in the window and cannot paste into another app.
+4. **Archives** — extract zip and tar at minimum.
+5. **Network locations**, which may be staged.
+6. **Thumbnails in the list**, not only in the preview pane.
 
 And two holes the reorder creates, which should stay visible rather than be filled with a
 plausible number (D43): the sidebar cannot show salience, and the cold-tier indicator has
@@ -333,6 +347,43 @@ to remove it and compare.
 "obviously wasteful whatever the number is" and the fourth is a known driver problem. The bridge
 now logs any daemon call over 50 ms and any preview over 50 ms, so the next report of lag can be
 answered from the journal instead of from reasoning.
+
+### 2026-08-20 — M6: selecting several things, and doing something with them
+
+The half that decides whether this can replace a file manager. 745 tests.
+
+**The shared trash (D45).** Deleting and overwriting put things in `~/.local/share/Trash` with
+a `.trashinfo` each, or `$topdir/.Trash-$uid` for another filesystem — never a copy across a
+boundary to delete something. The info file is written before the move: a crash between them
+must leave an entry pointing at a file still in place, rather than a file nobody can restore.
+The trash picks the name, so the journal writes a placeholder and rewrites it, which is the one
+place a journal row is updated rather than appended.
+
+**Copying (§4).** Measure first so the bar has a denominator; check for cancellation inside the
+byte loop so a large file stops within a chunk; write to a temporary in the destination and
+rename, so an interrupted copy is absent rather than a plausible half. Tested against a running
+daemon: a cancel sent over the socket reaches a copy in flight, and nothing partial is left.
+
+**Who the allow-list is for (D44).** It gates agents. The first version ignored the actor, which
+was harmless while only agents mutated anything and absurd once the GUI grew a file manager —
+with the shipped configuration the owner could not move his own file. The red-team suite is
+unchanged and still passes, which is the evidence the gated path stayed gated.
+
+**Four bugs found by tests that were about something else:**
+
+1. `copy()` reset its progress for every file, so a batch counted from zero each time — the bar
+   would have restarted per file, and the batch cancellation test failed because `files_done`
+   never passed one.
+2. Ctrl+A was taken by the overlay even while the caret was in the search field, so selecting a
+   query to replace it selected every file instead. A browser test found it by no longer being
+   able to clear the input it had just typed into.
+3. Enter was taken by the overlay while the rename field was open, so the form never submitted
+   and the rename silently did not happen.
+4. `mkdir` at the root produced `//name`.
+
+And one that was mine in the test rather than the code: `fill("")` does not clear a controlled
+React input in this Playwright version — an empty insertion fires no event — so the test now
+clears the way a person does.
 
 ### 2026-08-20 — §1 was measured wrong, and the hotkey never worked
 

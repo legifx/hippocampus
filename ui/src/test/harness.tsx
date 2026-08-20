@@ -38,6 +38,13 @@ const ALL = hits(HIT_COUNT);
 
 setTransport({
   async invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+    // Every call is recorded, so a test can assert that five selected rows became one request
+    // naming five paths. What happens to those paths afterwards is the daemon's own tests.
+    ((window as unknown as HarnessWindow).__hcCalls ??= []).push({
+      command,
+      args: args ?? {},
+    });
+
     switch (command) {
       case "search": {
         const query = String(args?.query ?? "");
@@ -98,6 +105,17 @@ setTransport({
           elapsed_ms: 1,
         } as T;
       }
+      case "transfer":
+        return { operation: 1, total_files: 2, total_bytes: 1000 } as T;
+      case "cancel_operation":
+        return { cancelled: true } as T;
+      case "mkdir":
+      case "rename_entry":
+        return { path: String(args?.path ?? "") } as T;
+      case "trash":
+        return {} as T;
+      case "undo_last":
+        return { undone: [{}] } as T;
       case "read_text":
         return {
           path: "x",
@@ -134,6 +152,7 @@ setTransport({
 type HarnessWindow = {
   __hcListeners?: Map<string, Set<(payload: unknown) => void>>;
   __hcEmit?: (event: string, payload?: unknown) => void;
+  __hcCalls?: { command: string; args: Record<string, unknown> }[];
 };
 
 (window as unknown as HarnessWindow).__hcEmit = (event, payload) => {

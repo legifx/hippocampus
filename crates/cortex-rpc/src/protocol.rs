@@ -178,6 +178,17 @@ pub mod method {
     pub const FS_TRASH: &str = "fs.trash";
     pub const UNDO: &str = "undo";
 
+    // The operations a file manager needs and an agent may also use. `fs.transfer` answers with
+    // a handle rather than a result, because copying can take a minute.
+    pub const FS_TRANSFER: &str = "fs.transfer";
+    pub const FS_MKDIR: &str = "fs.mkdir";
+    pub const FS_RENAME: &str = "fs.rename";
+    pub const OPERATION_CANCEL: &str = "operation.cancel";
+    /// Sent by the daemon while a transfer runs, throttled to ten a second. Never called.
+    pub const TRANSFER_PROGRESS: &str = "transfer.progress";
+    /// Sent once when a transfer ends, however it ended. Never called.
+    pub const TRANSFER_DONE: &str = "transfer.done";
+
     // Memory. These write to the brain and never to a file, so they are gated by the kill
     // switch and audited, but not by the write allow-list (R6).
     pub const BRAIN_SEARCH: &str = "brain.search";
@@ -225,6 +236,10 @@ pub mod method {
         FS_WRITE,
         FS_MOVE,
         FS_TRASH,
+        FS_TRANSFER,
+        FS_MKDIR,
+        FS_RENAME,
+        OPERATION_CANCEL,
         UNDO,
         BRAIN_SEARCH,
         BRAIN_ANNOTATE,

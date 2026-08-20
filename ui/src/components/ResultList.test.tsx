@@ -49,7 +49,8 @@ describe("ResultList", () => {
     const { container } = render(
       <ResultList
         rows={sampleRows(10_000)}
-        selected={0}
+        cursor={0}
+        selected={new Set([0])}
         onSelect={() => {}}
         onActivate={() => {}}
         rowHeight={ROW}
@@ -72,7 +73,8 @@ describe("ResultList", () => {
     const { container } = render(
       <ResultList
         rows={sampleRows(50)}
-        selected={3}
+        cursor={3}
+        selected={new Set([3])}
         onSelect={() => {}}
         onActivate={() => {}}
         rowHeight={ROW}
@@ -94,7 +96,8 @@ describe("ResultList", () => {
     const { container } = render(
       <ResultList
         rows={scrambled}
-        selected={0}
+        cursor={0}
+        selected={new Set([0])}
         onSelect={() => {}}
         onActivate={() => {}}
         rowHeight={ROW}
@@ -113,7 +116,8 @@ describe("ResultList", () => {
     render(
       <ResultList
         rows={cold}
-        selected={0}
+        cursor={0}
+        selected={new Set([0])}
         onSelect={() => {}}
         onActivate={() => {}}
         rowHeight={ROW}
@@ -129,7 +133,8 @@ describe("ResultList", () => {
     render(
       <ResultList
         rows={[]}
-        selected={0}
+        cursor={0}
+        selected={new Set([0])}
         onSelect={() => {}}
         onActivate={() => {}}
         rowHeight={ROW}
@@ -146,7 +151,8 @@ describe("ResultList", () => {
     const { container } = render(
       <ResultList
         rows={sampleRows(5)}
-        selected={0}
+        cursor={0}
+        selected={new Set([0])}
         onSelect={onSelect}
         onActivate={() => {}}
         rowHeight={ROW}
@@ -159,7 +165,9 @@ describe("ResultList", () => {
     const event = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
     row.dispatchEvent(event);
 
-    expect(onSelect).toHaveBeenCalledWith(2);
+    // The modifiers come with it: the same handler serves a plain click, a shift-extension
+    // and a ctrl-toggle, and the row is the only thing that knows which was held.
+    expect(onSelect).toHaveBeenCalledWith(2, { shift: false, ctrl: false });
     // Preventing the default is what keeps the caret in the search input; without it, typing
     // stops working the moment somebody clicks a row once.
     expect(event.defaultPrevented).toBe(true);

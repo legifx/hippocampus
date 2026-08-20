@@ -55,6 +55,8 @@ pub struct Daemon {
     /// The kill switch (R7). Runtime state, persisted, and the only part of the policy a
     /// running daemon can change.
     pub kill: Arc<KillSwitch>,
+    /// Transfers currently running, so they can be cancelled by id.
+    pub operations: crate::operations::Operations,
     /// Dry-run plans awaiting confirmation. In memory: a plan that outlived a restart would
     /// describe a filesystem nobody has looked at since.
     pub plans: PlanBook,
@@ -93,6 +95,7 @@ impl Daemon {
             config,
             policy,
             kill,
+            operations: crate::operations::Operations::new(),
             plans: PlanBook::default(),
             trash,
             database_path,
@@ -367,8 +370,21 @@ async fn handle_connection(
     // itself once, and every episode and audit entry after that carries the name. A connection
     // that never says anything is a human at a terminal, which is the safe assumption because
     // it is the one that grants nothing.
+    let notifier_writer = writer.clone();
     let mut ctx = ConnCtx {
         actor: cortex_core::model::Actor::Human,
+        notify: Arc::new(move |method: &str, params: serde_json::Value| {
+            let message = serde_json::json!({
+                "jsonrpc": "2.0", "method": method, "params": params
+            });
+            let writer = notifier_writer.clone();
+            // Spawned rather than awaited: this is called from a blocking transfer thread,
+            // which has no runtime to await on and must not stop copying to send a message.
+            tokio::spawn(async move {
+                let mut guard = writer.lock().await;
+                let _ = transport::write_message(&mut *guard, &message).await;
+            });
+        }),
     };
 
     loop {
@@ -486,6 +502,12 @@ fn spawn_rerank(
 /// State that belongs to one connection rather than to the daemon.
 pub struct ConnCtx {
     pub actor: cortex_core::model::Actor,
+    /// How a spawned operation reaches the client that started it.
+    ///
+    /// A transfer's progress belongs to the connection that asked for it, not to every
+    /// connection: two file manager windows copying different things must not each see the
+    /// other's bar.
+    pub notify: crate::operations::Notifier,
 }
 
 async fn dispatch(
@@ -1197,6 +1219,109 @@ async fn dispatch(
                 mode: outcome.mode,
                 elapsed_ms: started.elapsed().as_millis() as u64,
             })
+        }
+
+        method::FS_MKDIR => {
+            let params: cortex_core::tools::FsMkdirParams = parse(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            let made = surface(daemon, &ctx.actor, &auditor)
+                .mkdir(&params.path)
+                .map_err(tool_error)?;
+            daemon.ingest.signal_work();
+            json(serde_json::json!({ "path": made }))
+        }
+
+        method::FS_RENAME => {
+            let params: cortex_core::tools::FsRenameParams = parse(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            let renamed = surface(daemon, &ctx.actor, &auditor)
+                .rename(&params.path, &params.name)
+                .map_err(tool_error)?;
+            rebuild_index(daemon).map_err(internal)?;
+            json(serde_json::json!({ "path": renamed }))
+        }
+
+        method::OPERATION_CANCEL => {
+            let params: cortex_core::tools::OperationCancelParams = parse(params)?;
+            json(serde_json::json!({ "cancelled": daemon.operations.cancel(params.operation) }))
+        }
+
+        method::FS_TRANSFER => {
+            let params: cortex_core::tools::FsTransferParams = parse(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+
+            // Everything that can be refused is refused here, before an id exists. An operation
+            // that starts and then immediately fails on policy grounds would make the caller
+            // wait for a notification to learn what a call could have told it.
+            let (sources, destination, total) = surface(daemon, &ctx.actor, &auditor)
+                .plan_transfer(&params.sources, &params.destination, params.mode)
+                .map_err(tool_error)?;
+
+            let (operation, handle) = daemon.operations.start();
+            let started = Instant::now();
+            let answer = cortex_core::tools::TransferStarted {
+                operation,
+                total_files: total.files,
+                total_bytes: total.bytes,
+            };
+
+            let daemon = daemon.clone();
+            let actor = ctx.actor.clone();
+            let notify = ctx.notify.clone();
+            let conflict = params.conflict;
+            let mode = params.mode;
+
+            // On the blocking pool: this is `read` and `write` syscalls for as long as it
+            // takes, and running it on the async runtime would stop the daemon answering
+            // anything else for the duration.
+            tokio::task::spawn_blocking(move || {
+                let auditor = Auditor::new(daemon.store.clone(), &actor);
+                let surface = surface(&daemon, &actor, &auditor);
+                let mut throttle = crate::operations::Throttle::new(
+                    crate::operations::PROGRESS_INTERVAL,
+                );
+
+                let outcome = surface.run_transfer(
+                    &sources,
+                    &destination,
+                    mode,
+                    conflict,
+                    total,
+                    &handle,
+                    |progress| {
+                        if throttle.should_send(Instant::now()) {
+                            notify(
+                                method::TRANSFER_PROGRESS,
+                                serde_json::to_value(crate::operations::to_wire(
+                                    operation, progress,
+                                ))
+                                .unwrap_or_default(),
+                            );
+                        }
+                    },
+                );
+
+                daemon.operations.finish(operation);
+                // The index believes in paths that have moved. A transfer of five files is one
+                // rebuild rather than five.
+                let _ = rebuild_index(&daemon);
+                daemon.ingest.signal_work();
+
+                notify(
+                    method::TRANSFER_DONE,
+                    serde_json::to_value(cortex_core::tools::TransferDone {
+                        operation,
+                        moved: outcome.moved,
+                        failed: outcome.failed,
+                        cancelled: outcome.cancelled,
+                        undo_ids: outcome.undo_ids,
+                        elapsed_ms: started.elapsed().as_millis() as u64,
+                    })
+                    .unwrap_or_default(),
+                );
+            });
+
+            json(answer)
         }
 
         method::SHUTDOWN => {

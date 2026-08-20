@@ -35,7 +35,11 @@ test.describe("browsing", () => {
     await expect(crumbs).toHaveCount(0);
     await expect(page.locator(".hc-row").first()).toBeVisible();
 
-    await page.getByLabel("Suche").fill("");
+    // Escape rather than `fill("")`: Playwright empties a field by inserting an empty string,
+    // which fires no input event, so a controlled React input never hears about it and reverts.
+    // Escape is also what a person presses, and what the app documents.
+    await page.keyboard.press("Escape");
+    await expect(page.getByLabel("Suche")).toHaveValue("");
     await expect(crumbs).toBeVisible();
     await expect(page.locator(".hc-row")).toHaveCount(5);
   });

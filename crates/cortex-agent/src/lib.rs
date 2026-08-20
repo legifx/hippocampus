@@ -12,6 +12,7 @@
 //! home directory does more damage in 200 ms than a nightly backup undoes.
 
 pub mod audit;
+pub mod batch;
 pub mod brain_tools;
 pub mod fs_tools;
 pub mod plans;

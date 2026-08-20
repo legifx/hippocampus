@@ -49,7 +49,7 @@ impl ToolError {
         }
     }
 
-    fn io(path: &Path, e: std::io::Error) -> Self {
+    pub(crate) fn io(path: &Path, e: std::io::Error) -> Self {
         ToolError::Io {
             path: path.to_path_buf(),
             message: e.to_string(),
@@ -729,7 +729,7 @@ impl Surface<'_> {
     }
 
     /// Write the journal entry that can reverse this operation. Before the operation, always.
-    fn journal(&self, tool: &str, steps: &[PlanStep], inverse: &[InverseStep]) -> ToolResult<i64> {
+    pub(crate) fn journal(&self, tool: &str, steps: &[PlanStep], inverse: &[InverseStep]) -> ToolResult<i64> {
         let operation = serde_json::json!({
             "tool": tool,
             "actor": self.auditor.actor(),
@@ -770,7 +770,7 @@ impl Surface<'_> {
         }
     }
 
-    fn record_episode(
+    pub(crate) fn record_episode(
         &self,
         action: Action,
         path: &Path,
@@ -814,6 +814,9 @@ pub enum InverseStep {
     Truncate { path: PathBuf, size: u64 },
     /// Undo a trashing, through the trash's own restore so the `.trashinfo` goes with it.
     Untrash { trash: PathBuf, name: String },
+    /// Undo a directory that was created. Empty only: removing a directory somebody has since
+    /// filled would be undoing more than was done.
+    RemoveDir { path: PathBuf },
 }
 
 fn apply_inverse(inverse: &serde_json::Value) -> std::io::Result<()> {
@@ -849,6 +852,12 @@ fn apply_inverse(inverse: &serde_json::Value) -> std::io::Result<()> {
                 let f = std::fs::OpenOptions::new().write(true).open(path)?;
                 f.set_len(*size)?;
             }
+            InverseStep::RemoveDir { path } => match std::fs::remove_dir(path) {
+                Ok(()) => {}
+                // Not empty any more, or already gone. Either way, removing it would undo
+                // somebody else's work rather than ours.
+                Err(_) => {}
+            },
             InverseStep::Untrash { trash, name } => {
                 crate::trash::Trash::at(trash)
                     .restore(name)

@@ -122,6 +122,35 @@ export type FsListResult = {
   hidden: number;
 };
 
+export type TransferMode = "copy" | "move";
+export type ConflictChoice = "fail" | "replace" | "keep" | "skip";
+
+export type TransferStarted = {
+  operation: number;
+  total_files: number;
+  total_bytes: number;
+};
+
+export type TransferProgress = {
+  operation: number;
+  files_done: number;
+  bytes_done: number;
+  total_files: number;
+  total_bytes: number;
+  fraction: number;
+  current: string | null;
+};
+
+export type TransferDone = {
+  operation: number;
+  moved: string[];
+  /** Sources that did not make it, each with why. A batch never stops at the first problem. */
+  failed: { source: string; reason: string }[];
+  cancelled: boolean;
+  undo_ids: number[];
+  elapsed_ms: number;
+};
+
 export type Zone = {
   id: number;
   name: string;
@@ -244,6 +273,33 @@ export const ipc = {
       depth: options.depth ?? 1,
       limit: options.limit,
     }),
+
+  /** Start a copy or a move. Answers with a handle; progress arrives as events. */
+  transfer: (
+    sources: string[],
+    destination: string,
+    mode: TransferMode,
+    conflict: ConflictChoice = "fail",
+  ) =>
+    transport.invoke<TransferStarted>("transfer", { sources, destination, mode, conflict }),
+
+  cancelOperation: (operation: number) =>
+    transport.invoke<{ cancelled: boolean }>("cancel_operation", { operation }),
+
+  onTransferProgress: (handler: (progress: TransferProgress) => void) =>
+    transport.listen("transfer:progress", (payload) => handler(payload as TransferProgress)),
+
+  onTransferDone: (handler: (done: TransferDone) => void) =>
+    transport.listen("transfer:done", (payload) => handler(payload as TransferDone)),
+
+  mkdir: (path: string) => transport.invoke<{ path: string }>("mkdir", { path }),
+
+  rename: (path: string, name: string) =>
+    transport.invoke<{ path: string }>("rename_entry", { path, name }),
+
+  trash: (path: string) => transport.invoke<unknown>("trash", { path }),
+
+  undo: (last = 1) => transport.invoke<{ undone: unknown[] }>("undo_last", { last }),
 
   neighbors: (target: string | number, depth = 1, edgeTypes?: string[]) =>
     transport.invoke<NeighborsResult>("neighbors", { target, depth, edgeTypes }),

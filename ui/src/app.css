@@ -123,6 +123,75 @@
   grid-template-columns: minmax(0, 1fr) minmax(0, var(--hc-preview-max)) minmax(0, 320px);
 }
 
+/* -------------------------------------------------- naming and progress */
+
+.hc-naming,
+.hc-progress {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 18px;
+  border-bottom: 1px solid var(--hc-stroke);
+  min-width: 0;
+}
+
+.hc-name-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--hc-surface);
+  border: 1px solid var(--hc-stroke-lift);
+  border-radius: 8px;
+  padding: 3px 8px;
+  color: var(--hc-text);
+  font: inherit;
+  font-size: 13.5px;
+  user-select: text;
+}
+
+.hc-progress {
+  /* The bar is a background layer under the text rather than a sibling of it, so a transfer
+     does not change the height of anything when it starts or stops. */
+  overflow: hidden;
+}
+
+.hc-progress-bar {
+  position: absolute;
+  inset: 0;
+  transform-origin: left center;
+  background: color-mix(in srgb, var(--hc-info) 22%, transparent);
+  /* `transform` only, so a bar that updates ten times a second costs the compositor and not
+     the layout engine (§8.3). */
+  transition: transform 120ms var(--hc-ease-island);
+  pointer-events: none;
+}
+
+.hc-progress-text {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+}
+
+.hc-progress-current {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hc-progress button {
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: default;
+}
+
 /* ------------------------------------------------------------ breadcrumb */
 
 .hc-column {
@@ -210,6 +279,13 @@
 
 .hc-row-selected {
   background: var(--hc-surface-hi);
+}
+
+/* The cursor is where the keyboard is, which is not the same as what is selected: a
+   shift-extension moves it through rows that are all selected, and after Escape narrows a
+   selection it is the only mark left. An outline rather than a background, so the two can be
+   seen at once. */
+.hc-row-cursor {
   outline: 1px solid var(--hc-stroke-lift);
   outline-offset: -1px;
 }

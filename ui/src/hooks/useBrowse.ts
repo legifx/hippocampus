@@ -29,6 +29,8 @@ export type BrowseState = {
 
 export function useBrowse(initialPath: string) {
   const [path, setPath] = useState(initialPath);
+  /// Bumped to read the directory again after something changed it.
+  const [generation, setGeneration] = useState(0);
   const [history, setHistory] = useState<string[]>([]);
   const [sort, setSort] = useState<SortBy>("name");
   const [reverse, setReverse] = useState(false);
@@ -64,7 +66,10 @@ export function useBrowse(initialPath: string) {
     return () => {
       current = false;
     };
-  }, [path, sort, reverse]);
+  }, [path, sort, reverse, generation]);
+
+  /// Read this directory again. What a finished copy, move, delete or rename calls.
+  const reload = useCallback(() => setGeneration((g) => g + 1), []);
 
   const goTo = useCallback(
     (next: string) => {
@@ -122,5 +127,5 @@ export function useBrowse(initialPath: string) {
     canGoBack: history.length > 0,
   };
 
-  return { state, goTo, goBack, goUp, orderBy, parentOf };
+  return { state, goTo, goBack, goUp, orderBy, parentOf, reload };
 }

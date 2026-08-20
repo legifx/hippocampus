@@ -136,6 +136,89 @@ async fn list(
         .await
 }
 
+/// Start a copy or a move. Answers with a handle; the work happens in the daemon and reports
+/// through `transfer:progress` and `transfer:done`.
+#[tauri::command]
+async fn transfer(
+    state: tauri::State<'_, AppState>,
+    sources: Vec<String>,
+    destination: String,
+    mode: String,
+    conflict: Option<String>,
+) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(
+            cortex_rpc::protocol::method::FS_TRANSFER,
+            json!({
+                "sources": sources,
+                "destination": destination,
+                "mode": mode,
+                "conflict": conflict.unwrap_or_else(|| "fail".into()),
+            }),
+        )
+        .await
+}
+
+#[tauri::command]
+async fn cancel_operation(
+    state: tauri::State<'_, AppState>,
+    operation: u64,
+) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(
+            cortex_rpc::protocol::method::OPERATION_CANCEL,
+            json!({ "operation": operation }),
+        )
+        .await
+}
+
+#[tauri::command]
+async fn mkdir(state: tauri::State<'_, AppState>, path: String) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(cortex_rpc::protocol::method::FS_MKDIR, json!({ "path": path }))
+        .await
+}
+
+/// Named `rename_entry` rather than `rename` because `rename` is taken on the JavaScript side
+/// by nothing at all — but a command called `rename` in a file manager reads like a window
+/// operation, and this one is about a file.
+#[tauri::command]
+async fn rename_entry(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    name: String,
+) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(
+            cortex_rpc::protocol::method::FS_RENAME,
+            json!({ "path": path, "name": name }),
+        )
+        .await
+}
+
+#[tauri::command]
+async fn trash(state: tauri::State<'_, AppState>, path: String) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(cortex_rpc::protocol::method::FS_TRASH, json!({ "path": path }))
+        .await
+}
+
+#[tauri::command]
+async fn undo_last(state: tauri::State<'_, AppState>, last: Option<usize>) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(
+            cortex_rpc::protocol::method::UNDO,
+            json!({ "last": last.unwrap_or(1) }),
+        )
+        .await
+}
+
 /// A capped slice of a file, for the preview pane.
 ///
 /// It goes through the daemon's `fs.read` rather than reading the file here, which looks like a
@@ -483,6 +566,12 @@ pub fn run() {
             timeline,
             node_get,
             list,
+            transfer,
+            cancel_operation,
+            mkdir,
+            rename_entry,
+            trash,
+            undo_last,
             read_text,
             preview,
             explain,

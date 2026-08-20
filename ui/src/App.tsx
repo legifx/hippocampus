@@ -22,6 +22,8 @@ import { ContextSidebar } from "./components/ContextSidebar";
 import { PreviewPane } from "./components/PreviewPane";
 import { ResultList } from "./components/ResultList";
 import { useBrowse } from "./hooks/useBrowse";
+import { useOperations } from "./hooks/useOperations";
+import { useSelection } from "./hooks/useSelection";
 import { throttled, useDeferred } from "./hooks/useDeferred";
 import { useSearch } from "./hooks/useSearch";
 import { useViewport } from "./hooks/useViewport";
@@ -33,6 +35,22 @@ const ROW_HEIGHT_COMFORTABLE = 34;
 
 /** Which side pane is showing when there is room for only one. */
 type Pane = "preview" | "context";
+
+/**
+ * Put a name inside a directory.
+ *
+ * `/a/b` and `/a/b/` are the same directory and must produce the same path — and the root is
+ * the case that catches a naive join, because `"/" + "/" + name` is two slashes and a daemon
+ * that resolves it is being polite about a bug.
+ */
+function joinPath(directory: string, name: string): string {
+  return directory.endsWith("/") ? `${directory}${name}` : `${directory}/${name}`;
+}
+
+function splitPathName(path: string): string {
+  const cut = path.lastIndexOf("/");
+  return cut < 0 ? path : path.slice(cut + 1);
+}
 
 /** The daemon needs to know somebody is here, not how fast they type. */
 const pingSometimes = throttled(5000);
@@ -63,9 +81,13 @@ export function App() {
   const { state, run } = useSearch();
   const browse = useBrowse(START_PATH);
   const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState(0);
   const [pane, setPane] = useState<Pane>("preview");
   const [paletteOpen, setPaletteOpen] = useState(false);
+  /// The row being renamed, and the name of a folder being created. Both are one small input
+  /// in the header rather than a dialog: M4's niri constraints forbid a second toplevel, and a
+  /// modal over the list would hide the thing being named.
+  const [renaming, setRenaming] = useState<Row | null>(null);
+  const [creating, setCreating] = useState<string | null>(null);
   const [comfortable, setComfortable] = useState(false);
   const [zoneHues, setZoneHues] = useState<Map<number, number>>(new Map());
   const [load, setLoad] = useState(0);
@@ -86,7 +108,23 @@ export function App() {
     () => (searching ? state.hits.map(rowFromHit) : browse.state.entries.map(rowFromEntry)),
     [searching, state.hits, browse.state.entries],
   );
+  // The selection resets whenever the list underneath it changes: a different directory, or a
+  // different query. Otherwise "delete the three selected" would delete whatever landed in
+  // those three positions.
+  const selection = useSelection(rows.length, `${searching}:${browse.state.path}:${query}`);
+  const selected = selection.state.cursor;
   const current: Row | null = rows[selected] ?? null;
+
+  /** What an action acts on: everything selected, in the order the list shows it. */
+  const targets = useMemo(() => {
+    const out: string[] = [];
+    for (let i = 0; i < rows.length; i++) {
+      if (selection.state.indices.has(i)) out.push(rows[i]!.path);
+    }
+    return out;
+  }, [rows, selection.state.indices]);
+
+  const operations = useOperations(browse.reload);
 
   // The panes want a `SearchHit`, which a directory entry is not. Only a search result carries
   // a score and a tier, so a browsed row is given the shape with those left honestly empty.
@@ -136,7 +174,6 @@ export function App() {
       .onWindowShown(() => {
         if (disposed) return;
         setQuery("");
-        setSelected(0);
         setPaletteOpen(false);
         run("");
         input.current?.focus();
@@ -191,7 +228,6 @@ export function App() {
   const onQuery = useCallback(
     (next: string) => {
       setQuery(next);
-      setSelected(0);
       run(next);
       // A person typing here is the clearest evidence a human is present, which is what the
       // daemon's duty cycle keys off (D22) — but the first keystroke establishes that, and the
@@ -207,7 +243,6 @@ export function App() {
       if (row.isDir) {
         setQuery("");
         run("");
-        setSelected(0);
         browse.goTo(row.path);
         return;
       }
@@ -268,9 +303,32 @@ export function App() {
             detail: browse.state.sort === order ? "nochmal wählen kehrt um" : undefined,
             run: () => browse.orderBy(order),
           }))),
+      { id: "cut", label: "Ausschneiden", binding: "Ctrl+X", run: () => operations.cut(targets) },
+      { id: "copyfiles", label: "Kopieren", binding: "Ctrl+C", run: () => operations.copy(targets) },
+      {
+        id: "paste",
+        label: "Einfügen",
+        binding: "Ctrl+V",
+        detail: operations.clipboard ? undefined : "die Zwischenablage ist leer",
+        run: () => !searching && operations.paste(browse.state.path),
+      },
+      { id: "trash", label: "In den Papierkorb", binding: "Entf", run: () => operations.trash(targets) },
+      {
+        id: "rename",
+        label: "Umbenennen",
+        binding: "F2",
+        run: () => current && setRenaming(current),
+      },
+      {
+        id: "mkdir",
+        label: "Neuer Ordner",
+        binding: "Ctrl+Shift+N",
+        run: () => !searching && setCreating(""),
+      },
+      { id: "undo", label: "Rückgängig", binding: "Ctrl+Z", run: () => operations.undo() },
       { id: "dismiss", label: "Schließen", binding: "Esc", run: () => ipc.dismiss().catch(() => {}) },
     ],
-    [openSelected, hit, pane, showBoth, comfortable, searching, browse],
+    [openSelected, hit, pane, showBoth, comfortable, searching, browse, operations, targets, current],
   );
 
   const onKeyDown = useCallback(
@@ -278,6 +336,11 @@ export function App() {
       if (event.key === "Escape") {
         event.preventDefault();
         if (paletteOpen) setPaletteOpen(false);
+        else if (renaming || creating !== null) {
+          setRenaming(null);
+          setCreating(null);
+        } else if (operations.running) operations.cancel();
+        else if (selection.state.indices.size > 1) selection.clear();
         else if (query !== "") onQuery("");
         else ipc.dismiss().catch(() => {});
         return;
@@ -289,38 +352,93 @@ export function App() {
       }
       if (paletteOpen) return;
 
+      // While something is being named, the keyboard belongs to that field. Without this the
+      // overlay's Enter opens the selected row and prevents the form from submitting, so the
+      // rename silently never happens — which is how two browser tests found it.
+      if (renaming || creating !== null) return;
+
+      // Ctrl+A, and the operations, before the navigation keys: a file manager's bindings are
+      // mostly modified keys, and checking them first keeps the switch below about movement.
+      if (event.ctrlKey || event.metaKey) {
+        switch (event.key.toLowerCase()) {
+          case "a":
+            // Ctrl+A belongs to the text field while there is text in it. Taking it always
+            // means somebody trying to replace their query selects every file in the directory
+            // instead — which is also how a browser test caught this, by failing to clear the
+            // input it had just typed into.
+            if (query !== "") return;
+            event.preventDefault();
+            selection.selectAll();
+            return;
+          case "c":
+            event.preventDefault();
+            operations.copy(targets);
+            return;
+          case "x":
+            event.preventDefault();
+            operations.cut(targets);
+            return;
+          case "v":
+            event.preventDefault();
+            if (!searching) operations.paste(browse.state.path);
+            return;
+          case "z":
+            event.preventDefault();
+            operations.undo();
+            return;
+          case "n":
+            if (event.shiftKey && !searching) {
+              event.preventDefault();
+              setCreating("");
+            }
+            return;
+          case "d":
+            event.preventDefault();
+            setComfortable((c) => !c);
+            return;
+        }
+      }
+
       switch (event.key) {
         case "ArrowDown":
           event.preventDefault();
-          setSelected((i) => Math.min(i + 1, Math.max(rows.length - 1, 0)));
+          selection.move("down", event.shiftKey);
           break;
         case "ArrowUp":
           event.preventDefault();
-          setSelected((i) => Math.max(i - 1, 0));
+          selection.move("up", event.shiftKey);
           break;
         case "PageDown":
           event.preventDefault();
-          setSelected((i) => Math.min(i + 10, Math.max(rows.length - 1, 0)));
+          selection.move("pageDown", event.shiftKey);
           break;
         case "PageUp":
           event.preventDefault();
-          setSelected((i) => Math.max(i - 10, 0));
+          selection.move("pageUp", event.shiftKey);
           break;
         case "Home":
           if (event.ctrlKey) {
             event.preventDefault();
-            setSelected(0);
+            selection.move("home", event.shiftKey);
           }
           break;
         case "End":
           if (event.ctrlKey) {
             event.preventDefault();
-            setSelected(Math.max(rows.length - 1, 0));
+            selection.move("end", event.shiftKey);
           }
           break;
         case "Enter":
           event.preventDefault();
           openSelected();
+          break;
+        case "F2":
+          event.preventDefault();
+          if (current) setRenaming(current);
+          break;
+        case "Delete":
+          event.preventDefault();
+          operations.trash(targets);
           break;
         case "Tab":
           event.preventDefault();
@@ -331,14 +449,12 @@ export function App() {
           // to remove. With an empty input it is the obvious "up one level".
           if (query === "" && !searching) {
             event.preventDefault();
-            setSelected(0);
             browse.goUp();
           }
           break;
         case "ArrowLeft":
           if (event.altKey) {
             event.preventDefault();
-            setSelected(0);
             browse.goBack();
           }
           break;
@@ -348,21 +464,23 @@ export function App() {
             activate(current);
           }
           break;
-        case "c":
-          if (event.ctrlKey && hit) {
-            event.preventDefault();
-            navigator.clipboard?.writeText(hit.path).catch(() => {});
-          }
-          break;
-        case "d":
-          if (event.ctrlKey) {
-            event.preventDefault();
-            setComfortable((c) => !c);
-          }
-          break;
       }
     },
-    [paletteOpen, query, onQuery, rows.length, openSelected, current, activate, browse, searching],
+    [
+      paletteOpen,
+      query,
+      onQuery,
+      openSelected,
+      current,
+      activate,
+      browse,
+      searching,
+      selection,
+      operations,
+      targets,
+      renaming,
+      creating,
+    ],
   );
 
   return (
@@ -397,8 +515,18 @@ export function App() {
             </>
           ) : (
             <>
-              <span className="hc-num">{rows.length}</span>
+              <span className="hc-num">
+                {selection.state.indices.size > 1
+                  ? `${selection.state.indices.size}/${rows.length}`
+                  : rows.length}
+              </span>
               <span>{browse.state.sort}</span>
+              {operations.clipboard && (
+                <span className="hc-pill" title="Ctrl+V fügt hier ein">
+                  {operations.clipboard.mode === "move" ? "ausgeschnitten" : "kopiert"}{" "}
+                  {operations.clipboard.paths.length}
+                </span>
+              )}
               {browse.state.hidden > 0 && (
                 <span className="hc-faint" title="Von der Deny-Liste verdeckt">
                   +{browse.state.hidden}
@@ -409,9 +537,77 @@ export function App() {
         </span>
       </header>
 
-      {daemonError && (
-        <p className="hc-banner" role="status">
-          {daemonError}
+      {(renaming || creating !== null) && (
+        <form
+          className="hc-naming"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const value = new FormData(event.currentTarget).get("name");
+            const name = typeof value === "string" ? value.trim() : "";
+            if (name !== "") {
+              if (renaming) operations.rename(renaming.path, name);
+              else operations.mkdir(joinPath(browse.state.path, name));
+            }
+            setRenaming(null);
+            setCreating(null);
+            input.current?.focus();
+          }}
+        >
+          <label className="hc-meta" htmlFor="hc-name">
+            {renaming ? "Umbenennen" : "Neuer Ordner"}
+          </label>
+          <input
+            id="hc-name"
+            name="name"
+            className="hc-name-input"
+            defaultValue={renaming?.name ?? ""}
+            autoFocus
+            spellCheck={false}
+            autoComplete="off"
+            onKeyDown={(event) => {
+              // Escape belongs to the naming field while it is open, and must not reach the
+              // overlay's handler and close the window.
+              if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                setRenaming(null);
+                setCreating(null);
+                input.current?.focus();
+              }
+            }}
+          />
+        </form>
+      )}
+
+      {operations.running && (
+        <div className="hc-progress" role="status">
+          <div
+            className="hc-progress-bar"
+            style={{ transform: `scaleX(${operations.running.fraction})` }}
+          />
+          <span className="hc-meta hc-progress-text">
+            <span className="hc-num">
+              {operations.running.filesDone}/{operations.running.totalFiles}
+            </span>
+            <span className="hc-num">{Math.round(operations.running.fraction * 100)} %</span>
+            <span className="hc-progress-current">
+              {operations.running.current
+                ? splitPathName(operations.running.current)
+                : "…"}
+            </span>
+            <button type="button" className="hc-pill" onMouseDown={() => operations.cancel()}>
+              Abbrechen (Esc)
+            </button>
+          </span>
+        </div>
+      )}
+
+      {(daemonError || operations.notice) && (
+        <p
+          className={operations.notice?.kind === "error" ? "hc-banner hc-error" : "hc-banner"}
+          role="status"
+        >
+          {operations.notice?.text ?? daemonError}
         </p>
       )}
 
@@ -420,17 +616,19 @@ export function App() {
           {!searching && (
             <Breadcrumb
               path={browse.state.path}
-              onNavigate={(next) => {
-                setSelected(0);
-                browse.goTo(next);
-              }}
+              onNavigate={(next) => browse.goTo(next)}
               hue={null}
             />
           )}
           <ResultList
             rows={rows}
-            selected={selected}
-            onSelect={setSelected}
+            cursor={selected}
+            selected={selection.state.indices}
+            onSelect={(index, modifiers) => {
+              if (modifiers.shift) selection.extendTo(index);
+              else if (modifiers.ctrl) selection.toggle(index);
+              else selection.select(index);
+            }}
             onActivate={activate}
             rowHeight={rowHeight}
             zoneHues={zoneHues}

@@ -182,10 +182,15 @@ pub fn copy(
     }
 
     let destination = resolve_conflict(to, conflict)?;
+
+    // Seeded from the handle rather than from zero. A batch calls this once per source, and a
+    // progress struct that restarted each time would drive a bar that resets on every file —
+    // and, worse, a caller watching `files_done` would never see it pass one. That is exactly
+    // how the batch cancellation test failed before this line existed.
     let mut progress = Progress {
         total,
-        files_done: 0,
-        bytes_done: 0,
+        files_done: handle.files_done(),
+        bytes_done: handle.bytes_done(),
         current: None,
     };
 

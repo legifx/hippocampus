@@ -18,8 +18,13 @@ import { zoneBorder, zoneTint } from "../zone";
 
 export type ResultListProps = {
   rows: Row[];
-  selected: number;
-  onSelect: (index: number) => void;
+  /// Where the keyboard is. Exactly one row, always, and not the same thing as the selection:
+  /// a shift-extension moves the cursor through rows that are all selected, and a person needs
+  /// to see which one the next key will act from.
+  cursor: number;
+  /// Every selected row. Usually contains the cursor.
+  selected: Set<number>;
+  onSelect: (index: number, modifiers: { shift: boolean; ctrl: boolean }) => void;
   /** Enter, or a double click: descend into a directory, open a file. */
   onActivate: (row: Row) => void;
   rowHeight: number;
@@ -30,6 +35,7 @@ export type ResultListProps = {
 
 export function ResultList({
   rows,
+  cursor,
   selected,
   onSelect,
   onActivate,
@@ -45,8 +51,8 @@ export function ResultList({
   // selection off-screen for one frame on every arrow key.
   const { scrollToIndex } = virtual;
   useLayoutEffect(() => {
-    if (selected >= 0) scrollToIndex(selected);
-  }, [selected, scrollToIndex]);
+    if (cursor >= 0) scrollToIndex(cursor);
+  }, [cursor, scrollToIndex]);
 
   if (rows.length === 0) {
     return (
@@ -66,7 +72,8 @@ export function ResultList({
       onScroll={virtual.onScroll}
       role="listbox"
       aria-label="Einträge"
-      aria-activedescendant={`hc-row-${selected}`}
+      aria-multiselectable="true"
+      aria-activedescendant={`hc-row-${cursor}`}
       tabIndex={-1}
     >
       <div style={{ height: totalHeight, position: "relative" }}>
@@ -78,7 +85,8 @@ export function ResultList({
                 key={row.key}
                 index={index}
                 row={row}
-                selected={index === selected}
+                selected={selected.has(index)}
+                cursor={index === cursor}
                 hue={row.zoneId === null ? null : zoneHues.get(row.zoneId) ?? null}
                 rowHeight={rowHeight}
                 onSelect={onSelect}
@@ -96,9 +104,10 @@ type ListRowProps = {
   index: number;
   row: Row;
   selected: boolean;
+  cursor: boolean;
   hue: number | null;
   rowHeight: number;
-  onSelect: (index: number) => void;
+  onSelect: (index: number, modifiers: { shift: boolean; ctrl: boolean }) => void;
   onActivate: (row: Row) => void;
 };
 
@@ -106,6 +115,7 @@ const ListRow = memo(function ListRow({
   index,
   row,
   selected,
+  cursor,
   hue,
   rowHeight,
   onSelect,
@@ -118,7 +128,7 @@ const ListRow = memo(function ListRow({
       id={`hc-row-${index}`}
       role="option"
       aria-selected={selected}
-      className={rowClass(row, selected)}
+      className={rowClass(row, selected, cursor)}
       style={{
         height: rowHeight,
         borderLeftColor: zoneBorder(hue),
@@ -129,7 +139,7 @@ const ListRow = memo(function ListRow({
         // after a pointer selection. Losing focus to a row would break keyboard-first operation
         // the moment somebody touched the mouse once.
         e.preventDefault();
-        onSelect(index);
+        onSelect(index, { shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey });
       }}
       onDoubleClick={() => onActivate(row)}
     >
@@ -153,9 +163,12 @@ const ListRow = memo(function ListRow({
   );
 });
 
-function rowClass(row: Row, selected: boolean): string {
+function rowClass(row: Row, selected: boolean, cursor: boolean): string {
   const classes = ["hc-row"];
   if (selected) classes.push("hc-row-selected");
+  // The cursor is drawn even when the row is not selected, which happens after Escape narrows
+  // a selection: the keyboard is still somewhere and has to be visible.
+  if (cursor) classes.push("hc-row-cursor");
   if (row.isDir) classes.push("hc-row-directory");
   return classes.join(" ");
 }
