@@ -253,3 +253,94 @@ test.describe("operations", () => {
     await expect(page.locator(".hc-progress")).toHaveCount(0);
   });
 });
+
+test.describe("the conflict question", () => {
+  /** Select only the row the fixture reports a conflict for, and paste it. */
+  async function pasteClashing(page: Page) {
+    await open(page);
+    // `kurz.txt` is the fixture's clashing name.
+    const rows = await page.locator(".hc-row-name").allTextContents();
+    const index = rows.findIndex((name) => name.includes("kurz.txt"));
+    await page.locator(`#hc-row-${index}`).click();
+    await page.keyboard.press("Control+c");
+    await page.keyboard.press("Control+v");
+  }
+
+  test("is asked before anything moves", async ({ page }) => {
+    await pasteClashing(page);
+
+    await expect(page.getByRole("dialog", { name: "Namenskonflikt" })).toBeVisible();
+    // The real transfer has not been requested: only the dry run.
+    const transfers = (await calls(page)).filter((c) => c.command === "transfer");
+    expect(transfers).toHaveLength(1);
+    expect(transfers[0]!.args.dryRun).toBe(true);
+    await expect(page.locator(".hc-progress")).toHaveCount(0);
+  });
+
+  test("shows both sides rather than asking to overwrite", async ({ page }) => {
+    await pasteClashing(page);
+    const dialog = page.getByRole("dialog", { name: "Namenskonflikt" });
+
+    // "Overwrite?" is not a question anybody can answer. Sizes and ages are.
+    await expect(dialog).toContainText("kurz.txt");
+    await expect(dialog).toContainText("12 B");
+    await expect(dialog).toContainText("4.1 kB");
+  });
+
+  test("a choice starts the transfer with it", async ({ page }) => {
+    await pasteClashing(page);
+    await page.keyboard.press("e"); // Ersetzen
+    await page.waitForTimeout(100);
+
+    const transfers = (await calls(page)).filter((c) => c.command === "transfer");
+    expect(transfers).toHaveLength(2);
+    expect(transfers[1]!.args.dryRun).toBe(false);
+    expect(transfers[1]!.args.conflict).toBe("replace");
+    await expect(page.getByRole("dialog", { name: "Namenskonflikt" })).toHaveCount(0);
+  });
+
+  test("each option has a key, and Enter takes the safest", async ({ page }) => {
+    await pasteClashing(page);
+    // The first option is the one that loses nothing, and Enter is on it.
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(100);
+
+    const transfers = (await calls(page)).filter((c) => c.command === "transfer");
+    expect(transfers[1]!.args.conflict).toBe("keep");
+  });
+
+  test("Escape answers nothing and moves nothing", async ({ page }) => {
+    await pasteClashing(page);
+    await page.keyboard.press("Escape");
+
+    await expect(page.getByRole("dialog", { name: "Namenskonflikt" })).toHaveCount(0);
+    const transfers = (await calls(page)).filter((c) => c.command === "transfer");
+    expect(transfers).toHaveLength(1);
+    await expect(page.locator(".hc-banner")).toContainText("nichts übertragen");
+  });
+
+  test("nothing else responds to the keyboard while it is open", async ({ page }) => {
+    await pasteClashing(page);
+    const before = await page.locator('[aria-selected="true"]').count();
+
+    // An arrow key that moved the selection underneath the question would change what the
+    // answer applies to.
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    expect(await page.locator('[aria-selected="true"]').count()).toBe(before);
+    await expect(page.getByRole("dialog", { name: "Namenskonflikt" })).toBeVisible();
+  });
+
+  test("pasting where nothing is in the way asks nothing", async ({ page }) => {
+    await open(page);
+    await page.locator("#hc-row-0").click();
+    await page.keyboard.press("Control+c");
+    await page.keyboard.press("Control+v");
+    await page.waitForTimeout(100);
+
+    await expect(page.getByRole("dialog", { name: "Namenskonflikt" })).toHaveCount(0);
+    const transfers = (await calls(page)).filter((c) => c.command === "transfer");
+    expect(transfers).toHaveLength(2);
+    expect(transfers[1]!.args.dryRun).toBe(false);
+  });
+});

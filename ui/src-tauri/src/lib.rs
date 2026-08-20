@@ -145,6 +145,7 @@ async fn transfer(
     destination: String,
     mode: String,
     conflict: Option<String>,
+    dry_run: Option<bool>,
 ) -> Result<Value, BridgeError> {
     state
         .bridge
@@ -155,6 +156,7 @@ async fn transfer(
                 "destination": destination,
                 "mode": mode,
                 "conflict": conflict.unwrap_or_else(|| "fail".into()),
+                "dry_run": dry_run.unwrap_or(false),
             }),
         )
         .await

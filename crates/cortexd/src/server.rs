@@ -1253,13 +1253,25 @@ async fn dispatch(
             // Everything that can be refused is refused here, before an id exists. An operation
             // that starts and then immediately fails on policy grounds would make the caller
             // wait for a notification to learn what a call could have told it.
-            let (sources, destination, total) = surface(daemon, &ctx.actor, &auditor)
+            let plan = surface(daemon, &ctx.actor, &auditor)
                 .plan_transfer(&params.sources, &params.destination, params.mode)
                 .map_err(tool_error)?;
 
+            // A dry run answers what would happen and moves nothing. It is how a client learns
+            // which names already exist, so it can ask before anything is touched rather than
+            // reporting a failure afterwards.
+            if params.dry_run {
+                return json(cortex_core::tools::TransferAnswer::Planned {
+                    total_files: plan.total.files,
+                    total_bytes: plan.total.bytes,
+                    conflicts: plan.conflicts,
+                });
+            }
+
+            let (sources, destination, total) = (plan.sources, plan.destination, plan.total);
             let (operation, handle) = daemon.operations.start();
             let started = Instant::now();
-            let answer = cortex_core::tools::TransferStarted {
+            let answer = cortex_core::tools::TransferAnswer::Started {
                 operation,
                 total_files: total.files,
                 total_bytes: total.bytes,

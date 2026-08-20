@@ -495,9 +495,47 @@ pub struct FsTransferParams {
     pub mode: TransferMode,
     #[serde(default)]
     pub conflict: ConflictChoice,
+    /// Answer with what would happen instead of doing it.
+    ///
+    /// This is how a client learns *which* names already exist, so it can ask before anything
+    /// moves rather than reporting a failure afterwards. It reuses the same checks the real
+    /// call makes, so a dry run that says "no conflicts" cannot be contradicted by a real run
+    /// that finds one — barring somebody else writing the file in between, which the transfer
+    /// then refuses on its own.
+    #[serde(default)]
+    pub dry_run: bool,
     /// A confirmed plan, for an agent. A human's client has already asked.
     #[serde(default)]
     pub plan: Option<String>,
+}
+
+/// One thing already at the destination.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Conflict {
+    pub source: PathBuf,
+    pub destination: PathBuf,
+    /// What is there now — so the question can be "replace these 2 kB from March with these
+    /// 40 kB from today?" rather than "overwrite?".
+    pub existing: FsEntry,
+    /// And what would arrive.
+    pub incoming: FsEntry,
+}
+
+/// What `fs.transfer` answers: either what it would do, or the handle of what it is doing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum TransferAnswer {
+    /// A dry run. Nothing has moved.
+    Planned {
+        total_files: u64,
+        total_bytes: u64,
+        conflicts: Vec<Conflict>,
+    },
+    Started {
+        operation: u64,
+        total_files: u64,
+        total_bytes: u64,
+    },
 }
 
 /// What to do when something is already there.

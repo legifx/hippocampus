@@ -34,10 +34,19 @@ const ALLOWED_DEPENDENCIES = new Set(["react", "react-dom", "framer-motion"]);
  */
 const FORBIDDEN_OPERATIONS = [".filter(", ".sort(", ".reduce(", ".find(", ".findIndex("];
 
+/**
+ * Every file the application ships, which is what the rules below are about.
+ *
+ * `src/test/` is left out: it holds the vitest setup and the Playwright harness's fixture, and
+ * a fixture pretending to be a daemon is *supposed* to reshape data — that is what the daemon
+ * does. Excluding it is a hole only if application code moves in there, which is why the
+ * exclusion is one named directory rather than a pattern.
+ */
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
     const path = join(dir, entry);
+    if (entry === "test" && dir === SRC) continue;
     if (statSync(path).isDirectory()) {
       out.push(...sourceFiles(path));
     } else if (/\.tsx?$/.test(entry) && !/\.test\.tsx?$/.test(entry)) {

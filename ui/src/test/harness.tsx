@@ -105,8 +105,26 @@ setTransport({
           elapsed_ms: 1,
         } as T;
       }
-      case "transfer":
-        return { operation: 1, total_files: 2, total_bytes: 1000 } as T;
+      case "transfer": {
+        // A dry run answers what would happen. The fixture reports a conflict when the sources
+        // include the file the tests use for exactly that, so the dialog can be driven.
+        const sources = (args?.sources as string[]) ?? [];
+        if (args?.dryRun) {
+          const clashing = sources.filter((s) => s.includes("kurz.txt"));
+          return {
+            outcome: "planned",
+            total_files: sources.length,
+            total_bytes: 1000,
+            conflicts: clashing.map((source) => ({
+              source,
+              destination: source,
+              existing: { path: source, kind: "file", size: 12, mtime: 1_600_000_000, indexed: true },
+              incoming: { path: source, kind: "file", size: 4096, mtime: 1_700_000_000, indexed: false },
+            })),
+          } as T;
+        }
+        return { outcome: "started", operation: 1, total_files: 2, total_bytes: 1000 } as T;
+      }
       case "cancel_operation":
         return { cancelled: true } as T;
       case "mkdir":

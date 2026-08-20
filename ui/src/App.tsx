@@ -18,6 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Ambient } from "./components/Ambient";
 import { Breadcrumb } from "./components/Breadcrumb";
 import { CommandPalette, type Command } from "./components/CommandPalette";
+import { ConflictDialog } from "./components/ConflictDialog";
 import { ContextSidebar } from "./components/ContextSidebar";
 import { PreviewPane } from "./components/PreviewPane";
 import { ResultList } from "./components/ResultList";
@@ -352,6 +353,11 @@ export function App() {
       }
       if (paletteOpen) return;
 
+      // While the conflict question is open, nothing else may act: the answer decides what
+      // happens to files, and an arrow key that moved the selection underneath it would change
+      // what the answer applies to.
+      if (operations.pending) return;
+
       // While something is being named, the keyboard belongs to that field. Without this the
       // overlay's Enter opens the selected row and prevents the form from submitting, so the
       // rename silently never happens — which is how two browser tests found it.
@@ -639,6 +645,18 @@ export function App() {
         {showPreview && (showBoth || pane === "preview") && <PreviewPane hit={settled} />}
         {showContext && <ContextSidebar hit={settled} />}
       </main>
+
+      {operations.pending && (
+        <ConflictDialog
+          conflicts={operations.pending.conflicts}
+          totalFiles={operations.pending.totalFiles}
+          onChoose={operations.resolveConflict}
+          onCancel={() => {
+            operations.dismissConflict();
+            input.current?.focus();
+          }}
+        />
+      )}
 
       <CommandPalette
         open={paletteOpen}

@@ -48,17 +48,20 @@ folder, Ctrl+Z to undo. Copying shows a bar with a real denominator and Escape c
 to ten a second; `fs.mkdir` and `fs.rename` answer immediately. Every one of them writes an undo
 entry, and a batch writes one per source so a partly-failed batch is still undoable.
 
+**Asking before overwriting.** `fs.transfer` takes `dry_run`, which answers *which* names are
+already taken instead of moving anything. The interface uses it on every paste: no conflicts and
+the transfer starts; conflicts and a dialog asks, showing both sides — what is there and what
+would arrive, with sizes and ages — because "overwrite?" is not a question anybody can answer.
+The safest choice is first and Enter takes it, each option has a letter, Escape moves nothing.
+
 ### What M6 still needs
 
-1. **A conflict dialog.** The daemon takes `fail`, `replace`, `keep` and `skip`; the interface
-   only ever sends `fail`, so a paste onto an existing name reports a failure rather than
-   asking. The machinery is there and the question is not being put.
-2. **Permissions, ownership and symlinks** displayed.
-3. **Mounts via udisks2**, `xdg-mime` for "open with", Wayland drag and drop, and the *system*
+1. **Permissions, ownership and symlinks** displayed.
+2. **Mounts via udisks2**, `xdg-mime` for "open with", Wayland drag and drop, and the *system*
    clipboard — cut and copy currently live in the window and cannot paste into another app.
-4. **Archives** — extract zip and tar at minimum.
-5. **Network locations**, which may be staged.
-6. **Thumbnails in the list**, not only in the preview pane.
+3. **Archives** — extract zip and tar at minimum.
+4. **Network locations**, which may be staged.
+5. **Thumbnails in the list**, not only in the preview pane.
 
 And two holes the reorder creates, which should stay visible rather than be filled with a
 plausible number (D43): the sidebar cannot show salience, and the cold-tier indicator has

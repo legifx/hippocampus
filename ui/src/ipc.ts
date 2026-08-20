@@ -125,11 +125,18 @@ export type FsListResult = {
 export type TransferMode = "copy" | "move";
 export type ConflictChoice = "fail" | "replace" | "keep" | "skip";
 
-export type TransferStarted = {
-  operation: number;
-  total_files: number;
-  total_bytes: number;
+/** One destination that already exists, with both sides of the trade. */
+export type Conflict = {
+  source: string;
+  destination: string;
+  existing: FsEntry;
+  incoming: FsEntry;
 };
+
+/** What `transfer` answers: a dry run's findings, or the handle of a started one. */
+export type TransferAnswer =
+  | { outcome: "planned"; total_files: number; total_bytes: number; conflicts: Conflict[] }
+  | { outcome: "started"; operation: number; total_files: number; total_bytes: number };
 
 export type TransferProgress = {
   operation: number;
@@ -280,8 +287,15 @@ export const ipc = {
     destination: string,
     mode: TransferMode,
     conflict: ConflictChoice = "fail",
+    dryRun = false,
   ) =>
-    transport.invoke<TransferStarted>("transfer", { sources, destination, mode, conflict }),
+    transport.invoke<TransferAnswer>("transfer", {
+      sources,
+      destination,
+      mode,
+      conflict,
+      dryRun,
+    }),
 
   cancelOperation: (operation: number) =>
     transport.invoke<{ cancelled: boolean }>("cancel_operation", { operation }),

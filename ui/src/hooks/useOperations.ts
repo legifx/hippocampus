@@ -12,7 +12,13 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ipc, type ConflictChoice, type TransferDone, type TransferProgress } from "../ipc";
+import {
+  ipc,
+  type Conflict,
+  type ConflictChoice,
+  type TransferDone,
+  type TransferProgress,
+} from "../ipc";
 
 export type Clipboard = {
   paths: string[];
@@ -29,6 +35,13 @@ export type RunningTransfer = {
   current: string | null;
 };
 
+/** A question waiting to be answered before anything moves. */
+export type PendingConflict = {
+  conflicts: Conflict[];
+  totalFiles: number;
+  destination: string;
+};
+
 /** What just happened, for the status line. Cleared when the next thing happens. */
 export type Notice = {
   text: string;
@@ -38,6 +51,7 @@ export type Notice = {
 export function useOperations(onChanged: () => void) {
   const [clipboard, setClipboard] = useState<Clipboard>(null);
   const [running, setRunning] = useState<RunningTransfer | null>(null);
+  const [pending, setPending] = useState<PendingConflict | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
 
   // The operation this window started. Progress for anything else — there is nothing else
@@ -96,22 +110,21 @@ export function useOperations(onChanged: () => void) {
     setNotice({ text: `${paths.length} kopiert`, kind: "info" });
   }, []);
 
-  const paste = useCallback(
-    (destination: string, conflict: ConflictChoice = "fail") => {
-      if (!clipboard || running) return;
-      const { paths, mode } = clipboard;
-
+  /// Start the transfer for real, with a decision already made about what is in the way.
+  const begin = useCallback(
+    (paths: string[], mode: "copy" | "move", destination: string, conflict: ConflictChoice) => {
       ipc
         .transfer(paths, destination, mode, conflict)
-        .then((started) => {
-          mine.current = started.operation;
+        .then((answer) => {
+          if (answer.outcome !== "started") return;
+          mine.current = answer.operation;
           setRunning({
-            operation: started.operation,
+            operation: answer.operation,
             fraction: 0,
             filesDone: 0,
-            totalFiles: started.total_files,
+            totalFiles: answer.total_files,
             bytesDone: 0,
-            totalBytes: started.total_bytes,
+            totalBytes: answer.total_bytes,
             current: null,
           });
           // A move empties the clipboard; a copy does not, because pasting a copy twice is a
@@ -120,8 +133,51 @@ export function useOperations(onChanged: () => void) {
         })
         .catch((e: unknown) => setNotice({ text: messageOf(e), kind: "error" }));
     },
-    [clipboard, running],
+    [],
   );
+
+  const paste = useCallback(
+    (destination: string) => {
+      if (!clipboard || running || pending) return;
+      const { paths, mode } = clipboard;
+
+      // Ask the daemon what would happen before anything moves. A file manager that starts
+      // copying and then reports a failure has already made the decision, badly.
+      ipc
+        .transfer(paths, destination, mode, "fail", true)
+        .then((answer) => {
+          if (answer.outcome !== "planned") return;
+          if (answer.conflicts.length === 0) {
+            begin(paths, mode, destination, "fail");
+            return;
+          }
+          setPending({
+            conflicts: answer.conflicts,
+            totalFiles: answer.total_files,
+            destination,
+          });
+        })
+        .catch((e: unknown) => setNotice({ text: messageOf(e), kind: "error" }));
+    },
+    [clipboard, running, pending, begin],
+  );
+
+  /// The answer to the question the dialog asked.
+  const resolveConflict = useCallback(
+    (choice: ConflictChoice) => {
+      if (!pending || !clipboard) return;
+      const { paths, mode } = clipboard;
+      const destination = pending.destination;
+      setPending(null);
+      begin(paths, mode, destination, choice);
+    },
+    [pending, clipboard, begin],
+  );
+
+  const dismissConflict = useCallback(() => {
+    setPending(null);
+    setNotice({ text: "nichts übertragen", kind: "info" });
+  }, []);
 
   const cancel = useCallback(() => {
     if (!running) return;
@@ -196,6 +252,9 @@ export function useOperations(onChanged: () => void) {
   return {
     clipboard,
     running,
+    pending,
+    resolveConflict,
+    dismissConflict,
     notice,
     setNotice,
     cut,

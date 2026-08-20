@@ -14,8 +14,49 @@ use crate::fs_tools::{InverseStep, Surface, ToolError, ToolResult};
 use crate::policy::Refusal;
 use crate::transfer::{self, Handle, Measure, OnConflict, Progress};
 use cortex_core::model::Action;
-use cortex_core::tools::{ConflictChoice, TransferFailure, TransferMode};
+use cortex_core::tools::{Conflict, ConflictChoice, FsEntry, FsKind, TransferFailure, TransferMode};
 use std::path::{Path, PathBuf};
+
+/// What a batch would do, checked before any of it runs.
+#[derive(Debug)]
+pub struct TransferPlan {
+    /// The sources, resolved.
+    pub sources: Vec<PathBuf>,
+    pub destination: PathBuf,
+    pub total: Measure,
+    /// Destinations that already exist. Empty means nothing has to be asked.
+    pub conflicts: Vec<Conflict>,
+}
+
+/// What a path is, for a conflict to describe. `None` when there is nothing there.
+fn describe(path: &Path) -> Option<FsEntry> {
+    let md = std::fs::symlink_metadata(path).ok()?;
+    Some(FsEntry {
+        path: path.to_path_buf(),
+        kind: if md.is_dir() {
+            FsKind::Dir
+        } else if md.is_symlink() {
+            FsKind::Symlink
+        } else if md.is_file() {
+            FsKind::File
+        } else {
+            FsKind::Other
+        },
+        size: md.len(),
+        mtime: crate::plans::mtime_of(&md),
+        indexed: false,
+    })
+}
+
+fn placeholder(path: &Path) -> FsEntry {
+    FsEntry {
+        path: path.to_path_buf(),
+        kind: FsKind::File,
+        size: 0,
+        mtime: 0,
+        indexed: false,
+    }
+}
 
 /// What a batch did.
 #[derive(Debug, Default)]
@@ -49,7 +90,7 @@ impl Surface<'_> {
         sources: &[PathBuf],
         destination: &Path,
         mode: TransferMode,
-    ) -> ToolResult<(Vec<PathBuf>, PathBuf, Measure)> {
+    ) -> ToolResult<TransferPlan> {
         let tool = tool_name(mode);
         let args = serde_json::json!({
             "sources": sources.len(),
@@ -69,6 +110,7 @@ impl Surface<'_> {
         }
 
         let mut resolved = Vec::with_capacity(sources.len());
+        let mut conflicts = Vec::new();
         let mut total = Measure::default();
 
         for source in sources {
@@ -97,10 +139,30 @@ impl Surface<'_> {
             total.files += measured.files;
             total.directories += measured.directories;
             total.bytes += measured.bytes;
+
+            // What is already there, if anything. Collected here rather than discovered during
+            // the transfer, so a client can ask the question before the first byte moves.
+            if let Some(name) = checked.file_name() {
+                let target = destination.join(name);
+                if let Some(existing) = describe(&target) {
+                    conflicts.push(Conflict {
+                        source: checked.clone(),
+                        destination: target,
+                        existing,
+                        incoming: describe(&checked).unwrap_or_else(|| placeholder(&checked)),
+                    });
+                }
+            }
+
             resolved.push(checked);
         }
 
-        Ok((resolved, destination, total))
+        Ok(TransferPlan {
+            sources: resolved,
+            destination,
+            total,
+            conflicts,
+        })
     }
 
     /// Run a batch that `plan_transfer` has already checked.

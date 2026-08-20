@@ -12,7 +12,7 @@ use cortex_agent::transfer::Handle;
 use cortex_agent::Auditor;
 use cortex_core::config::AgentConfig;
 use cortex_core::model::Actor;
-use cortex_core::tools::{ConflictChoice, TransferMode, UndoParams};
+use cortex_core::tools::{ConflictChoice, FsKind, TransferMode, UndoParams};
 use cortex_store::Store;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -89,14 +89,13 @@ impl Env {
         mode: TransferMode,
         conflict: ConflictChoice,
     ) -> BatchOutcome {
-        let (resolved, destination, total) =
-            self.surface().plan_transfer(sources, destination, mode).unwrap();
+        let plan = self.surface().plan_transfer(sources, destination, mode).unwrap();
         self.surface().run_transfer(
-            &resolved,
-            &destination,
+            &plan.sources,
+            &plan.destination,
             mode,
             conflict,
-            total,
+            plan.total,
             &Handle::new(),
             |_| {},
         )
@@ -261,13 +260,14 @@ fn the_total_is_known_before_anything_moves() {
     let b = env.file("sub/b.txt", "12345");
     let target = env.dir("target");
 
-    let (_, _, total) = env
+    let plan = env
         .surface()
         .plan_transfer(&[a, b], &target, TransferMode::Copy)
         .unwrap();
 
-    assert_eq!(total.files, 2);
-    assert_eq!(total.bytes, 15, "a progress bar without a denominator is a spinner");
+    assert_eq!(plan.total.files, 2);
+    assert_eq!(plan.total.bytes, 15, "a progress bar without a denominator is a spinner");
+    assert!(plan.conflicts.is_empty(), "an empty directory has nothing to ask about");
 }
 
 #[test]
@@ -290,10 +290,11 @@ fn cancelling_between_files_stops_the_batch() {
     let sources: Vec<PathBuf> = (0..5).map(|i| env.file(&format!("f{i}.txt"), "x")).collect();
     let target = env.dir("target");
 
-    let (resolved, destination, total) = env
+    let plan = env
         .surface()
         .plan_transfer(&sources, &target, TransferMode::Move)
         .unwrap();
+    let (resolved, destination, total) = (plan.sources, plan.destination, plan.total);
 
     // Cancelled before it starts, which is the batch-level check: `run_transfer` looks between
     // sources, and a move within one filesystem is a rename with no inside to look in.
@@ -326,10 +327,11 @@ fn cancelling_a_copy_keeps_what_already_arrived_and_nothing_half_written() {
         .collect();
     let target = env.dir("target");
 
-    let (resolved, destination, total) = env
+    let plan = env
         .surface()
         .plan_transfer(&sources, &target, TransferMode::Copy)
         .unwrap();
+    let (resolved, destination, total) = (plan.sources, plan.destination, plan.total);
 
     let handle = Handle::new();
     let stopper = handle.clone();
@@ -443,4 +445,95 @@ fn renaming_onto_an_existing_name_is_refused() {
     let error = env.surface().rename(&file, "b.txt").unwrap_err();
     assert!(error.to_string().contains("already exists"), "{error}");
     assert_eq!(std::fs::read_to_string(env.root.join("b.txt")).unwrap(), "b");
+}
+
+// ---------------------------------------------------------------------------
+// The conflict question, asked before anything moves.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_plan_says_which_names_are_already_taken() {
+    let env = Env::new();
+    let clashing = env.file("notes.md", "new content, longer");
+    let fine = env.file("other.txt", "x");
+    let target = env.dir("target");
+    std::fs::write(target.join("notes.md"), "old").unwrap();
+
+    let plan = env
+        .surface()
+        .plan_transfer(&[clashing.clone(), fine], &target, TransferMode::Copy)
+        .unwrap();
+
+    assert_eq!(plan.conflicts.len(), 1, "only one of the two is taken");
+    let conflict = &plan.conflicts[0];
+    assert_eq!(conflict.source, clashing);
+    assert_eq!(conflict.destination, target.join("notes.md"));
+
+    // Both sides, so the question can be about what is being traded rather than "overwrite?".
+    assert_eq!(conflict.existing.size, 3);
+    assert_eq!(conflict.incoming.size, 19);
+}
+
+#[test]
+fn planning_moves_nothing() {
+    let env = Env::new();
+    let source = env.file("notes.md", "new");
+    let target = env.dir("target");
+    std::fs::write(target.join("notes.md"), "old").unwrap();
+
+    let plan = env
+        .surface()
+        .plan_transfer(&[source.clone()], &target, TransferMode::Move)
+        .unwrap();
+    assert_eq!(plan.conflicts.len(), 1);
+
+    assert!(source.exists(), "a dry run moved the source");
+    assert_eq!(std::fs::read_to_string(target.join("notes.md")).unwrap(), "old");
+}
+
+#[test]
+fn a_directory_in_the_way_is_a_conflict_and_says_it_is_a_directory() {
+    let env = Env::new();
+    let source = env.dir("project");
+    env.file("project/inner.txt", "x");
+    let target = env.dir("target");
+    std::fs::create_dir_all(target.join("project")).unwrap();
+
+    let plan = env
+        .surface()
+        .plan_transfer(&[source], &target, TransferMode::Copy)
+        .unwrap();
+
+    assert_eq!(plan.conflicts.len(), 1);
+    assert_eq!(plan.conflicts[0].existing.kind, FsKind::Dir);
+}
+
+#[test]
+fn the_answer_a_plan_gives_is_the_one_the_transfer_then_acts_on() {
+    let env = Env::new();
+    let source = env.file("notes.md", "new");
+    let target = env.dir("target");
+    std::fs::write(target.join("notes.md"), "old").unwrap();
+
+    // Plan, then run with the choice the question would have produced. A plan that reported a
+    // conflict the transfer then did not hit would make the dialog a guess.
+    let plan = env
+        .surface()
+        .plan_transfer(&[source], &target, TransferMode::Copy)
+        .unwrap();
+    assert_eq!(plan.conflicts.len(), 1);
+
+    let outcome = env.surface().run_transfer(
+        &plan.sources,
+        &plan.destination,
+        TransferMode::Copy,
+        ConflictChoice::Keep,
+        plan.total,
+        &Handle::new(),
+        |_| {},
+    );
+
+    assert_eq!(outcome.moved.len(), 1);
+    assert_eq!(outcome.moved[0].file_name().unwrap(), "notes (2).md");
+    assert_eq!(std::fs::read_to_string(target.join("notes.md")).unwrap(), "old");
 }
