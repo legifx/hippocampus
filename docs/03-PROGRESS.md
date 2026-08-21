@@ -10,7 +10,7 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | M6 — Human View (pulled ahead of M5 at the owner's request, D43) |
-| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher, and it now opens them with whatever the desktop would open them with. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 974 tests — 808 Rust, 47 vitest, 119 in a browser. |
+| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher, and it now opens them with whatever the desktop would open them with. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 977 tests — 810 Rust, 47 vitest, 120 in a browser. |
 | **Last updated** | 2026-08-21 |
 | **Blocked on** | nothing |
 
@@ -578,6 +578,35 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
+
+### 2026-08-21 — What "everything is buggy and it hangs" turned out to be
+
+The owner used the drives an hour after they shipped and reported that selecting one that is not
+the stick broke everything. **The logs could not settle it and a screenshot could**: the window
+was not frozen at all. It showed the places list with the cursor where he had left it, and a
+banner reading `[object Object]` painted over the top of the previous message.
+
+Three defects, all mine, all from the same morning's work:
+
+1. **`[object Object]`** — a daemon error arrives as `{ code, message }` rather than as a string,
+   which the shell documents and which the frontend already had a function for. I wrote a second
+   one beside it. The two are one function now, in `format.ts`, and a browser test drives the
+   failure with an object rather than an `Error` because a fixture that threw a string would have
+   hidden exactly this.
+2. **A failed mount left no audit entry**, so `cortex audit` showed the successful one and
+   nothing else — R8 says allowed *and* refused. The red-team suite asserts it now.
+3. **The message was noise.** `udisksctl` prefixes every failure with a complaint about not being
+   able to open `/dev/tty`; the actual answer is on the second line. An internal disk now gets a
+   sentence that says a permission is needed, that this window never asks for one, and what
+   command would work.
+
+**What is not settled: whether the window also stopped repainting.** The overlapping text in the
+screenshot is the signature of a region that was written and not cleared, and "it does not react"
+is what a stale image looks like from the outside — the page was alive, idle and answering. One
+contributing candidate was found and changed on its own merits: the breath layer kept
+`will-change: opacity` after D59 stopped animating it, so the compositor was holding a layer for
+something that never changes. Whether that was the cause is unproven, and the next report is the
+measurement.
 
 ### 2026-08-21 — Drives that are not mounted yet
 

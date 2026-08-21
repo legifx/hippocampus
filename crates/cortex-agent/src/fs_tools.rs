@@ -430,10 +430,7 @@ impl Surface<'_> {
         self.gate_with(tool, &args)?;
         self.refuse_hardware(tool, &args, &params.device)?;
 
-        let volume = self.volume(&params.device).ok_or_else(|| ToolError::Io {
-            path: params.device.clone(),
-            message: "no such volume on this machine".into(),
-        })?;
+        let volume = self.found(tool, &args, &params.device)?;
 
         if let Some(point) = volume.mount_point {
             self.auditor
@@ -447,10 +444,7 @@ impl Surface<'_> {
 
         let mount_point = crate::volumes::Udisks::default()
             .mount(&params.device)
-            .map_err(|e| ToolError::Io {
-                path: params.device.clone(),
-                message: e.to_string(),
-            })?;
+            .map_err(|e| self.failed(tool, &args, &params.device, e))?;
 
         self.auditor
             .allowed(self.now, tool, &args, &format!("mounted at {}", mount_point.display()));
@@ -476,15 +470,8 @@ impl Surface<'_> {
         self.gate_with(tool, &args)?;
         self.refuse_hardware(tool, &args, &params.device)?;
 
-        let volume = self.volume(&params.device).ok_or_else(|| ToolError::Io {
-            path: params.device.clone(),
-            message: "no such volume on this machine".into(),
-        })?;
-
-        let as_io = |e: crate::volumes::VolumeError| ToolError::Io {
-            path: params.device.clone(),
-            message: e.to_string(),
-        };
+        let volume = self.found(tool, &args, &params.device)?;
+        let as_io = |e: crate::volumes::VolumeError| self.failed(tool, &args, &params.device, e);
 
         let plan = crate::volumes::plan_unmount(&volume, params.eject).map_err(as_io)?;
         let udisks = crate::volumes::Udisks::default();
@@ -515,6 +502,47 @@ impl Surface<'_> {
             device: params.device.clone(),
             ejected: params.eject,
         })
+    }
+
+    /// The volume, or a refusal that is in the audit log like every other one.
+    ///
+    /// Rule R8 is that a decision leaves a trace whether it was allowed or refused, and the
+    /// first version of these two methods returned every hardware failure with no trace at all —
+    /// so a refused mount was invisible in `cortex audit` and the only evidence it had happened
+    /// was a screenshot of the window.
+    fn found(
+        &self,
+        tool: &str,
+        args: &serde_json::Value,
+        device: &Path,
+    ) -> ToolResult<crate::volumes::Volume> {
+        match self.volume(device) {
+            Some(volume) => Ok(volume),
+            None => {
+                let message = "no such volume on this machine";
+                self.auditor.allowed(self.now, tool, args, message);
+                Err(ToolError::Io {
+                    path: device.to_path_buf(),
+                    message: message.into(),
+                })
+            }
+        }
+    }
+
+    /// The same for a failure that came back from udisks2.
+    fn failed(
+        &self,
+        tool: &str,
+        args: &serde_json::Value,
+        device: &Path,
+        error: crate::volumes::VolumeError,
+    ) -> ToolError {
+        let message = error.to_string();
+        self.auditor.allowed(self.now, tool, args, &message);
+        ToolError::Io {
+            path: device.to_path_buf(),
+            message,
+        }
     }
 
     /// What the machine knows about one device, from the same scan the places screen uses.

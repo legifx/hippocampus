@@ -675,6 +675,37 @@ fn an_agent_may_not_touch_the_drives() {
     assert_eq!(f.refusals().len(), 2, "both are in the audit log (R8)");
 }
 
+/// A hardware failure is in the audit log, like every other decision (R8).
+///
+/// It was not, at first: a refused mount returned an error and left no trace, so `cortex audit`
+/// showed the successful ones and nothing else — and the only evidence that a refusal had
+/// happened at all was a screenshot of the window. An audit log that records only what worked
+/// is a log that answers the one question nobody asks.
+#[test]
+fn a_mount_that_fails_leaves_a_trace() {
+    let f = Fixture::new();
+    let mut human = f.surface(true);
+    human.actor = Actor::Human;
+
+    let error = human
+        .mount(&FsMountParams {
+            device: std::path::PathBuf::from("/dev/definitely-not-here"),
+        })
+        .unwrap_err();
+    assert!(error.to_string().contains("no such volume"), "{error}");
+
+    let entries = f.store.recent_audit(10, None, false).unwrap();
+    let mount = entries
+        .iter()
+        .find(|e| e.tool == "fs.mount")
+        .expect("the attempt is in the audit log");
+    assert!(
+        mount.result_summary.as_deref().unwrap_or("").contains("no such volume"),
+        "and says what happened: {:?}",
+        mount.result_summary
+    );
+}
+
 /// An agent may not decide which program opens a person's files.
 ///
 /// This is not the allow-list's kind of refusal and it is not covered by the table above: the

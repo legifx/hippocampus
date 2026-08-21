@@ -256,6 +256,15 @@ pub enum VolumeError {
     NoSuchDevice(PathBuf),
     #[error("udisks2 is not installed, so mounting is not available here")]
     NoUdisks,
+    /// polkit would allow this after somebody typed a password, and nobody can be asked from
+    /// here. Its own case rather than a generic failure because it is not a fault: it is the
+    /// permanent answer for an internal disk, and the person reading it needs to know that
+    /// trying again will not help.
+    #[error(
+        "{device} needs an administrator's permission, and this window never asks for one — \
+         an internal disk can be mounted from a terminal with `udisksctl mount -b {device}`"
+    )]
+    NeedsPermission { device: PathBuf },
     #[error("{operation} failed: {message}")]
     Refused { operation: &'static str, message: String },
     #[error("{0}")]
@@ -353,6 +362,7 @@ impl Udisks {
     }
 
     fn run(&self, operation: &'static str, args: &[&str]) -> Result<String, VolumeError> {
+        let device = args.last().map(PathBuf::from).unwrap_or_default();
         let mut command = std::process::Command::new(&self.program);
         command.arg(operation).args(args);
         // Never, on any path. A daemon waiting on a dialog nobody can see is a daemon that has
@@ -370,10 +380,16 @@ impl Udisks {
         if output.status.success() {
             return Ok(String::from_utf8_lossy(&output.stdout).to_string());
         }
-        // udisks2's own words. They are written for a person — "Object /org/... is not a mountable
-        // filesystem", "Not authorized to perform operation" — and rewriting them into something
-        // of our own would lose the only description of what actually went wrong.
-        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if is_permission_problem(&stderr) {
+            return Err(VolumeError::NeedsPermission { device });
+        }
+        // Otherwise udisks2's own words. They are written for a person — "Object /org/... is not
+        // a mountable filesystem", "target is busy" — and rewriting them into something of our
+        // own would lose the only description of what actually went wrong. Its *last* line,
+        // because the first is often a complaint about not being able to open `/dev/tty`, which
+        // is true, expected, and not the answer to anything.
+        let message = stderr.lines().last().unwrap_or("").trim().to_string();
         Err(VolumeError::Refused {
             operation,
             message: if message.is_empty() {
@@ -383,6 +399,19 @@ impl Udisks {
             },
         })
     }
+}
+
+/// Whether what udisks2 said amounts to "somebody would have to authorise this".
+///
+/// Two variants, and the difference matters to nobody but the wording: `NotAuthorized` is never,
+/// `NotAuthorizedCanObtain` is "a password would do it". Both mean the same thing from a window
+/// that has promised never to ask.
+///
+/// The first line of the output is usually udisksctl complaining that it cannot open `/dev/tty`
+/// to build a textual authentication agent. That is true — a daemon has no terminal — and it is
+/// not the reason for anything, so matching only on it would be matching on the noise.
+fn is_permission_problem(stderr: &str) -> bool {
+    stderr.contains("NotAuthorized") || stderr.contains("Not authorized")
 }
 
 /// Where `udisksctl mount` says it put it.
@@ -754,16 +783,43 @@ mod tests {
     }
 
     #[test]
-    fn what_udisks_says_when_it_refuses_is_what_the_caller_is_told() {
-        // "Not authorized to perform operation" is the only description of what went wrong that
-        // anybody has. Replacing it with a message of our own loses it.
+    fn an_internal_disk_says_what_is_actually_wrong() {
+        // The exact two lines a real machine produced for `udisksctl mount -b /dev/sda2`. The
+        // first is udisksctl noting that a daemon has no terminal to put a password prompt on;
+        // the second is the answer. Showing both to a person — which is what the window did
+        // until somebody screenshotted it — is showing them the noise first.
         let dir = tempfile::tempdir().unwrap();
         let udisks = fake_udisks(
             dir.path(),
-            "#!/bin/sh\necho 'Error mounting /dev/sdb1: Not authorized to perform operation' >&2\nexit 1\n",
+            "#!/bin/sh\n[ \"$1\" = --ready ] && exit 0\n\
+             echo \"Error creating textual authentication agent: Error opening current \
+             controlling terminal for the process (/dev/tty): No such device or address \
+             (polkit-error-quark, 0)\" >&2\n\
+             echo \"Error mounting /dev/sda2: GDBus.Error:org.freedesktop.UDisks2.Error.\
+             NotAuthorizedCanObtain: Not authorized to perform operation\" >&2\nexit 1\n",
         );
-        let error = udisks.mount(Path::new("/dev/sdb1")).unwrap_err();
-        assert!(error.to_string().contains("Not authorized"), "{error}");
+
+        let error = udisks.mount(Path::new("/dev/sda2")).unwrap_err();
+        assert!(matches!(error, VolumeError::NeedsPermission { .. }), "{error}");
+
+        let said = error.to_string();
+        assert!(said.contains("permission"), "{said}");
+        assert!(said.contains("udisksctl mount -b /dev/sda2"), "and says what would work: {said}");
+        assert!(!said.contains("polkit-error-quark"), "and not the noise: {said}");
+    }
+
+    #[test]
+    fn any_other_failure_keeps_udisks2s_own_last_word() {
+        let dir = tempfile::tempdir().unwrap();
+        let udisks = fake_udisks(
+            dir.path(),
+            "#!/bin/sh\n[ \"$1\" = --ready ] && exit 0\n\
+             echo 'Error creating textual authentication agent: no tty' >&2\n\
+             echo 'Error unmounting /dev/sdb1: target is busy' >&2\nexit 1\n",
+        );
+        let said = udisks.unmount(Path::new("/dev/sdb1")).unwrap_err().to_string();
+        assert!(said.contains("target is busy"), "{said}");
+        assert!(!said.contains("textual authentication"), "the noise is dropped: {said}");
     }
 
     #[test]

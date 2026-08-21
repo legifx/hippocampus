@@ -99,3 +99,21 @@ export function tierLabel(tier: string): string | null {
       return null;
   }
 }
+
+/**
+ * What to show a person when a call fails.
+ *
+ * **A daemon error arrives as an object, not a string** — `{ code, message }`, deliberately, so
+ * that the page can branch on a refusal's code (see `BridgeError` in the shell). `String(e)` on
+ * one of those produces `[object Object]`, which is what the places screen showed for every
+ * refused mount until somebody screenshotted it. One implementation, because the second one was
+ * the bug.
+ */
+export function messageOf(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object" && "message" in error) {
+    return String((error as { message: unknown }).message);
+  }
+  return "das hat nicht funktioniert";
+}

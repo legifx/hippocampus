@@ -41,6 +41,7 @@ import {
   type SortBy,
 } from "./ipc";
 import { rowFromEntry, rowFromHit, type Row } from "./row";
+import { messageOf } from "./format";
 
 const ROW_HEIGHT_COMPACT = 28;
 const ROW_HEIGHT_COMFORTABLE = 34;
@@ -107,17 +108,6 @@ export type AppProps = {
    */
   startPath?: string;
 };
-
-/**
- * What to show a person when the daemon refuses.
- *
- * Its own words rather than a sentence of ours: "Not authorized to perform operation" and "this
- * disk cannot be unplugged" are the only descriptions of what went wrong that exist, and a
- * generic "Fehler beim Einhängen" would throw them away.
- */
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /** One array rather than a fresh one per render: the chooser resets its cursor when the list it
  * is given is a different list, and `[]` written twice is two different lists. */

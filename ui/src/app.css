@@ -43,8 +43,6 @@
   background: radial-gradient(90% 150% at 50% -35%, rgba(255, 255, 255, 0.06), transparent 70%);
   z-index: 0;
   opacity: 0.4;
-  /* Its own layer, so a repaint of the list never repaints the gradient underneath it. */
-  will-change: opacity;
 }
 
 /* Off screen: nothing animates.
@@ -60,6 +58,10 @@
 }
 
 .hc-breath-animated {
+  /* Its own layer, so a repaint of the list never repaints the gradient underneath it — and
+     only while it is actually moving. `will-change` on a layer that never changes is a layer
+     the compositor keeps for nothing, which since D59 is most of the time. */
+  will-change: opacity;
   animation-name: hc-breathe;
   animation-timing-function: ease-in-out;
   animation-iteration-count: infinite;

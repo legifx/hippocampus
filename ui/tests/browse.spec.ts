@@ -289,6 +289,24 @@ test.describe("the places screen", () => {
     await expect(page.locator(".hc-row").first()).toBeVisible();
   });
 
+  test("a refused mount says what is wrong, in words", async ({ page }) => {
+    // What this is guarding: the daemon's errors arrive as `{ code, message }` objects, not as
+    // strings, and the first version of the places screen ran `String(e)` over one. The window
+    // then said `[object Object]` for every internal disk, which is how the bug was reported —
+    // as "everything is broken and it hangs".
+    await page.goto("/harness.html?mountfails=1");
+    await page.waitForSelector(".hc-place");
+    for (let i = 0; i < 5; i++) await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+
+    await expect(page.locator(".hc-banner")).toContainText("permission");
+    await expect(page.locator(".hc-banner")).not.toContainText("[object Object]");
+
+    // And the window still works afterwards: the cursor moves, and another place opens.
+    await page.keyboard.press("ArrowUp");
+    await expect(page.locator('.hc-place[aria-selected="true"]')).toContainText("Arbeit");
+  });
+
   test("Ctrl+E ejects the drive under the cursor", async ({ page }) => {
     await openAtPlaces(page);
     for (let i = 0; i < 4; i++) await page.keyboard.press("ArrowDown");

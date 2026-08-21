@@ -25,6 +25,7 @@ import {
   type TransferDone,
   type TransferProgress,
 } from "../ipc";
+import { messageOf } from "../format";
 
 export type Clipboard = {
   paths: string[];
@@ -426,12 +427,4 @@ function summarise(done: TransferDone): Notice {
     };
   }
   return { text: `${done.moved.length} übertragen`, kind: "info" };
-}
-
-function messageOf(error: unknown): string {
-  if (typeof error === "string") return error;
-  if (error && typeof error === "object" && "message" in error) {
-    return String((error as { message: unknown }).message);
-  }
-  return "das hat nicht funktioniert";
 }

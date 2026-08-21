@@ -1658,6 +1658,23 @@ caller to *add `/dev/sdb1` to `agent.write_allowlist`* — advice that would not
 because no configuration permits this. `Refusal::NotForAgents` says what is true instead, and it
 corrects the same misdirection in D58's `apps.set_default`.
 
+**Three things this got wrong, found by somebody using it rather than by a test.** The report was
+"selecting a drive that is not the stick makes everything buggy and it hangs", and a screenshot of
+the window settled what the logs could not:
+
+- **`[object Object]`.** A daemon error crosses into JavaScript as an object — `{ code, message }`,
+  deliberately, so the page can branch on a refusal's code — and the places screen ran `String(e)`
+  over one. There was already a function in the frontend that handled this correctly; writing a
+  second one next to it *was* the bug, and the two are one function now.
+- **A refused mount left no audit entry.** Both new methods returned hardware failures without
+  recording them, so `cortex audit` showed the successful mount and nothing else, and the only
+  evidence a refusal had happened was the screenshot. R8 says allowed *and* refused.
+- **The message was noise even once it was a string.** `udisksctl` prefixes every failure with a
+  complaint that it cannot open `/dev/tty` to build a textual authentication agent — true, since
+  a daemon has no terminal, and not the answer to anything. `NotAuthorized` in either of its two
+  spellings is now its own error that says what is actually true: an internal disk needs a
+  permission this window never asks for, and names the command that would work.
+
 **Verified against hardware rather than only against a fixture.** The machine this was written on
 had a stick plugged in and unmounted, three unmounted Windows partitions, an EFI partition and
 six loop devices. The scan found the stick and the Windows volumes and none of the machinery;

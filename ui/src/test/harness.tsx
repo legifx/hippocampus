@@ -109,6 +109,18 @@ setTransport({
         } as T;
       }
       case "mount_volume": {
+        // `?mountfails=1` is an internal disk: polkit refuses it without a prompt. **The
+        // rejection is an object and not an `Error`**, because that is what the shell sends —
+        // `BridgeError` serialises as `{ code, message }` so the page can branch on the code —
+        // and a fixture that threw a string would have hidden the bug this reproduces.
+        if (params.get("mountfails")) {
+          // eslint-disable-next-line no-throw-literal
+          throw {
+            code: -32603,
+            message:
+              "/dev/sda2 needs an administrator's permission, and this window never asks for one",
+          };
+        }
         (window as unknown as HarnessWindow).__hcMounted = String(args?.device ?? "");
         return {
           device: String(args?.device ?? ""),
