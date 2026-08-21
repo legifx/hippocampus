@@ -260,9 +260,11 @@ pub enum VolumeError {
     /// here. Its own case rather than a generic failure because it is not a fault: it is the
     /// permanent answer for an internal disk, and the person reading it needs to know that
     /// trying again will not help.
+    // No device at the front: every caller already prefixes the path it was asked about, and
+    // saying it twice in one line reads like two problems.
     #[error(
-        "{device} needs an administrator's permission, and this window never asks for one — \
-         an internal disk can be mounted from a terminal with `udisksctl mount -b {device}`"
+        "this needs an administrator's permission, and nothing here asks for one — an internal \
+         disk can be mounted from a terminal with `udisksctl mount -b {device}`"
     )]
     NeedsPermission { device: PathBuf },
     #[error("{operation} failed: {message}")]
