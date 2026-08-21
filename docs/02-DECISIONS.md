@@ -1577,8 +1577,11 @@ whether one is running at all. A three-pixel strip costing 71% is what settles i
 pixels for 64% of the cost.
 
 So the breath now runs while the daemon has something to index and is still when it does not.
-The window measures **1.6–3.4% of one core** visible and idle, against 111% before, and 0.25%
-hidden. That is also the truer reading of §6: the layer exists to make background work legible,
+Measured on the shipped build, four consecutive samples with an empty extract queue: **4.8–5.1%
+of one core** visible and idle, against 111% before, and 0.22% hidden. The remaining five per
+cent has not been chased; the twenty-fold difference is the point, and the next candidate if
+somebody does chase it is the caret blinking in the search field, which is an animation like any
+other. That is also the truer reading of §6: the layer exists to make background work legible,
 and when there is no background work, a still layer is what that means. It still breathes during
 an ingest, which is the case §6 was written for, and the cost then is a core — worth knowing, and
 worth measuring again if a long ingest ever feels slow.

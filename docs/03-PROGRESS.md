@@ -37,7 +37,8 @@ re-derive them by reasoning:
    gradient, nor the size of the animated element — a three-pixel strip still cost 71%. **Any
    running animation recomposites the whole window every frame.** The heartbeat now runs only
    while the daemon has something to index, which is both the cheap answer and the honest one,
-   and the visible idle window measures **1.6–3.4%** against 111% before. D59 has the table.
+   and the visible idle window measures **4.8–5.1%** against 111% before, over four consecutive
+   samples. D59 has the table.
 
 2. **Does the system clipboard survive the window being hidden? — Still open, not tested.** Copy
    in the overlay, then `wl-paste --list-types` in a terminal. Wayland only lets a focused
@@ -298,7 +299,7 @@ next time a *person* opens a file.
 
 **The stepped breath layer was measured, and it bought nothing** — 116% before, 110% after. The
 explanation behind it was wrong, and what replaced it is in D59: the heartbeat runs only while
-there is work. The visible idle window is now 1.6–3.4% of one core. What is still unmeasured is
+there is work. The visible idle window is now 4.8–5.1% of one core. What is still unmeasured is
 the *busy* case: during an ingest the animation runs and the core comes back, which is worth a
 number the next time a long ingest happens.
 
@@ -577,7 +578,9 @@ gradient, and not the size of the animated element, because a **three-pixel stri
 71%**. Any running animation recomposites the whole window every frame.
 
 The heartbeat now runs only while the daemon has something to index. Visible and idle, the
-window measures **1.6–3.4% of one core** against 111%; hidden, 0.25%. §6 reads better for it
+window measures **4.8–5.1% of one core** against 111%; hidden, 0.22%. The last five per cent
+has not been chased — the next suspect is the caret blinking in the search field, which is an
+animation like any other. §6 reads better for it
 too: the layer exists to make background work legible, so a still layer is what "no background
 work" looks like. Design system §8 gains a rule — no animation runs continuously in a resident
 window — and it is a performance rule with a measurement behind it rather than a taste.
