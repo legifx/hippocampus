@@ -245,6 +245,10 @@ setTransport({
           budget_ms: 300,
           within_budget: true,
           waited_for_daemon_ms: 0,
+          // `?compositing=software` stands in for a process launched with
+          // `WEBKIT_DISABLE_DMABUF_RENDERER=1`. The page has no other way to find out, which is
+          // the whole reason the shell reports it (D57).
+          software_compositing: params.get("compositing") === "software",
         } as T;
       case "mark_interactive":
         return 90 as T;

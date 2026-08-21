@@ -50,6 +50,34 @@ pub struct Report {
     /// measurement of this application — it is a measurement of two services racing — and
     /// [`Report::comparable`] is how the difference is stated rather than hidden.
     pub waited_for_daemon_ms: u64,
+    /// Whether WebKit is compositing in software rather than on the GPU.
+    ///
+    /// `WEBKIT_DISABLE_DMABUF_RENDERER=1` is set on machines where the DMABUF renderer and the
+    /// driver produce glitches and black areas — see D54 and D57. It drops WebKit to software
+    /// compositing, and an opacity animation over a full-window layer then repaints the whole
+    /// window on the CPU at sixty frames a second: **measured at 116% of one core, steady, with
+    /// the overlay merely on screen and nobody touching it.**
+    ///
+    /// The shell is the only half that can know this — the variable is read by the process, not
+    /// exposed to the page — so the shell says, exactly as it does for visibility.
+    pub software_compositing: bool,
+}
+
+/// Whether this process asked WebKit to composite in software.
+///
+/// Read where the report is built rather than cached at startup, because the answer is a
+/// property of the environment the process was launched with and cannot change under it.
+fn software_compositing() -> bool {
+    disables_dmabuf(std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").ok().as_deref())
+}
+
+/// The parsing on its own, so it can be asserted without setting a process-global variable.
+///
+/// Unset, empty and `0` all mean the renderer is left alone. `0` in particular: a unit file that
+/// sets the variable to zero to *document* that it is off would otherwise switch the frontend
+/// into its expensive-compositing mode and cost the thing the variable was set to zero to avoid.
+fn disables_dmabuf(value: Option<&str>) -> bool {
+    matches!(value, Some(v) if !v.is_empty() && v != "0")
 }
 
 impl Report {
@@ -123,7 +151,40 @@ impl Startup {
             // number at all, and reporting `true` for it would make the gate meaningless.
             within_budget: interactive.is_some_and(|ms| ms <= BUDGET_MS),
             waited_for_daemon_ms: self.waited_ms.load(Ordering::Relaxed),
+            software_compositing: software_compositing(),
         }
+    }
+}
+
+#[cfg(test)]
+mod compositing_tests {
+    use super::disables_dmabuf;
+
+    #[test]
+    fn unset_means_the_gpu_path() {
+        assert!(!disables_dmabuf(None));
+    }
+
+    #[test]
+    fn set_to_one_means_software() {
+        assert!(disables_dmabuf(Some("1")));
+    }
+
+    #[test]
+    fn empty_and_zero_are_not_software() {
+        // Both are how somebody writes "this is off" into a unit file. Reading either as "on"
+        // would put the frontend into its stepped, cheap-repaint mode on a machine that is
+        // compositing on the GPU — the one place where the steps are visible and buy nothing.
+        assert!(!disables_dmabuf(Some("")));
+        assert!(!disables_dmabuf(Some("0")));
+    }
+
+    #[test]
+    fn the_report_carries_it() {
+        // The wiring, not the value: whatever this process was launched with, the field exists
+        // and reaches the report the frontend reads.
+        let report = super::Startup::begin().report();
+        assert_eq!(report.software_compositing, super::software_compositing());
     }
 }
 

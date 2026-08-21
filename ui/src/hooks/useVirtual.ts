@@ -61,12 +61,54 @@ export const DEFAULT_OVERSCAN = 6;
 export const LEAD_ROWS = 12;
 export const TRAIL_ROWS = 2;
 
+/**
+ * The ceiling on the lead, and therefore on the DOM.
+ *
+ * Twelve rows covers 336 px of travel per frame and leaves a 420 px flick with a gap. The lead
+ * is now taken from how far the view actually moved on the last frame instead of being fixed,
+ * which closes that gap — but an unbounded lead is a list that renders more the faster somebody
+ * flicks, and M4 §3 requires a bound. Twenty rows covers 560 px per frame, which is a third
+ * again beyond the fastest flick this is asked to survive.
+ *
+ * The cost is paid only while the view is moving. When it stops, the lead goes back to
+ * `LEAD_ROWS` and the resting window is the size it was before any of this — the *direction*
+ * stays, deliberately, because un-weighting it on the frame after every wheel notch is a second
+ * render for the same rows. Only a new list or a resize puts the spare rows back on both sides.
+ */
+export const MAX_LEAD_ROWS = 20;
+
+/**
+ * How many rows to keep ahead, given how far the last frame moved.
+ *
+ * Prediction from the previous frame, which is the only measurement available at the moment the
+ * window has to be decided. It is right for steady scrolling, which is what a wheel and a
+ * trackpad produce.
+ *
+ * **A frame that travels more than a viewport is not scrolling and predicts nothing.** Dragging
+ * the scrollbar, or `scrollToIndex` jumping to a match, moves the view somewhere unrelated and
+ * then stops; there is no continuity with what was on screen, so there is nothing for a lead to
+ * be continuous with. Sizing the lead from that distance borrows twenty rows to cover motion
+ * that has already finished — a measurable transient in the node count with nothing to show for
+ * it, which is how this was found: a jump left the list at 46 rows for one frame and made an
+ * existing bound assertion fail under load.
+ */
+export function leadFor(perFrame: number, rowHeight: number, viewportHeight: number): number {
+  if (!(perFrame > 0) || rowHeight <= 0) return LEAD_ROWS;
+  if (viewportHeight > 0 && perFrame > viewportHeight) return LEAD_ROWS;
+  // Plus one for the row the scroll position lands inside. A frame that travels an exact
+  // multiple of the row height still exposes a partial row at the edge unless the position
+  // happens to be row-aligned, and being one row short is a visible band of empty list.
+  const needed = Math.ceil(perFrame / rowHeight) + 1;
+  return Math.min(MAX_LEAD_ROWS, Math.max(LEAD_ROWS, needed));
+}
+
 /** The pure part, so it can be tested without a DOM and asserted against directly. */
 export function windowFor(
   scrollTop: number,
   viewportHeight: number,
   { count, rowHeight, overscan = DEFAULT_OVERSCAN }: VirtualOptions,
   direction: Direction = "still",
+  lead: number = LEAD_ROWS,
 ): Window {
   const totalHeight = count * rowHeight;
   if (count === 0 || viewportHeight <= 0 || rowHeight <= 0) {
@@ -77,11 +119,12 @@ export function windowFor(
   const firstVisible = Math.floor(clampedScroll / rowHeight);
   const visibleCount = Math.ceil(viewportHeight / rowHeight);
 
+  const ahead = Math.min(MAX_LEAD_ROWS, Math.max(LEAD_ROWS, Math.floor(lead)));
   const [above, below] =
     direction === "down"
-      ? [TRAIL_ROWS, LEAD_ROWS]
+      ? [TRAIL_ROWS, ahead]
       : direction === "up"
-        ? [LEAD_ROWS, TRAIL_ROWS]
+        ? [ahead, TRAIL_ROWS]
         : [overscan, overscan];
 
   const start = Math.max(0, firstVisible - above);
@@ -99,9 +142,10 @@ export function maxRenderedRows(
   rowHeight: number,
   overscan = DEFAULT_OVERSCAN,
 ): number {
-  // The larger of the two arrangements: symmetric while still, weighted while moving. They are
-  // deliberately the same size, so this is one number rather than a state to reason about.
-  const spare = Math.max(overscan * 2, LEAD_ROWS + TRAIL_ROWS);
+  // The larger of the two arrangements: symmetric while still, weighted while moving. The
+  // weighted one is no longer the same size as the symmetric one — the lead grows with the
+  // speed of the scroll — so this is the worst case, which is the lead at its ceiling.
+  const spare = Math.max(overscan * 2, MAX_LEAD_ROWS + TRAIL_ROWS);
   return Math.ceil(viewportHeight / rowHeight) + spare + 1;
 }
 
@@ -141,6 +185,12 @@ export function useVirtual(options: VirtualOptions) {
   const frame = useRef<number | null>(null);
   /** Where the spare rows go. Reset to `still` is deliberate: see `recompute`. */
   const direction = useRef<Direction>("still");
+  /** The scroll position at the previous recompute, so a frame's travel can be measured. */
+  const previous = useRef(0);
+  /** How far the frame before that one travelled, so the lead follows sustained motion. */
+  const before = useRef(0);
+  /** How many rows to keep ahead, derived from that travel. */
+  const lead = useRef(LEAD_ROWS);
 
   // Everything except the scroll position that decides the window. When one of these changes
   // the window is wrong *now*, not on the next frame.
@@ -152,15 +202,24 @@ export function useVirtual(options: VirtualOptions) {
 
   if (state.inputs !== inputs) {
     // A resize or a new list is not a scroll: the spare rows go back to both sides, because
-    // there is no direction of travel to favour.
+    // there is no direction of travel to favour, and the lead goes back to its floor with them.
     direction.current = "still";
+    lead.current = LEAD_ROWS;
+    previous.current = scrollTop.current;
+    before.current = 0;
     // Adjusting state during render, which React documents for exactly this: the alternative is
     // an effect, and an effect commits one frame with the old window first. That frame is
     // visible — a list that has just been given its height renders a short window and then
     // corrects itself — and it is what a browser test caught by finding twelve rows where there
     // should have been thirty.
     setState({
-      window: windowFor(scrollTop.current, viewportHeight, { count, rowHeight, overscan }, "still"),
+      window: windowFor(
+        scrollTop.current,
+        viewportHeight,
+        { count, rowHeight, overscan },
+        "still",
+        LEAD_ROWS,
+      ),
       inputs,
     });
   }
@@ -182,19 +241,68 @@ export function useVirtual(options: VirtualOptions) {
     return () => observer.disconnect();
   }, [element]);
 
+  /**
+   * Book the one frame, from wherever. A ref because `recompute` books its own follow-up and
+   * would otherwise have to refer to itself while it is still being defined.
+   */
+  const recomputeRef = useRef<() => void>(() => {});
+  const schedule = useCallback(() => {
+    if (frame.current !== null) return;
+    frame.current = requestAnimationFrame(() => {
+      frame.current = null;
+      recomputeRef.current();
+    });
+  }, []);
+
   const recompute = useCallback(() => {
+    // How far the view travelled since the last time this ran, which is one frame ago whenever
+    // scrolling is under way. This is the measurement the lead is sized from; asking the wheel
+    // how fast it is going would answer in the wheel's units, not the list's.
+    const position = scrollTop.current;
+    const travelled = Math.abs(position - previous.current);
+    previous.current = position;
+
+    // The lead follows the *slower* of the last two frames, so one frame on its own can never
+    // buy rows. A single long step is `scrollToIndex` landing on a match, or a click in the
+    // scrollbar trough, or the first frame of a flick — and only the third of those continues.
+    // Borrowing on the strength of one frame put 46 rows in the DOM for a jump that was already
+    // over, and gave them back a frame later, which is a burst of DOM mutations in exactly the
+    // place D56 got them down to zero.
+    const sustained = Math.min(travelled, before.current);
+    before.current = travelled;
+
+    if (travelled === 0) {
+      // Settled: give back what was borrowed, and *only* that.
+      //
+      // The direction stays. Resetting it here as well looked tidier and broke the first of
+      // D56's two fixes: a slow scroll would weight the window towards its travel on one frame
+      // and un-weight it on the next, so the rows changed twice per wheel notch and the test
+      // for "a scroll too small to change a row costs nothing" went from zero DOM mutations to
+      // ninety-six. A settled view has still been travelling one way, and the spare rows belong
+      // where it was going.
+      lead.current = LEAD_ROWS;
+    } else {
+      lead.current = leadFor(sustained, rowHeight, viewportHeight);
+    }
+
     const next = windowFor(
-      scrollTop.current,
+      position,
       viewportHeight,
       { count, rowHeight, overscan },
       direction.current,
+      lead.current,
     );
     // The functional form, because this runs from an animation frame and the state it compares
     // against must be the current one rather than the one captured when the frame was booked.
-    setState((previous) =>
-      same(previous.window, next) ? previous : { window: next, inputs: previous.inputs },
-    );
-  }, [viewportHeight, count, rowHeight, overscan]);
+    setState((prior) => (same(prior.window, next) ? prior : { window: next, inputs: prior.inputs }));
+
+    // One more frame after a moving one, so the settle above is reached without waiting for a
+    // scroll event that will never come — the browser stops sending them the moment the view
+    // stops, which is exactly when the borrowed rows should be handed back.
+    if (travelled !== 0) schedule();
+  }, [viewportHeight, count, rowHeight, overscan, schedule]);
+
+  recomputeRef.current = recompute;
 
   /**
    * One recompute per frame, however many scroll events arrive.
@@ -210,13 +318,9 @@ export function useVirtual(options: VirtualOptions) {
         direction.current = position > scrollTop.current ? "down" : "up";
       }
       scrollTop.current = position;
-      if (frame.current !== null) return;
-      frame.current = requestAnimationFrame(() => {
-        frame.current = null;
-        recompute();
-      });
+      schedule();
     },
-    [recompute],
+    [schedule],
   );
 
   useEffect(

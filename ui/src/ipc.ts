@@ -327,6 +327,15 @@ export type StartupReport = {
    * budget — which is why it is reported rather than dropped.
    */
   waited_for_daemon_ms: number;
+  /**
+   * Whether WebKit is compositing in software rather than on the GPU.
+   *
+   * True when the process was launched with `WEBKIT_DISABLE_DMABUF_RENDERER=1`, which some
+   * driver pairings need to render without glitches (D54, D57). The page cannot see that
+   * variable, and it changes what an ambient animation costs by two orders of magnitude, so the
+   * shell reports it.
+   */
+  software_compositing: boolean;
 };
 
 // ---------------------------------------------------------------------------

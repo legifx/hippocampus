@@ -11,24 +11,29 @@ Wants=hippocampus-cortexd.service
 
 [Service]
 Type=simple
-# `WEBKIT_DISABLE_DMABUF_RENDERER=1` used to be set here, against a known bad pairing of
-# WebKitGTK's DMABUF renderer with the proprietary NVIDIA driver — glitches and black areas.
+# `WEBKIT_DISABLE_DMABUF_RENDERER=1` is not set here, and is not set here on purpose — but it is
+# also not the villain an earlier version of this comment made it out to be (D54, corrected by
+# D57).
 #
-# It is gone because "costs nothing on hardware where it works" was wrong, and expensively so.
-# Disabling that renderer drops WebKit to software compositing, and the breath layer — one
-# full-window gradient whose opacity rises and falls — then repaints on the CPU at sixty frames
-# a second. Measured on this machine: **99% of a core, continuously, with the window hidden.**
-# A resident overlay that burns a core while nobody is looking at it makes the whole desktop
-# feel slow, which is exactly the complaint that led to measuring it.
+# It exists against a known bad pairing of WebKitGTK's DMABUF renderer with the NVIDIA driver:
+# glitches and black areas. Disabling the renderer drops WebKit to software compositing. What
+# that costs, measured on one such machine — WebKitGTK 2.52.3, NVIDIA 595.84, Wayland:
 #
-# If your driver still produces glitches or black areas in the overlay, put it back:
+#   hidden      0.14% of one core   (0.07% without the variable — i.e. no difference)
+#   on screen   116% of one core    (the breath layer repainting the window on the CPU)
+#
+# The core this once cost while *hidden* was never the renderer's: it was an animation running
+# for a window nobody could see, and the frontend now stops every animation and every poll while
+# it is off screen. The bill that remains is paid only while somebody is looking, and the breath
+# layer takes itself in steps when the shell reports software compositing, so it is a fraction of
+# the 116% above.
+#
+# If your driver produces glitches or black areas in the overlay, put it back — it is the right
+# trade, and it is a drop-in so that this file stays the same on every machine:
 #
 #   systemctl --user edit hippocampus-overlay.service
 #   [Service]
 #   Environment=WEBKIT_DISABLE_DMABUF_RENDERER=1
-#
-# and expect the cost above. The frontend stops animating while the window is hidden, so the
-# cost is then paid only while it is on screen — but it is still paid.
 # Resident and hidden. The window is summoned with the hotkey; starting it visible at login
 # would put a search box in front of somebody who has not asked for one.
 ExecStart=%h/.local/bin/hippocampus

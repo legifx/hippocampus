@@ -10,7 +10,7 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | M6 — Human View (pulled ahead of M5 at the owner's request, D43) |
-| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 866 tests — 725 Rust, 42 vitest, 99 in a browser. |
+| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 879 tests — 729 Rust, 47 vitest, 103 in a browser. |
 | **Last updated** | 2026-08-20 |
 | **Blocked on** | nothing |
 
@@ -23,22 +23,42 @@ deferred it. Do not spend a session on visual design unless they ask for it.
 **Four things are waiting on the owner rather than on code.** Ask; do not assume, and do not
 re-derive them by reasoning:
 
-1. **Does the overlay render correctly?** `WEBKIT_DISABLE_DMABUF_RENDERER=1` was removed from
-   the service unit (D54). It had been set against a WebKitGTK/NVIDIA pairing whose symptom is
-   glitches and black areas. It cost a whole CPU core. If the glitches are back, the override is
-   documented in `packaging/systemd/hippocampus-overlay.service` — put it back and say so here.
-2. **Does the system clipboard survive the window being hidden?** Copy in the overlay, then
-   `wl-paste --list-types` in a terminal. Wayland only lets a focused window take the selection;
-   whether the compositor keeps it after the surface unmaps is not something the documentation
-   settles. If it does not, `gtk_clipboard_set_can_store` or delaying the hide are the levers.
-3. **Does a drag out of the window reach another application?** The page offers `text/uri-list`
-   and the browser tests prove that much; they run in Chromium and the overlay runs in
-   WebKitGTK, so whether the webview forwards it to the compositor can only be found out by
-   dragging a row into something.
-4. **Is the scrolling right now?** Five separate causes of "it feels slow" have been found and
-   fixed (below). The last one was measured, not guessed, and at 420 px per frame there is still
-   72 px of gap. Pushing that further means a larger DOM, which is a trade to put to the owner
-   rather than to make.
+**Two of the four were answered on 2026-08-20 and acted on; two are still open.**
+
+1. **Does the overlay render correctly? — Answered: no, the glitches were back.**
+   `WEBKIT_DISABLE_DMABUF_RENDERER=1` is restored, as a drop-in at
+   `~/.config/systemd/user/hippocampus-overlay.service.d/dmabuf.conf`. **It does not cost a core
+   any more, and it never was the thing that did** — measured hidden, over thirty seconds:
+   0.07% of one core without it, 0.10% with it. D54 changed two things at once and credited the
+   wrong one; the fix was stopping the animations while hidden. See D57. The unit's comment
+   still describes the old, expensive behaviour and should be corrected when somebody is next
+   in that file.
+
+   **The cost is real, and it arrives when the window is on screen.** Same process, nobody
+   touching it: **0.14% of one core hidden, 116% visible**, four consecutive samples. The only
+   difference is D54's `animation: none` while hidden, and exactly one animation in the frontend
+   runs continuously — the breath layer, a gradient over the whole window whose opacity rises and
+   falls, which under software compositing is a full-window repaint on every frame. It now takes
+   the same breath in **steps** when the shell reports software compositing, which cuts the
+   repaints from sixty a second to a few. **That fix is built and installed but not yet
+   measured** — measuring it needs the window on screen. The number to beat is 116%: summon the
+   overlay, leave it alone, and run the CPU snippet below. Hidden, the installed build reads
+   0.05%.
+2. **Does the system clipboard survive the window being hidden? — Still open, not tested.** Copy
+   in the overlay, then `wl-paste --list-types` in a terminal. Wayland only lets a focused
+   window take the selection; whether the compositor keeps it after the surface unmaps is not
+   something the documentation settles. If it does not, `gtk_clipboard_set_can_store` or
+   delaying the hide are the levers.
+3. **Does a drag out of the window reach another application? — Still open, not tested.** The
+   page offers `text/uri-list` and the browser tests prove that much; they run in Chromium and
+   the overlay runs in WebKitGTK, so whether the webview forwards it to the compositor can only
+   be found out by dragging a row into something.
+4. **Is the scrolling right now? — Answered: close it.** Done, and measured: **the gap at
+   420 px per frame is now zero**, for 42 rows in the DOM while moving that fast and 36 at rest,
+   which is what it was before. The lead is taken from how far the previous frame actually
+   travelled instead of being fixed, so nothing is paid while the view is still. D57 has the
+   table, the three rules that make it safe, and the two tests that had to be repaired before
+   any of it could be believed.
 
 **How to answer a report of slowness.** Not by reasoning about it. The bridge logs any daemon
 call over 50 ms and any preview over 50 ms, and every one of the five causes was found in the
@@ -52,7 +72,24 @@ journalctl --user -u hippocampus-overlay --since "-1d" -o cat \
 Equal durations across different methods finishing together is a queue, not slowness. A single
 call that is genuinely slow is a different problem. And check what the processes are actually
 doing before believing either — the largest cause of all was a hidden window burning a core, and
-no amount of reading the code would have shown it.
+no amount of reading the code would have shown it:
+
+```
+cg=$(systemctl --user show -p ControlGroup --value hippocampus-overlay.service)
+a=$(awk '/usage_usec/{print $2}' /sys/fs/cgroup${cg}/cpu.stat); sleep 30
+b=$(awk '/usage_usec/{print $2}' /sys/fs/cgroup${cg}/cpu.stat)
+awk -v a=$a -v b=$b 'BEGIN{printf "%.2f%% of one core\n",(b-a)/1e6/30*100}'
+```
+
+Hidden and idle, that is **under a tenth of a percent**. Anything in the tens is the bug.
+`ps`'s `%CPU` will not show it: that column is an average over the whole life of the process, so
+a core burnt for the last minute of a four-hour run reads as almost nothing.
+
+**And check the measuring tool before believing the measurement.** The first version of the
+snippet above reported **0.0% for a process spinning a full core**, because `$!` had captured a
+subshell and `utime + stime` is a process's own time and not its children's. It agreed with
+every good result and could not be distinguished from one. Point it at `yes > /dev/null` first;
+it must read 100%.
 
 ## Where M6 stands
 
@@ -164,6 +201,34 @@ as. Scroll events are coalesced onto a frame and compared before anything is sto
 spare rows now go where the eye is going — 300 px per frame went from 128 px of gap to none, for
 two extra rows in the DOM.
 
+**6. The last 72 px of that gap is closed too, and it cost nothing at rest (D57).** D56 left
+420 px per frame showing 72 px of empty list, and the owner was asked whether to push further,
+since the obvious way to do it is a bigger DOM. The lead is now **measured** rather than fixed:
+it is sized from how far the previous frame actually travelled, capped at twenty rows, and given
+back when the view stops.
+
+| wheel speed | before D56 | after D56 | now |
+|---|---|---|---|
+| 150–300 px/frame | up to 128 px | none | none, 38 rows |
+| **420 px/frame** | 240 px | **72 px** | **none, 42 rows** |
+| 600 px/frame | 428 px | 260 px | 36 px, 46 rows — past the ceiling, by design |
+| scrollbar jump | — | — | full height, 38 rows — a jump predicts nothing, so it borrows nothing |
+| **at rest** | 36 rows | 36 rows | **36 rows** |
+
+Three rules keep it bounded, and none of them is decoration — each was left out first, and each
+broke something a test caught: a ceiling on the lead, a jump is not a scroll, and the lead
+follows the *slower* of the last two frames so one frame alone can never buy rows. The settle
+hands back the lead and deliberately not the direction. D57 has the reasoning.
+
+**And two of the tests around this did not survive being checked.** The 420 px gap — the exact
+defect the owner was asked about — **had no test at all**; the suite asserted 300 px, where D56
+already reached zero. And "it comes back down when the scrolling stops" dispatched scroll events
+while it waited, so those events did the settling: it passed with the settle deleted from the
+code. Both are fixed, and every rule above was then verified by breaking it and watching a named
+test fail. An existing bound assertion in `layout.spec.ts` that began failing only under parallel
+load was not flakiness either — it was a real one-frame transient, and fixing the cause removed
+it.
+
 **It opens somewhere a person recognises.** The first screen is a list of places, not `/`:
 Persönlich (home and the XDG user folders that exist, plus the trash), Lesezeichen (read from
 the file Nautilus and Thunar use), Laufwerke (mounted volumes with their label and how full they
@@ -217,6 +282,19 @@ The safest choice is first and Enter takes it, each option has a letter, Escape 
 2. **Archives** — extract zip and tar at minimum.
 3. **Network locations**, which may be staged.
 4. **Thumbnails in the list**, not only in the preview pane.
+
+**Two things are built and not yet measured, and both need the window on screen.** Neither is a
+loose end to be tidied away with a plausible number:
+
+- **The stepped breath layer.** Software compositing costs 116% of one core with the overlay
+  merely visible; the step change should cut that by an order of magnitude and has been verified
+  only for its wiring, in Chromium, which composites on the GPU and therefore cannot show the
+  saving. Summon the overlay, leave it alone for thirty seconds, run the CPU snippet in
+  "How to answer a report of slowness", and write the number here.
+- **The scrolling, in WebKitGTK rather than Chromium.** The gap at 420 px a frame is zero in the
+  browser tests, and the browser tests are not the renderer this ships on — the whole point of
+  the paragraph above is that this renderer behaves differently. The DOM work is the same either
+  way, so the arithmetic holds; whether it *feels* right is the owner's judgement again.
 
 One thing is built but unverified: dragging a row *out* of the window offers `text/uri-list`,
 and whether WebKitGTK forwards that to the compositor cannot be tested from here — the browser
@@ -314,8 +392,6 @@ Three things in it are worth knowing:
 
 ### Not done
 
-1. **§1 has no number yet.** The instrumentation is in and reports through the command palette;
-   a window that never maps cannot report it. One run on a real session settles it.
 1. **Audio shows nothing yet.** The scope says "waveform metadata only"; the previewer refuses
    audio with a reason rather than rendering a waveform, and the pane prints that reason.
 2. **`fs.list` has a `glob` parameter nothing implements.** It is in the wire format and the
@@ -396,9 +472,8 @@ right answer from the wrong one by eighteen points of logit, in both languages.
 3. **A wall-clock cap per extractor.** The byte budget bounds memory and the stage's own thread
    bounds latency for everything else, but one file on a stalled network mount can hold the stage
    indefinitely.
-4. **A reader pool.** `Store` is still one connection behind a mutex.
-5. **The 24-hour soak test**, deferred by the owner since M1.
-6. **Real distractors for the goldset** — a few hundred written documents. It is the only thing
+4. **The 24-hour soak test**, deferred by the owner since M1.
+5. **Real distractors for the goldset** — a few hundred written documents. It is the only thing
    that would make reranking measurable, and it would make every other number more trustworthy.
 
 ### Open questions the goldset can now answer

@@ -1366,3 +1366,104 @@ And the gap measurement has to warm up in the direction of travel. Measured from
 jump, the first frame is genuinely incomplete — a wheel does not teleport — and the maximum over
 the run is that one frame. Measured that way, this change looked like it had made things four
 times worse.
+
+---
+
+### D57 — The lead is measured, not fixed; and the DMABUF renderer was never the thing that cost a core
+
+Two findings from one session, and they are recorded together because the second corrects the
+first half of D54.
+
+**The renderer was exonerated.** D54 removed `WEBKIT_DISABLE_DMABUF_RENDERER=1` from the service
+unit and attributed 99% of a CPU core to it. The owner reports that the glitches and black areas
+the variable existed to suppress are back without it — WebKitGTK 2.52.3 on the NVIDIA 595.84 open
+kernel module, under Wayland — so it has been restored as a drop-in. Measured with it back, the
+window hidden, over thirty seconds:
+
+| | hidden, no override | hidden, override restored |
+|---|---|---|
+| overlay cgroup | 0.07% of one core | **0.10% of one core** |
+
+The core was never the renderer's. It was the breath layer animating for a window nobody could
+see, and the *other* half of D54 — `[data-visible="no"] * { animation: none }`, plus stopping the
+polls — is what fixed it. D54 changed two things and credited the wrong one. Correct rendering
+and a quiet CPU are not a trade: both are available, and the cost of software compositing is now
+paid only while the window is actually on screen.
+
+The measuring tool was checked before its numbers were believed, and the first version of it read
+**0.0% for a process spinning a full core** — `$!` had captured a subshell, and `utime + stime`
+is the process's own time, not its children's. A tool that reports zero for everything agrees
+with a good result and cannot be told apart from one.
+
+**The lead follows the scroll instead of guessing at it.** D56 moved the spare rows into the
+direction of travel and left 72 px of gap at 420 px per frame, which the owner was asked about
+and chose to close. A larger fixed lead would have bought it with a permanently larger DOM. The
+lead is instead derived from how far the previous frame actually travelled, so the rows are
+borrowed only while the view is moving that fast and handed back when it stops.
+
+| wheel speed | six each side | two behind, twelve ahead | lead from the last frame |
+|---|---|---|---|
+| 150–300 px/frame | up to 128 px | none | none, 38 rows |
+| 420 px/frame | 240 px | 72 px | **none, 42 rows** |
+| 500 px/frame | — | — | none, 45 rows |
+| 600 px/frame | 428 px | 260 px | 36 px, 46 rows — past the ceiling |
+| scrollbar jump | — | — | full height, **38 rows** |
+| at rest | 36 rows | 36 rows | **36 rows** |
+
+Three rules make it safe, and each of them exists because leaving it out broke something that
+was measured:
+
+1. **A ceiling.** `MAX_LEAD_ROWS = 20` covers 560 px a frame. Without it the node count would be
+   a slope with the input device's speed on the x-axis, and M4 §3 asks for a bound.
+2. **A jump is not a scroll.** A frame that travels further than the viewport is a scrollbar drag
+   or `scrollToIndex` landing on a match: the view goes somewhere unrelated and stops, so there
+   is nothing for a lead to be continuous with. Sizing a lead from that distance spends rows on
+   motion that is already over.
+3. **The lead follows the slower of the last two frames.** One frame on its own can never buy
+   rows. Without this, a single long step put 46 rows in the DOM and gave them back a frame
+   later, and that burst of DOM mutations landed exactly where D56 had got them to zero — the
+   test for "a scroll too small to change a row costs nothing" went from 0 mutations to 96.
+
+The settle gives back the lead and **not** the direction. Resetting both looked tidier and
+un-weighted the window on the frame after every wheel notch, which is the same regression again.
+
+**And the renderer's real bill arrives when the window is on screen.** The measurement above is
+the *hidden* window, which is where D54 looked. With the overlay summoned and nobody touching
+it, the same process reads:
+
+| | hidden | on screen, idle |
+|---|---|---|
+| overlay cgroup | 0.14% of one core | **116%**, over four consecutive samples |
+
+Same binary, same variable, same window: the only difference is D54's
+`[data-visible="no"] * { animation: none }`. That is a controlled comparison rather than an
+inference, and an inventory of the frontend finds exactly one animation that runs continuously —
+the breath layer, one gradient covering the window with its opacity rising and falling. Under
+software compositing that is a full-window repaint sixty times a second.
+
+The layer keeps its period and its gesture and takes them in **steps**: `steps(24, end)` under
+`[data-compositing="software"]`, so the opacity changes a few times a second instead of every
+frame. Not a static layer, which would be cheaper still — design system §6 makes this the only
+progress indicator the application has, and a still one indicates nothing.
+
+The page cannot see `WEBKIT_DISABLE_DMABUF_RENDERER`, so the shell reports it, in
+`startup::Report` alongside the cold-start numbers and for the same reason: the half that knows
+says so, rather than the other half guessing. **The effect of the step change is not measured
+yet** — it needs the window on screen, and this session could not open it. The number to beat is
+116%.
+
+**What the tests are worth, checked rather than assumed.** Every one of the five rules above was
+verified by breaking it and watching a named test fail: ceiling, jump guard, sustained motion,
+the settle, and the settle's direction. Two tests did not survive that check and were fixed
+first:
+
+- The gap at 420 px per frame **had no test at all** — the suite asserted only 300 px, where
+  D56's fixed lead already reached zero. The defect the owner was asked about was outside every
+  assertion.
+- "It comes back down when the scrolling stops" dispatched six scroll events while waiting, and
+  those events did the settling. It passed with the settle deleted from the code. A real wheel
+  sends nothing once it stops, so the test now waits frames and dispatches nothing.
+
+And an existing bound assertion in `layout.spec.ts` began failing **only under parallel load**,
+which was not flakiness to be retried: it was the 46-row transient from rule 3, visible for one
+frame. Fixing the cause removed it.

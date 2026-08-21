@@ -32,6 +32,14 @@ import { expect, test, type Page } from "@playwright/test";
 const RENDER_BUDGET_MS = 24;
 /** One frame at 60 fps. */
 const FRAME_MS = 16.7;
+/**
+ * The bound M4 §3 asks for, at this viewport, while the view is moving at its fastest.
+ *
+ * At rest the list holds under forty rows and that is asserted separately. This is the
+ * ceiling the adaptive lead is allowed to reach during a flick, and it is a constant so that
+ * "bounded" stays a number somebody chose rather than whatever the code happens to produce.
+ */
+const MAX_ROWS_IN_FLIGHT = 48;
 
 async function open(page: Page, hits = 10_000) {
   await page.setViewportSize({ width: 1200, height: 700 });
@@ -264,16 +272,20 @@ test.describe("the render stays inside its share of the budget", () => {
  * empty on every frame, filling in one frame later. That reads as loading, which is why the
  * complaint was about files loading.
  *
- * Measured on this viewport, worst case over twenty steady frames, before and after moving the
- * spare rows into the direction of travel:
+ * Measured on this viewport, worst case over twenty steady frames, at each of the three
+ * arrangements this list has had:
  *
- * | wheel speed  | six rows each side | two behind, twelve ahead |
- * |---|---|---|
- * | 200 px/frame | 28 px  | none  |
- * | 300 px/frame | 128 px | none  |
- * | 420 px/frame | 240 px | 72 px |
+ * | wheel speed  | six each side | two behind, twelve ahead | lead from the last frame |
+ * |---|---|---|---|
+ * | 200 px/frame | 28 px  | none   | none |
+ * | 300 px/frame | 128 px | none   | none |
+ * | 420 px/frame | 240 px | 72 px  | none |
+ * | 600 px/frame | —      | —      | 36 px, past the ceiling |
  *
- * For two more rows in the DOM.
+ * The middle column bought the first two rows for two more nodes. The third closes 420 px per
+ * frame as well, and pays for it only while the view is actually moving that fast: the lead is
+ * taken from how far the previous frame travelled, so at rest the window is the size it always
+ * was, and a scrollbar jump — which predicts nothing — borrows nothing at all.
  */
 test.describe("a fast scroll shows rows, not gaps", () => {
   /** The worst gap in the viewport over twenty frames of steady scrolling. */
@@ -322,13 +334,115 @@ test.describe("a fast scroll shows rows, not gaps", () => {
     expect(await worstGap(page, 300)).toBe(0);
   });
 
-  test("and the DOM does not grow to achieve it", async ({ page }) => {
-    // The whole point of the change is that it is free: the same budget, spent where the eye is
-    // going. M4 §3's bound is what stops this being solved by rendering more.
+  test("and a flick twice that fast leaves none either", async ({ page }) => {
     await open(page, 100_000);
     await page.getByLabel("Suche").fill("query");
     await page.waitForSelector(".hc-row");
-    await worstGap(page, 300);
+
+    // 420 px per frame is the fastest flick this list is asked to survive — twenty-five
+    // thousand pixels a second. A fixed lead of twelve rows covers 336 px of it and leaves the
+    // remaining 72 px blank, which is the gap the owner was asked about and decided to close.
+    expect(await worstGap(page, 420)).toBe(0);
+  });
+
+  test("and the DOM does not grow to achieve it", async ({ page }) => {
+    // M4 §3 requires the node count to stay *bounded*, and does not name the bound. The number
+    // here is the bound this list claims, so raising it is a visible edit to an assertion
+    // rather than a silent drift. It is asserted at rest and during the fastest flick, because
+    // those are two different arrangements of the same window.
+    await open(page, 100_000);
+    await page.getByLabel("Suche").fill("query");
+    await page.waitForSelector(".hc-row");
     expect(await page.locator(".hc-row").count()).toBeLessThan(40);
+
+    await worstGap(page, 300);
+    expect(await page.locator(".hc-row").count()).toBeLessThan(MAX_ROWS_IN_FLIGHT);
+    await worstGap(page, 420);
+    expect(await page.locator(".hc-row").count()).toBeLessThan(MAX_ROWS_IN_FLIGHT);
+
+    // Past the ceiling. 600 px a frame is more than the lead is allowed to cover, so there is
+    // a gap here and the bound is deliberately the thing that wins.
+    await worstGap(page, 600);
+    expect(await page.locator(".hc-row").count()).toBeLessThan(MAX_ROWS_IN_FLIGHT);
+
+    // And a speed no wheel produces, because the scrollbar does: dragging the thumb moves
+    // thousands of pixels in a frame. That is a jump, not scrolling — it predicts nothing about
+    // the next frame — so the list borrows *nothing*, and the node count stays at the size it
+    // has at rest rather than at the size a flick is allowed to reach.
+    await worstGap(page, 3000);
+    expect(await page.locator(".hc-row").count()).toBeLessThan(40);
+  });
+
+  test("and it comes back down when the scrolling stops", async ({ page }) => {
+    // The lead is spent while the view is moving and given back when it stops. Without this the
+    // adaptive window would be a one-way ratchet: one flick and the DOM stays large for ever.
+    await open(page, 100_000);
+    await page.getByLabel("Suche").fill("query");
+    await page.waitForSelector(".hc-row");
+
+    await worstGap(page, 420);
+
+    // Nothing is dispatched here, deliberately. When a wheel stops, the browser stops sending
+    // scroll events — so the list has to notice on its own that it has settled. An earlier
+    // version of this test dispatched six more scroll events while waiting, and those events
+    // did the settling; it passed with the settle deleted from the code, which makes it a test
+    // of the test rather than of the list.
+    await page.evaluate(async () => {
+      for (let i = 0; i < 6; i++) {
+        await new Promise<void>((r) => requestAnimationFrame(() => r()));
+      }
+    });
+    expect(await page.locator(".hc-row").count()).toBeLessThan(40);
+  });
+});
+
+/**
+ * What an ambient animation is allowed to cost when the window is painted on the CPU.
+ *
+ * `WEBKIT_DISABLE_DMABUF_RENDERER=1` is set on this machine because the DMABUF renderer and the
+ * driver together produce glitches and black areas (D54, D57). It drops WebKit to software
+ * compositing, and the breath layer — one gradient covering the whole window, with its opacity
+ * rising and falling — is then a full-window repaint on every frame.
+ *
+ * Measured on the real overlay, not here: **116% of one core, steady, with the window merely on
+ * screen and nobody touching it**, against 0.14% with the animations stopped. That is the
+ * number this exists to stop coming back. What can be asserted in a browser is the wiring —
+ * that the page asks the shell, and that the answer reaches the layer — because the page cannot
+ * see the variable and would otherwise animate at full rate with no way to tell.
+ */
+test.describe("the breath layer costs less when the window is painted on the CPU", () => {
+  test("on the GPU it breathes continuously", async ({ page }) => {
+    await page.setViewportSize({ width: 1200, height: 700 });
+    await page.goto(`/harness.html?at=/`);
+    await page.waitForSelector(".hc-breath-animated");
+
+    const timing = await page.evaluate(
+      () => getComputedStyle(document.querySelector(".hc-breath") as Element).animationTimingFunction,
+    );
+    expect(timing).toContain("ease-in-out");
+    expect(await page.locator("[data-compositing]").count()).toBe(0);
+  });
+
+  test("in software it takes the same breath in steps", async ({ page }) => {
+    await page.setViewportSize({ width: 1200, height: 700 });
+    await page.goto(`/harness.html?at=/&compositing=software`);
+    await page.waitForSelector('[data-compositing="software"]');
+
+    const style = await page.evaluate(() => {
+      const layer = document.querySelector(".hc-breath") as Element;
+      const computed = getComputedStyle(layer);
+      return {
+        timing: computed.animationTimingFunction,
+        duration: computed.animationDuration,
+        name: computed.animationName,
+      };
+    });
+
+    // Stepped, so the opacity changes a few times a second instead of sixty.
+    expect(style.timing).toContain("steps");
+    // And still breathing, on the same period. A static layer would be cheaper and would
+    // indicate nothing, which is the one thing §6 says this element is for.
+    expect(style.name).toBe("hc-breathe");
+    expect(parseFloat(style.duration)).toBeGreaterThan(0);
   });
 });

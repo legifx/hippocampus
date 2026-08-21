@@ -65,6 +65,21 @@
   animation-iteration-count: infinite;
 }
 
+/* Software compositing: the same breath, taken in steps.
+
+   With `WEBKIT_DISABLE_DMABUF_RENDERER=1` (D54, D57) WebKit paints on the CPU, and an opacity
+   animation over a layer that covers the window is a full-window repaint on every frame.
+   Measured: 116% of one core, steady, with the overlay on screen and nobody touching it —
+   against 0.14% with the animations stopped. The gradient is still there and still breathes on
+   the same period; the opacity changes at twenty-four points in that period instead of at every
+   frame, so the repaints go from sixty a second to four.
+
+   `steps(24, end)` and not a static layer, because §6 is that this is the only progress
+   indicator the application has. A still one indicates nothing. */
+[data-compositing="software"] .hc-breath-animated {
+  animation-timing-function: steps(24, end);
+}
+
 @keyframes hc-breathe {
   0%,
   100% {
