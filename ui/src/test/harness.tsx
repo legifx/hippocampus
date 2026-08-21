@@ -108,6 +108,21 @@ setTransport({
           hidden: 1,
         } as T;
       }
+      case "mount_volume": {
+        (window as unknown as HarnessWindow).__hcMounted = String(args?.device ?? "");
+        return {
+          device: String(args?.device ?? ""),
+          mount_point: "/run/media/user/ESD-USB",
+          mounted_now: true,
+        } as T;
+      }
+      case "unmount_volume": {
+        (window as unknown as HarnessWindow).__hcEjected = {
+          device: String(args?.device ?? ""),
+          eject: args?.eject === true,
+        };
+        return { device: String(args?.device ?? ""), ejected: args?.eject === true } as T;
+      }
       case "places":
         // The shape a real machine gives back: personal folders, a stick with a label and a
         // capacity, and one row for everything technical.
@@ -130,11 +145,21 @@ setTransport({
               title: "Laufwerke",
               places: [
                 {
-                  path: "/run/media/user/ESD-USB",
+                  path: "/run/media/user/Arbeit",
+                  name: "Arbeit",
+                  kind: "drive",
+                  device: "/dev/sdc1",
+                  capacity: { total_bytes: 31_400_000_000, free_bytes: 21_000_000_000 },
+                  volume: { mounted: true, fstype: "ext4", size_bytes: 31_400_000_000, removable: true },
+                },
+                // Plugged in and not mounted: its path is a device node, and opening it means
+                // mounting it first. `__hcMounted` records that the window did.
+                {
+                  path: "/dev/sdb1",
                   name: "ESD-USB",
                   kind: "drive",
                   device: "/dev/sdb1",
-                  capacity: { total_bytes: 31_400_000_000, free_bytes: 21_000_000_000 },
+                  volume: { mounted: false, fstype: "vfat", size_bytes: 31_400_000_000, removable: true },
                 },
               ],
             },
@@ -333,6 +358,10 @@ type HarnessWindow = {
   __hcDefaultSet?: { mime: string; application: string };
   /** How much the daemon still has to index, when a test wants to change that mid-run. */
   __hcPending?: number;
+  /** Which device the window asked to mount. */
+  __hcMounted?: string;
+  /** Which device it asked to unmount, and whether it asked for the power to be cut. */
+  __hcEjected?: { device: string; eject: boolean };
 };
 
 (window as unknown as HarnessWindow).__hcEmit = (event, payload) => {

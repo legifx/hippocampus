@@ -1602,3 +1602,67 @@ Three consequences worth writing down:
 The measuring method is worth keeping too: the cgroup, not `ps`, and the tool checked against a
 process known to spin one core before any of its numbers were believed — it read 0.0% for that
 spinner the first time, for the same reason it did in D57's session.
+
+---
+
+### D60 — Drives: the listing is files, the mounting is `udisksctl`, and neither is an agent's business
+
+M6 asks for mounts via udisks2. Two halves, and they are not alike.
+
+**Finding the drives needs no privileges and no D-Bus.** `/sys/class/block` says what exists and
+how big it is, the disk above a partition says whether it can be unplugged, and udev's own
+database — `/run/udev/data/b<major>:<minor>`, world-readable, one `E:KEY=value` per line — says
+what filesystem is on it and what it is called. That is the same shape as everything else in
+`places.rs` (D52), and it keeps the first screen off a D-Bus round trip and out of a dependency
+on a GLib main loop inside a headless daemon.
+
+**Mounting is the one thing here that is not a file**, and it needs privileges this daemon does
+not have and must not have. `udisksctl` already knows how to ask: it talks to the system service,
+which asks polkit, which says yes for a removable drive belonging to the person at the keyboard.
+Shelling out to it rather than linking a D-Bus crate keeps the dependency list and the startup
+time where they are, and it is the program every desktop already uses. **`--no-user-interaction`
+on every call, without exception** — a daemon waiting on an authentication dialog nobody can see
+is a daemon that has stopped answering.
+
+**An unmounted volume's `path` is a device node.** There is no directory yet, so `Place::path` is
+`/dev/sdb1` and `Place::volume.mounted` is false. Opening such a row is two steps — mount, then
+go to *the mount point udisks2 answers with*, never to a path guessed from the label, because
+udisks2 chooses where it lands and a guess sends the window somewhere empty.
+
+**What is not offered, and why it is an allow-list.** A filesystem type nobody has thought about
+is not offered rather than offered and failing; the EFI system partition, the Microsoft reserved
+partition and a Windows recovery partition are machinery rather than places, and mounting an ESP
+by accident is a way to damage a boot; the kernel's own loop and zram devices are not drives, and
+on the machine this was written on six snap loop devices each carry a squashfs that udev reports
+as a filesystem. What the rules *cannot* do is written down too: on an MBR disk a Windows system
+partition and a Windows data partition are both type `0x7`, so a 579 MB volume called
+"System-reserviert" is offered like any other. Nautilus offers it as well, and inventing a rule
+out of a German label would be worse than one row too many.
+
+**`power-off` on a disk that cannot be unplugged is refused, and the refusal is a tested
+decision rather than a line inside the doing.** It is one argument away from the ordinary case
+and it takes a disk off the bus while a running system is using it. Whether a disk can be
+unplugged is read from the kernel and never inferred from the mount point. The first version had
+the check inside `Surface::unmount`, where deleting it broke nothing that any test noticed —
+`plan_unmount` exists so that deleting it fails a test with a name.
+
+**No agent may mount, unmount or eject anything**, and — as with `apps.set_default` (D58) — the
+allow-list is not why. No path an allow-list could name is written. What changes is the state of
+somebody's hardware: mounting exposes a filesystem the machine had deliberately not exposed, and
+ejecting one that a copy is running to leaves a half-written file on a stick that has already
+been pulled out. The refusal comes before anything looks at the machine, so the call cannot be
+used to find out what is plugged in, and neither method is on the MCP bridge at all.
+
+That refusal needed a new kind. `Refusal::OutsideAllowlist` was reused at first and it told the
+caller to *add `/dev/sdb1` to `agent.write_allowlist`* — advice that would not have worked,
+because no configuration permits this. `Refusal::NotForAgents` says what is true instead, and it
+corrects the same misdirection in D58's `apps.set_default`.
+
+**Verified against hardware rather than only against a fixture.** The machine this was written on
+had a stick plugged in and unmounted, three unmounted Windows partitions, an EFI partition and
+six loop devices. The scan found the stick and the Windows volumes and none of the machinery;
+`cortex mount` put the stick at `/run/media/<user>/ESD-USB` with no authentication prompt, the
+places list then showed it with a capacity, `cortex unmount` put it back; ejecting an internal
+disk was refused, and so was every one of the four calls made as an agent. The unit tests
+reproduce each of those cases against a `/sys` and a `/run/udev` that were made for the purpose,
+because a suite that reads the real ones asserts what happens to be plugged in today.

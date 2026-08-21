@@ -1121,6 +1121,18 @@ async fn dispatch(
             json(surface(daemon, &ctx.actor, &auditor).apps_for_path(&params).map_err(tool_error)?)
         }
 
+        method::FS_MOUNT => {
+            let params = parse(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            json(surface(daemon, &ctx.actor, &auditor).mount(&params).map_err(tool_error)?)
+        }
+
+        method::FS_UNMOUNT => {
+            let params = parse(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            json(surface(daemon, &ctx.actor, &auditor).unmount(&params).map_err(tool_error)?)
+        }
+
         method::APPS_SET_DEFAULT => {
             let params = parse(params)?;
             let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);

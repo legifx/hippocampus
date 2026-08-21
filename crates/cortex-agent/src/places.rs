@@ -80,7 +80,14 @@ pub fn home_dir() -> PathBuf {
 pub fn sections(home: &Path) -> Vec<PlaceSection> {
     let mounts = read_mounts(Path::new(PROC_MOUNTS));
     let labels = read_labels(Path::new(BY_LABEL));
-    build(home, &mounts, &labels, &capacity_of)
+    // What `/proc/mounts` cannot say: the stick that is plugged in and not mounted yet, which
+    // is the thing somebody is looking for when they plug one in.
+    let idle = crate::volumes::unmounted(
+        Path::new(crate::volumes::SYS_BLOCK),
+        Path::new(crate::volumes::UDEV_DATA),
+        &mounts,
+    );
+    build(home, &mounts, &labels, &idle, &capacity_of)
 }
 
 /// The part with no I/O of its own, so that every decision in it is testable.
@@ -91,6 +98,7 @@ pub fn build(
     home: &Path,
     mounts: &[Mount],
     labels: &HashMap<String, String>,
+    idle: &[crate::volumes::Volume],
     measure: &dyn Fn(&Path) -> Option<Capacity>,
 ) -> Vec<PlaceSection> {
     let mut sections = Vec::new();
@@ -111,7 +119,7 @@ pub fn build(
         });
     }
 
-    let drives = drive_places(mounts, labels, measure);
+    let drives = drive_places(mounts, labels, idle, measure);
     if !drives.is_empty() {
         sections.push(PlaceSection {
             title: "Laufwerke".to_string(),
@@ -129,6 +137,7 @@ pub fn build(
             kind: PlaceKind::Filesystem,
             capacity: measure(Path::new("/")),
             device: root_device(mounts),
+            volume: None,
         }],
     });
 
@@ -159,6 +168,7 @@ fn personal_places(home: &Path) -> Vec<Place> {
         kind: PlaceKind::Home,
         capacity: None,
         device: None,
+        volume: None,
     }];
 
     let configured = user_dirs(home);
@@ -176,6 +186,7 @@ fn personal_places(home: &Path) -> Vec<Place> {
                 kind: *kind,
                 capacity: None,
                 device: None,
+                volume: None,
             });
         }
     }
@@ -188,6 +199,7 @@ fn personal_places(home: &Path) -> Vec<Place> {
             kind: PlaceKind::Trash,
             capacity: None,
             device: None,
+            volume: None,
         });
     }
 
@@ -267,6 +279,7 @@ fn bookmarks(home: &Path) -> Vec<Place> {
             kind: PlaceKind::Bookmark,
             capacity: None,
             device: None,
+            volume: None,
         });
     }
     places
@@ -288,6 +301,7 @@ fn local_path(uri: &str) -> Option<PathBuf> {
 fn drive_places(
     mounts: &[Mount],
     labels: &HashMap<String, String>,
+    idle: &[crate::volumes::Volume],
     measure: &dyn Fn(&Path) -> Option<Capacity>,
 ) -> Vec<Place> {
     let mut places = Vec::new();
@@ -310,9 +324,53 @@ fn drive_places(
             kind: PlaceKind::Drive,
             capacity: measure(&mount.point),
             device: Some(mount.device.clone()),
+            volume: volume_of(idle, &mount.device),
         });
     }
+
+    // Then the ones that are plugged in and not mounted. After the mounted ones, because a
+    // drive somebody is already using is more likely to be the one they want than a drive that
+    // is merely present — and a row that has to be mounted before it can be opened is a row
+    // with a step in it.
+    for volume in idle {
+        places.push(Place {
+            name: volume.name(),
+            // A device node rather than a directory, because there is no directory yet. What
+            // makes that legible to a client is `volume.mounted` being false, and what makes it
+            // safe is that nothing tries to list a place without looking at that first.
+            path: volume.device.clone(),
+            kind: PlaceKind::Drive,
+            capacity: None,
+            device: Some(volume.device.display().to_string()),
+            volume: Some(cortex_core::tools::VolumeInfo {
+                mounted: false,
+                fstype: volume.fstype.clone(),
+                size_bytes: volume.size_bytes,
+                removable: volume.removable,
+            }),
+        });
+    }
+
     places
+}
+
+/// What is known about the device behind a mount, when it is one of the volumes scanned.
+///
+/// A mounted drive carries the same facts as an unmounted one — how big it is, whether it can be
+/// unplugged — because "can I eject this" is a question about a mounted drive.
+fn volume_of(
+    volumes: &[crate::volumes::Volume],
+    device: &str,
+) -> Option<cortex_core::tools::VolumeInfo> {
+    let found = volumes
+        .iter()
+        .find(|v| v.device.to_string_lossy() == device)?;
+    Some(cortex_core::tools::VolumeInfo {
+        mounted: true,
+        fstype: found.fstype.clone(),
+        size_bytes: found.size_bytes,
+        removable: found.removable,
+    })
 }
 
 /// Is this mount somewhere a person would go?
@@ -579,7 +637,7 @@ mod tests {
         // The whole point. Opening at `/` puts sixteen directories in front of somebody who
         // wanted their Downloads; this puts one, last, called what it is.
         let home = a_home();
-        let sections = build(home.path(), &[], &HashMap::new(), &nothing);
+        let sections = build(home.path(), &[], &HashMap::new(), &[], &nothing);
 
         let system = section(&sections, "System");
         assert_eq!(system.places.len(), 1);
@@ -592,7 +650,7 @@ mod tests {
     #[test]
     fn the_personal_section_comes_first_and_starts_with_home() {
         let home = a_home();
-        let sections = build(home.path(), &[], &HashMap::new(), &nothing);
+        let sections = build(home.path(), &[], &HashMap::new(), &[], &nothing);
         assert_eq!(titles(&sections)[0], "Persönlich");
 
         let personal = section(&sections, "Persönlich");
@@ -605,7 +663,7 @@ mod tests {
         // Offering a Videos folder to somebody who has never had one is the clutter this screen
         // exists to remove.
         let home = a_home();
-        let sections = build(home.path(), &[], &HashMap::new(), &nothing);
+        let sections = build(home.path(), &[], &HashMap::new(), &[], &nothing);
         let kinds: Vec<_> = section(&sections, "Persönlich")
             .places
             .iter()
@@ -624,7 +682,7 @@ mod tests {
         // Where a browser puts things, which is where most of what somebody is looking for
         // arrived twenty minutes ago.
         let home = a_home();
-        let sections = build(home.path(), &[], &HashMap::new(), &nothing);
+        let sections = build(home.path(), &[], &HashMap::new(), &[], &nothing);
         let places = &section(&sections, "Persönlich").places;
         let position = |kind: PlaceKind| places.iter().position(|p| p.kind == kind).unwrap();
         assert!(position(PlaceKind::Downloads) < position(PlaceKind::Documents));
@@ -643,7 +701,7 @@ mod tests {
         )
         .unwrap();
 
-        let sections = build(home.path(), &[], &HashMap::new(), &nothing);
+        let sections = build(home.path(), &[], &HashMap::new(), &[], &nothing);
         let places = &section(&sections, "Persönlich").places;
         let downloads = places.iter().find(|p| p.kind == PlaceKind::Downloads).unwrap();
         assert_eq!(downloads.path, home.path().join("Herunterladen"));
@@ -659,7 +717,7 @@ mod tests {
         )
         .unwrap();
 
-        let sections = build(home.path(), &[], &HashMap::new(), &nothing);
+        let sections = build(home.path(), &[], &HashMap::new(), &[], &nothing);
         let places = &section(&sections, "Persönlich").places;
         let downloads = places.iter().find(|p| p.kind == PlaceKind::Downloads).unwrap();
         assert_eq!(downloads.path, home.path().join("Downloads"), "the default");
@@ -668,7 +726,7 @@ mod tests {
     #[test]
     fn the_trash_is_offered_when_there_is_one() {
         let home = a_home();
-        let sections = build(home.path(), &[], &HashMap::new(), &nothing);
+        let sections = build(home.path(), &[], &HashMap::new(), &[], &nothing);
         assert!(
             !section(&sections, "Persönlich")
                 .places
@@ -678,7 +736,7 @@ mod tests {
         );
 
         std::fs::create_dir_all(home.path().join(".local/share/Trash/files")).unwrap();
-        let sections = build(home.path(), &[], &HashMap::new(), &nothing);
+        let sections = build(home.path(), &[], &HashMap::new(), &[], &nothing);
         let trash = section(&sections, "Persönlich")
             .places
             .iter()
@@ -702,7 +760,7 @@ mod tests {
         )
         .unwrap();
 
-        let sections = build(home.path(), &[], &HashMap::new(), &nothing);
+        let sections = build(home.path(), &[], &HashMap::new(), &[], &nothing);
         let marked = &section(&sections, "Lesezeichen").places;
         assert_eq!(marked.len(), 2, "the sftp one is not a place on this machine");
         assert_eq!(marked[0].name, "Arbeit", "the label wins over the folder name");
@@ -712,7 +770,7 @@ mod tests {
     #[test]
     fn there_is_no_bookmarks_section_when_there_are_no_bookmarks() {
         let home = a_home();
-        let sections = build(home.path(), &[], &HashMap::new(), &nothing);
+        let sections = build(home.path(), &[], &HashMap::new(), &[], &nothing);
         assert!(!titles(&sections).contains(&"Lesezeichen"));
     }
 
@@ -725,7 +783,7 @@ mod tests {
             "file:///nonexistent/gone Weg\n",
         )
         .unwrap();
-        let sections = build(home.path(), &[], &HashMap::new(), &nothing);
+        let sections = build(home.path(), &[], &HashMap::new(), &[], &nothing);
         assert!(!titles(&sections).contains(&"Lesezeichen"));
     }
 
@@ -746,11 +804,75 @@ mod tests {
             mount("/dev/nvme0n1p3", "/home"),
         ];
 
-        let sections = build(home.path(), &mounts, &HashMap::new(), &nothing);
+        let sections = build(home.path(), &mounts, &HashMap::new(), &[], &nothing);
         let drives = &section(&sections, "Laufwerke").places;
         let points: Vec<_> = drives.iter().map(|d| d.path.display().to_string()).collect();
 
         assert_eq!(points, vec!["/media/user/Stick", "/home"]);
+    }
+
+    /// A volume the scan found, for the tests below.
+    fn volume(device: &str, label: &str, removable: bool) -> crate::volumes::Volume {
+        crate::volumes::Volume {
+            device: PathBuf::from(device),
+            label: Some(label.to_string()),
+            fstype: "vfat".to_string(),
+            size_bytes: 31_000_000_000,
+            removable,
+            mount_point: None,
+        }
+    }
+
+    #[test]
+    fn a_stick_that_is_plugged_in_and_not_mounted_is_still_offered() {
+        // The moment this exists for: something was just plugged in, `/proc/mounts` knows
+        // nothing about it, and it is the only reason the person opened this screen.
+        let home = a_home();
+        let mounts = vec![mount("/dev/nvme0n1p2", "/")];
+        let idle = vec![volume("/dev/sdb1", "ESD-USB", true)];
+
+        let sections = build(home.path(), &mounts, &HashMap::new(), &idle, &nothing);
+        let drives = &section(&sections, "Laufwerke").places;
+        assert_eq!(drives.len(), 1);
+        assert_eq!(drives[0].name, "ESD-USB");
+
+        let info = drives[0].volume.as_ref().expect("a drive carries what it is");
+        assert!(!info.mounted, "and says that it is not mounted");
+        assert!(info.removable);
+        assert_eq!(drives[0].path, PathBuf::from("/dev/sdb1"), "the device, because there is no directory yet");
+        assert_eq!(drives[0].capacity, None, "how full it is cannot be known before it is mounted");
+    }
+
+    #[test]
+    fn mounted_drives_come_before_ones_that_would_have_to_be_mounted() {
+        // A row that opens is worth more than a row with a step in it.
+        let home = a_home();
+        let mounts = vec![mount("/dev/nvme0n1p2", "/"), mount("/dev/sdc1", "/media/user/Arbeit")];
+        let idle = vec![volume("/dev/sdb1", "ESD-USB", true)];
+        let sections = build(home.path(), &mounts, &HashMap::new(), &idle, &nothing);
+        let names: Vec<&str> = section(&sections, "Laufwerke")
+            .places
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect();
+        assert_eq!(names, ["Arbeit", "ESD-USB"]);
+    }
+
+    #[test]
+    fn a_mounted_drive_says_whether_it_can_be_unplugged() {
+        // "Can I eject this" is a question about a mounted drive, and the answer is a property
+        // of the disk rather than of the mount — so the scan's facts are carried across.
+        let home = a_home();
+        let mounts = vec![mount("/dev/nvme0n1p2", "/"), mount("/dev/sdb1", "/media/user/Stick")];
+        let mut found = volume("/dev/sdb1", "ESD-USB", true);
+        found.mount_point = Some(PathBuf::from("/media/user/Stick"));
+
+        let sections = build(home.path(), &mounts, &HashMap::new(), &[found], &nothing);
+        let drive = &section(&sections, "Laufwerke").places[0];
+        let info = drive.volume.as_ref().unwrap();
+        assert!(info.mounted);
+        assert!(info.removable);
+        assert_eq!(info.fstype, "vfat");
     }
 
     #[test]
@@ -759,7 +881,7 @@ mod tests {
         // two names, which is how a list stops being trustworthy.
         let home = a_home();
         let mounts = vec![mount("/dev/nvme0n1p2", "/")];
-        let sections = build(home.path(), &mounts, &HashMap::new(), &nothing);
+        let sections = build(home.path(), &mounts, &HashMap::new(), &[], &nothing);
         assert!(!titles(&sections).contains(&"Laufwerke"));
         assert_eq!(section(&sections, "System").places[0].device.as_deref(), Some("/dev/nvme0n1p2"));
     }
@@ -774,7 +896,7 @@ mod tests {
             point: PathBuf::from("/run/media/user/CAMERA"),
             fstype: "fuseblk".to_string(),
         }];
-        let sections = build(home.path(), &mounts, &HashMap::new(), &nothing);
+        let sections = build(home.path(), &mounts, &HashMap::new(), &[], &nothing);
         assert_eq!(section(&sections, "Laufwerke").places.len(), 1);
     }
 
@@ -785,11 +907,11 @@ mod tests {
         let mut labels = HashMap::new();
         labels.insert("/dev/sdb1".to_string(), "Sicherung".to_string());
 
-        let sections = build(home.path(), &mounts, &labels, &nothing);
+        let sections = build(home.path(), &mounts, &labels, &[], &nothing);
         assert_eq!(section(&sections, "Laufwerke").places[0].name, "Sicherung");
 
         // Without a label, the mount point's own name — which is usually the label anyway.
-        let sections = build(home.path(), &mounts, &HashMap::new(), &nothing);
+        let sections = build(home.path(), &mounts, &HashMap::new(), &[], &nothing);
         assert_eq!(section(&sections, "Laufwerke").places[0].name, "sdb1");
     }
 
@@ -800,7 +922,7 @@ mod tests {
             mount("/dev/sdb1", "/media/user/Stick"),
             mount("/dev/sdb1", "/media/user/Stick"),
         ];
-        let sections = build(home.path(), &mounts, &HashMap::new(), &nothing);
+        let sections = build(home.path(), &mounts, &HashMap::new(), &[], &nothing);
         assert_eq!(section(&sections, "Laufwerke").places.len(), 1);
     }
 
@@ -815,7 +937,7 @@ mod tests {
             })
         };
 
-        let sections = build(home.path(), &mounts, &HashMap::new(), &measured);
+        let sections = build(home.path(), &mounts, &HashMap::new(), &[], &measured);
         let drive = &section(&sections, "Laufwerke").places[0];
         assert_eq!(drive.capacity.unwrap().used_fraction(), 0.75);
         assert!(section(&sections, "Persönlich").places[0].capacity.is_none());

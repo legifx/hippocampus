@@ -182,6 +182,13 @@ pub mod method {
     /// Record which application opens a type, in the file the rest of the desktop reads.
     /// Refused for agents whatever the allow-list says — see `Surface::apps_set_default`.
     pub const APPS_SET_DEFAULT: &str = "apps.set_default";
+    /// Mount a volume that is plugged in and not mounted, and answer with where it landed.
+    /// Refused for agents: it is a hardware operation on somebody's desk, not a path a policy
+    /// can be written about.
+    pub const FS_MOUNT: &str = "fs.mount";
+    /// Unmount one, optionally powering off the drive so it can be unplugged. Refused for
+    /// agents, and the power-off is refused for a disk that cannot be unplugged.
+    pub const FS_UNMOUNT: &str = "fs.unmount";
     pub const FS_STAT: &str = "fs.stat";
     pub const FS_WRITE: &str = "fs.write";
     pub const FS_MOVE: &str = "fs.move";
@@ -294,6 +301,8 @@ pub mod method {
         FS_TRANSFER,
         FS_MKDIR,
         FS_RENAME,
+        FS_MOUNT,
+        FS_UNMOUNT,
         OPERATION_CANCEL,
         UNDO,
         BRAIN_SEARCH,

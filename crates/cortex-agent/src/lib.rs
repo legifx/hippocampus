@@ -23,6 +23,7 @@ pub mod surface;
 pub mod transfer;
 pub mod trash;
 pub mod users;
+pub mod volumes;
 
 pub use audit::{redact, Auditor};
 pub use fs_tools::{Surface, ToolError, ToolResult};

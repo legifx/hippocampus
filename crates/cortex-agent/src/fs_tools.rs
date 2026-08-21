@@ -377,8 +377,8 @@ impl Surface<'_> {
             return self.refuse(
                 tool,
                 &args,
-                Refusal::OutsideAllowlist {
-                    path: PathBuf::from(&params.mime),
+                Refusal::NotForAgents {
+                    what: format!("choosing what opens {}", params.mime),
                 },
             );
         }
@@ -413,6 +413,143 @@ impl Surface<'_> {
             application: params.application.clone(),
             file,
         })
+    }
+
+    /// Mount a volume that is plugged in but not mounted, and answer with where it landed.
+    ///
+    /// **Never for an agent.** Like `apps.set_default`, this is not the allow-list's kind of
+    /// question — no path an agent could name is written. It is a hardware operation on
+    /// somebody's desk: mounting a drive exposes a filesystem the machine had deliberately not
+    /// exposed, and it is the step before reading everything on it. The person at the keyboard
+    /// does it by pressing Enter on a row they can see; nothing else has any business doing it.
+    ///
+    /// Already mounted is success, not an error: two clicks on a slow drive are one intention.
+    pub fn mount(&self, params: &FsMountParams) -> ToolResult<FsMountResult> {
+        let tool = "fs.mount";
+        let args = serde_json::to_value(params).unwrap_or_default();
+        self.gate_with(tool, &args)?;
+        self.refuse_hardware(tool, &args, &params.device)?;
+
+        let volume = self.volume(&params.device).ok_or_else(|| ToolError::Io {
+            path: params.device.clone(),
+            message: "no such volume on this machine".into(),
+        })?;
+
+        if let Some(point) = volume.mount_point {
+            self.auditor
+                .allowed(self.now, tool, &args, &format!("already at {}", point.display()));
+            return Ok(FsMountResult {
+                device: params.device.clone(),
+                mount_point: point,
+                mounted_now: false,
+            });
+        }
+
+        let mount_point = crate::volumes::Udisks::default()
+            .mount(&params.device)
+            .map_err(|e| ToolError::Io {
+                path: params.device.clone(),
+                message: e.to_string(),
+            })?;
+
+        self.auditor
+            .allowed(self.now, tool, &args, &format!("mounted at {}", mount_point.display()));
+        Ok(FsMountResult {
+            device: params.device.clone(),
+            mount_point,
+            mounted_now: true,
+        })
+    }
+
+    /// Unmount a volume, and cut the power to its drive when asked to.
+    ///
+    /// Refused for an agent, for the reason `mount` gives — and the case for refusing is
+    /// stronger here, because unmounting a drive somebody is copying to is how a copy ends up
+    /// half-written.
+    ///
+    /// **Ejecting a disk that cannot be unplugged is refused outright.** `power-off` on an
+    /// internal disk is a way to lose a machine, and "removable" is read from the kernel rather
+    /// than inferred from the mount point.
+    pub fn unmount(&self, params: &FsUnmountParams) -> ToolResult<FsUnmountResult> {
+        let tool = "fs.unmount";
+        let args = serde_json::to_value(params).unwrap_or_default();
+        self.gate_with(tool, &args)?;
+        self.refuse_hardware(tool, &args, &params.device)?;
+
+        let volume = self.volume(&params.device).ok_or_else(|| ToolError::Io {
+            path: params.device.clone(),
+            message: "no such volume on this machine".into(),
+        })?;
+
+        let as_io = |e: crate::volumes::VolumeError| ToolError::Io {
+            path: params.device.clone(),
+            message: e.to_string(),
+        };
+
+        let plan = crate::volumes::plan_unmount(&volume, params.eject).map_err(as_io)?;
+        let udisks = crate::volumes::Udisks::default();
+        match plan {
+            crate::volumes::Unmounting::Nothing => {}
+            crate::volumes::Unmounting::Unmount => {
+                udisks.unmount(&params.device).map_err(as_io)?;
+            }
+            crate::volumes::Unmounting::Eject => {
+                let disk = crate::volumes::disk_of(
+                    Path::new(crate::volumes::SYS_BLOCK),
+                    &params.device,
+                )
+                .unwrap_or_else(|| params.device.clone());
+                udisks
+                    .eject(&params.device, &disk, volume.mount_point.is_some())
+                    .map_err(as_io)?;
+            }
+        }
+
+        self.auditor.allowed(
+            self.now,
+            tool,
+            &args,
+            if params.eject { "ejected" } else { "unmounted" },
+        );
+        Ok(FsUnmountResult {
+            device: params.device.clone(),
+            ejected: params.eject,
+        })
+    }
+
+    /// What the machine knows about one device, from the same scan the places screen uses.
+    fn volume(&self, device: &Path) -> Option<crate::volumes::Volume> {
+        let mounts = crate::places::read_mounts(Path::new("/proc/mounts"));
+        crate::volumes::scan(
+            Path::new(crate::volumes::SYS_BLOCK),
+            Path::new(crate::volumes::UDEV_DATA),
+            &mounts,
+        )
+        .into_iter()
+        .find(|v| v.device == device)
+    }
+
+    /// The refusal `fs.mount` and `fs.unmount` share.
+    ///
+    /// A separate step from the allow-list because it is a different question: not "may this
+    /// path be written" but "may this actor touch the hardware at all". The answer for an agent
+    /// is no, with no configuration that changes it.
+    fn refuse_hardware(
+        &self,
+        tool: &str,
+        args: &serde_json::Value,
+        device: &Path,
+    ) -> ToolResult<()> {
+        if crate::policy::is_agent(&self.actor) {
+            return self.refuse(
+                tool,
+                args,
+                Refusal::NotForAgents {
+                    what: format!("{tool} on {}", device.display()),
+                },
+            );
+        }
+        Ok(())
     }
 
     // -----------------------------------------------------------------------

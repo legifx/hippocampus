@@ -641,6 +641,40 @@ extern "C" {
     fn libc_getuid() -> u32;
 }
 
+/// An agent may not mount or eject a drive.
+///
+/// The same shape of refusal as the one below and for a related reason, but the failure is
+/// physical rather than social: mounting exposes a filesystem the machine had deliberately not
+/// exposed, and ejecting one that somebody is copying to leaves a half-written file on a stick
+/// that has already been pulled out. Neither is a question about a path, so no allow-list entry
+/// can permit them.
+#[test]
+fn an_agent_may_not_touch_the_drives() {
+    let f = Fixture::new();
+    // A device that does not exist: the refusal must come before anything looks at the machine,
+    // so that an agent cannot use this call to find out what is plugged in.
+    let device = std::path::PathBuf::from("/dev/definitely-not-here");
+
+    let mount = f
+        .surface(true)
+        .mount(&FsMountParams { device: device.clone() })
+        .unwrap_err();
+    let unmount = f
+        .surface(true)
+        .unmount(&FsUnmountParams { device: device.clone(), eject: true })
+        .unwrap_err();
+
+    for error in [mount, unmount] {
+        let refused = refusal(error);
+        assert!(matches!(refused, Refusal::NotForAgents { .. }), "{refused}");
+        assert!(
+            !refused.to_string().contains("allow-list"),
+            "an allow-list entry would not help, so it must not be suggested: {refused}"
+        );
+    }
+    assert_eq!(f.refusals().len(), 2, "both are in the audit log (R8)");
+}
+
 /// An agent may not decide which program opens a person's files.
 ///
 /// This is not the allow-list's kind of refusal and it is not covered by the table above: the
@@ -678,9 +712,11 @@ fn an_agent_may_not_change_which_application_opens_a_type() {
     };
 
     let error = f.surface(true).apps_set_default(&params).unwrap_err();
+    let refused = refusal(error);
+    assert!(matches!(refused, Refusal::NotForAgents { .. }), "an agent's attempt must be refused");
     assert!(
-        matches!(refusal(error), Refusal::OutsideAllowlist { .. }),
-        "an agent's attempt must be refused"
+        !refused.to_string().contains("allow-list"),
+        "and must not be told to add something to the allow-list, which would not help: {refused}"
     );
     assert!(
         !home.path().join("config/mimeapps.list").exists(),

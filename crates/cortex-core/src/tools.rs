@@ -747,6 +747,23 @@ impl Capacity {
     }
 }
 
+/// What a drive is, beyond being somewhere to go.
+///
+/// Only drives carry this, and the field a client must look at before anything else is
+/// [`VolumeInfo::mounted`]: **a volume that is not mounted has no directory yet**, so its
+/// [`Place::path`] is the device node — `/dev/sdb1` — and listing it would fail. It is a place
+/// in the sense that a person points at it and says "open that"; what happens then is
+/// `fs.mount` first and the mount point second.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VolumeInfo {
+    pub mounted: bool,
+    pub fstype: String,
+    pub size_bytes: u64,
+    /// Whether the disk it lives on can be unplugged, which is the only case where ejecting
+    /// means anything.
+    pub removable: bool,
+}
+
 /// Somewhere worth starting from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Place {
@@ -760,6 +777,10 @@ pub struct Place {
     /// The device behind a mount, for telling two disks of the same size apart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub device: Option<String>,
+    /// Present for drives, absent for everything else. See [`VolumeInfo`] — in particular that
+    /// an unmounted volume's `path` is a device node and not a directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume: Option<VolumeInfo>,
 }
 
 /// One heading and what is under it.
@@ -771,6 +792,38 @@ pub struct Place {
 pub struct PlaceSection {
     pub title: String,
     pub places: Vec<Place>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsMountParams {
+    /// The device node, as a `Place` gives it: `/dev/sdb1`.
+    pub device: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsMountResult {
+    pub device: PathBuf,
+    /// Where udisks2 put it. Chosen by udisks2 and not asked for, so that this window and every
+    /// other program agree about where the stick is.
+    pub mount_point: PathBuf,
+    /// False when it was already mounted and nothing had to be done.
+    pub mounted_now: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsUnmountParams {
+    pub device: PathBuf,
+    /// Cut the power to the drive afterwards, so it can be unplugged. Refused for a disk that
+    /// cannot be unplugged.
+    #[serde(default)]
+    pub eject: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsUnmountResult {
+    pub device: PathBuf,
+    /// Whether the drive was powered off as well, which is what makes it safe to pull out.
+    pub ejected: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

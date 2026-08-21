@@ -32,7 +32,14 @@ import { useSelection } from "./hooks/useSelection";
 import { throttled, useDeferred } from "./hooks/useDeferred";
 import { useSearch } from "./hooks/useSearch";
 import { useViewport } from "./hooks/useViewport";
-import { ipc, type Application, type AppsForPath, type SearchHit, type SortBy } from "./ipc";
+import {
+  ipc,
+  type Application,
+  type AppsForPath,
+  type Place,
+  type SearchHit,
+  type SortBy,
+} from "./ipc";
 import { rowFromEntry, rowFromHit, type Row } from "./row";
 
 const ROW_HEIGHT_COMPACT = 28;
@@ -100,6 +107,17 @@ export type AppProps = {
    */
   startPath?: string;
 };
+
+/**
+ * What to show a person when the daemon refuses.
+ *
+ * Its own words rather than a sentence of ours: "Not authorized to perform operation" and "this
+ * disk cannot be unplugged" are the only descriptions of what went wrong that exist, and a
+ * generic "Fehler beim Einhängen" would throw them away.
+ */
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 /** One array rather than a fresh one per render: the chooser resets its cursor when the list it
  * is given is a different list, and `[]` written twice is two different lists. */
@@ -456,11 +474,45 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
   );
 
   const openPlace = useCallback(
-    (place: { path: string } | undefined) => {
+    (place: Place | undefined) => {
       if (!place) return;
+      // A drive that is not mounted has no directory to go to: its path is a device node. So
+      // opening it is two steps, and the second one uses the mount point the daemon answers
+      // with rather than a path guessed from the label — udisks2 chooses where it lands, and
+      // guessing would send the window somewhere empty.
+      if (place.volume && !place.volume.mounted) {
+        setDaemonError(`${place.name} wird eingehängt …`);
+        ipc
+          .mount(place.path)
+          .then((mounted) => {
+            setDaemonError(null);
+            places.reload();
+            browse.goTo(mounted.mount_point);
+          })
+          .catch((e: unknown) => setDaemonError(messageOf(e)));
+        return;
+      }
       browse.goTo(place.path);
     },
-    [browse],
+    [browse, places],
+  );
+
+  /** Unmount the drive under the cursor, and power it off when it can be unplugged. */
+  const ejectPlace = useCallback(
+    (place: Place | undefined) => {
+      if (!place?.volume?.mounted || !place.device) return;
+      const removable = place.volume.removable;
+      ipc
+        .unmount(place.device, removable)
+        .then(() => {
+          setDaemonError(
+            removable ? `${place.name} kann abgezogen werden` : `${place.name} ist ausgehängt`,
+          );
+          places.reload();
+        })
+        .catch((e: unknown) => setDaemonError(messageOf(e)));
+    },
+    [places],
   );
 
   const onKeyDown = useCallback(
@@ -525,6 +577,14 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
           case "ArrowRight":
             event.preventDefault();
             openPlace(flatPlaces[places.cursor]);
+            return;
+          case "e":
+          case "E":
+            // Ctrl+E on a drive: unmount it, and cut the power when it is something that can be
+            // unplugged. Only here, because the places screen is the only place a drive is a row.
+            if (!event.ctrlKey && !event.metaKey) break;
+            event.preventDefault();
+            ejectPlace(flatPlaces[places.cursor]);
             return;
           default:
             // Everything else falls through: Ctrl+Z still undoes, Tab still switches panes.

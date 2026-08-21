@@ -40,6 +40,17 @@ pub enum Refusal {
     #[error("the write allow-list is empty, so no filesystem mutation is permitted")]
     NoAllowlist,
 
+    /// For the operations that are not about a path at all.
+    ///
+    /// Mounting a drive, ejecting one, changing which application opens a type of file: none of
+    /// them writes a path an allow-list could name, and all of them change what happens the next
+    /// time a *person* uses the machine. Refusing them with [`Refusal::OutsideAllowlist`] was
+    /// the first attempt and it was worse than nothing — it told the caller to add `/dev/sdb1`
+    /// to `agent.write_allowlist`, which would not have helped, because there is no
+    /// configuration that permits this.
+    #[error("{what} is not something an agent may do, and no configuration changes that")]
+    NotForAgents { what: String },
+
     #[error("this operation requires a confirmed dry-run plan first")]
     DryRunRequired,
 
@@ -74,6 +85,7 @@ impl Refusal {
             Refusal::Denied { .. } => "denied",
             Refusal::OutsideAllowlist { .. } => "outside_allowlist",
             Refusal::NoAllowlist => "no_allowlist",
+            Refusal::NotForAgents { .. } => "not_for_agents",
             Refusal::DryRunRequired => "dry_run_required",
             Refusal::UnknownPlan => "unknown_plan",
             Refusal::PlanStale { .. } => "plan_stale",

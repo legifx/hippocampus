@@ -333,6 +333,37 @@ fn open_path(window: tauri::WebviewWindow, path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Mount a drive that is plugged in but not mounted.
+#[tauri::command]
+async fn mount_volume(
+    state: tauri::State<'_, AppState>,
+    device: String,
+) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(
+            cortex_rpc::protocol::method::FS_MOUNT,
+            json!({ "device": device }),
+        )
+        .await
+}
+
+/// Unmount one, optionally powering it off so it can be unplugged.
+#[tauri::command]
+async fn unmount_volume(
+    state: tauri::State<'_, AppState>,
+    device: String,
+    eject: bool,
+) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(
+            cortex_rpc::protocol::method::FS_UNMOUNT,
+            json!({ "device": device, "eject": eject }),
+        )
+        .await
+}
+
 /// What would open this file, and what the desktop opens it with by default.
 #[tauri::command]
 async fn apps_for_path(
@@ -905,6 +936,8 @@ pub fn run() {
             open_path,
             apps_for_path,
             apps_set_default,
+            mount_volume,
+            unmount_volume,
             open_with,
             dismiss,
             clipboard_write,

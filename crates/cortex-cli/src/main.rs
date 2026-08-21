@@ -8,7 +8,8 @@ use clap::{Parser, Subcommand};
 use cortex_core::paths::Paths;
 use cortex_core::tools::{
     AnnotateParams, AnnotateResult, AppsForPathParams, AppsForPathResult, AppsSetDefaultParams,
-    AppsSetDefaultResult, DiffParams, DiffResult, FsListParams, FsListResult,
+    AppsSetDefaultResult, DiffParams, DiffResult, FsListParams, FsListResult, FsMountParams,
+    FsMountResult, FsUnmountParams, FsUnmountResult,
     FsMoveParams, FsPlacesParams, FsPlacesResult, FsReadParams, FsReadResult, FsStatParams,
     FsStatResult, FsTrashParams,
     FsWriteParams, LinkParams, LinkResult, Mutation, NeighborsParams, NeighborsResult, PinParams,
@@ -207,6 +208,18 @@ enum Command {
     },
     /// The places worth starting from: your folders, the drives, and the filesystem.
     Places,
+    /// Mount a drive that is plugged in but not mounted.
+    Mount {
+        /// The device node, as `cortex places` prints it: `/dev/sdb1`.
+        device: std::path::PathBuf,
+    },
+    /// Unmount a drive, and optionally power it off so it can be unplugged.
+    Unmount {
+        device: std::path::PathBuf,
+        /// Cut the power afterwards. Refused for a disk that cannot be unplugged.
+        #[arg(long)]
+        eject: bool,
+    },
     /// What opens this file: its type, and the applications that claim it.
     ///
     /// The same answer the window shows. When the two disagree, one of them is reading the
@@ -1100,6 +1113,36 @@ async fn run(args: Args) -> Result<()> {
             }
         }
 
+        Command::Mount { device } => {
+            let result: FsMountResult = client
+                .call(method::FS_MOUNT, FsMountParams { device })
+                .await?;
+            if args.json {
+                print_json(&result)?;
+            } else if result.mounted_now {
+                println!("{} is at {}", result.device.display(), result.mount_point.display());
+            } else {
+                println!(
+                    "{} was already at {}",
+                    result.device.display(),
+                    result.mount_point.display()
+                );
+            }
+        }
+
+        Command::Unmount { device, eject } => {
+            let result: FsUnmountResult = client
+                .call(method::FS_UNMOUNT, FsUnmountParams { device, eject })
+                .await?;
+            if args.json {
+                print_json(&result)?;
+            } else if result.ejected {
+                println!("{} can be unplugged", result.device.display());
+            } else {
+                println!("{} is unmounted", result.device.display());
+            }
+        }
+
         Command::Apps { path, all, set_default } => {
             if let Some(id) = set_default {
                 // The type comes from the file rather than from the caller: a default set for
@@ -1165,11 +1208,18 @@ async fn run(args: Args) -> Result<()> {
                             ),
                             None => String::new(),
                         };
+                        // A drive that is not mounted yet has a device where the others have a
+                        // directory, and the difference decides what pressing Enter on it means.
+                        let state = match &place.volume {
+                            Some(v) if !v.mounted => "  (nicht eingehängt)",
+                            _ => "",
+                        };
                         println!(
-                            "  {:<24} {}{}",
+                            "  {:<24} {}{}{}",
                             place.name,
                             place.path.display(),
-                            capacity
+                            capacity,
+                            state
                         );
                     }
                 }

@@ -147,12 +147,27 @@ export type Capacity = {
 };
 
 /** Somewhere worth starting from. */
+/**
+ * What a drive is, beyond being somewhere to go. Only drives carry it.
+ *
+ * **`mounted: false` means the place has no directory yet** and its `path` is a device node.
+ * Opening such a row means mounting it first and going to the answer — never listing the path.
+ */
+export type VolumeInfo = {
+  mounted: boolean;
+  fstype: string;
+  size_bytes: number;
+  removable: boolean;
+};
+
 export type Place = {
   path: string;
   name: string;
   kind: PlaceKind;
   capacity?: Capacity | null;
   device?: string | null;
+  /** Drives only. See {@link VolumeInfo} — an unmounted one's `path` is a device node. */
+  volume?: VolumeInfo | null;
 };
 
 /**
@@ -512,6 +527,16 @@ export const ipc = {
    */
   appsForPath: (path: string, all = false) =>
     transport.invoke<AppsForPath>("apps_for_path", { path, all }),
+
+  /** Mount a drive that is plugged in but not mounted, and answer with where it landed. */
+  mount: (device: string) =>
+    transport.invoke<{ device: string; mount_point: string; mounted_now: boolean }>("mount_volume", {
+      device,
+    }),
+
+  /** Unmount one, optionally powering it off so it can be unplugged. */
+  unmount: (device: string, eject = false) =>
+    transport.invoke<{ device: string; ejected: boolean }>("unmount_volume", { device, eject }),
 
   /** Open these files with a named application rather than with the desktop's choice. */
   openWith: (application: Application, paths: string[]) =>

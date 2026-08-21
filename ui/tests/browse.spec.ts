@@ -236,7 +236,7 @@ test.describe("the places screen", () => {
 
   test("a drive shows how much room is left", async ({ page }) => {
     await openAtPlaces(page);
-    const drive = page.locator(".hc-place", { hasText: "ESD-USB" });
+    const drive = page.locator(".hc-place", { hasText: "Arbeit" });
     await expect(drive.locator(".hc-place-bar")).toBeVisible();
     await expect(drive).toContainText("frei");
 
@@ -249,10 +249,10 @@ test.describe("the places screen", () => {
     await openAtPlaces(page);
     await expect(page.locator('.hc-place[aria-selected="true"]')).toHaveCount(1);
 
-    // Four personal places, then the drive: the fifth press crosses a heading, because the
-    // cursor counts places and not rows on screen.
+    // Four personal places, then the first drive: the fifth press crosses a heading, because
+    // the cursor counts places and not rows on screen.
     for (let i = 0; i < 4; i++) await page.keyboard.press("ArrowDown");
-    await expect(page.locator('.hc-place[aria-selected="true"]')).toContainText("ESD-USB");
+    await expect(page.locator('.hc-place[aria-selected="true"]')).toContainText("Arbeit");
 
     await page.keyboard.press("End");
     await expect(page.locator('.hc-place[aria-selected="true"]')).toContainText("Dateisystem");
@@ -260,6 +260,60 @@ test.describe("the places screen", () => {
     await expect(page.locator('.hc-place[aria-selected="true"]')).toContainText(
       "Persönlicher Ordner",
     );
+  });
+
+  test("a drive that is not mounted says so, and shows its size instead of how full it is", async ({
+    page,
+  }) => {
+    await openAtPlaces(page);
+    const stick = page.locator(".hc-place", { hasText: "ESD-USB" });
+    await expect(stick).toContainText("nicht eingehängt");
+    // No bar: how full it is cannot be known before it is mounted, and a bar at zero would be
+    // a measurement nobody made.
+    await expect(stick.locator(".hc-place-bar")).toHaveCount(0);
+  });
+
+  test("opening one mounts it first and goes where it landed", async ({ page }) => {
+    await openAtPlaces(page);
+    for (let i = 0; i < 5; i++) await page.keyboard.press("ArrowDown");
+    await expect(page.locator('.hc-place[aria-selected="true"]')).toContainText("ESD-USB");
+    await page.keyboard.press("Enter");
+
+    // The device was handed to the daemon, and the window went to the mount point the daemon
+    // answered with — not to a path guessed from the label, which is where a stick with an
+    // unusual name would not be.
+    await expect
+      .poll(() => page.evaluate(() => (window as unknown as { __hcMounted?: string }).__hcMounted))
+      .toBe("/dev/sdb1");
+    await expect(page.locator('.hc-crumb[aria-current="page"]')).toHaveText("ESD-USB");
+    await expect(page.locator(".hc-row").first()).toBeVisible();
+  });
+
+  test("Ctrl+E ejects the drive under the cursor", async ({ page }) => {
+    await openAtPlaces(page);
+    for (let i = 0; i < 4; i++) await page.keyboard.press("ArrowDown");
+    await expect(page.locator('.hc-place[aria-selected="true"]')).toContainText("Arbeit");
+    await page.keyboard.press("Control+e");
+
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => (window as unknown as { __hcEjected?: { device: string; eject: boolean } }).__hcEjected,
+        ),
+      )
+      .toEqual({ device: "/dev/sdc1", eject: true });
+    // And it says what happened, because "can be unplugged" is the whole reason somebody
+    // pressed it.
+    await expect(page.locator(".hc-banner")).toContainText("abgezogen");
+  });
+
+  test("Ctrl+E on something that is not a drive does nothing", async ({ page }) => {
+    // The places screen holds folders too, and unmounting a home directory is not a thing.
+    await openAtPlaces(page);
+    await page.keyboard.press("Control+e");
+    expect(
+      await page.evaluate(() => (window as unknown as { __hcEjected?: unknown }).__hcEjected),
+    ).toBeUndefined();
   });
 
   test("Enter opens a place and the breadcrumb takes you back", async ({ page }) => {

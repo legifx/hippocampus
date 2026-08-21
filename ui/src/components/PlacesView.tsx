@@ -122,8 +122,24 @@ function PlaceRow({
       }}
       onDoubleClick={() => onOpen(place)}
     >
-      <span className="hc-place-mark" aria-hidden="true" data-kind={place.kind} />
+      <span
+        className="hc-place-mark"
+        aria-hidden="true"
+        data-kind={place.kind}
+        data-mounted={place.volume ? String(place.volume.mounted) : undefined}
+      />
       <span className="hc-place-name hc-row-text">{place.name}</span>
+
+      {/* A drive that is not mounted yet says so, because pressing Enter on it does something
+          different — it mounts first — and a row that hides that is a row that surprises. The
+          size is what there is to say about it: how full it is cannot be known until it is
+          mounted. */}
+      {place.volume && !place.volume.mounted && (
+        <span className="hc-place-space hc-meta">
+          <span className="hc-num">{formatSize(place.volume.size_bytes)}</span>
+          <span className="hc-faint">nicht eingehängt</span>
+        </span>
+      )}
 
       {place.capacity && (
         <span className="hc-place-space hc-meta">

@@ -10,7 +10,7 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | M6 — Human View (pulled ahead of M5 at the owner's request, D43) |
-| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher, and it now opens them with whatever the desktop would open them with. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 946 tests — 784 Rust, 47 vitest, 115 in a browser. |
+| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher, and it now opens them with whatever the desktop would open them with. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 974 tests — 808 Rust, 47 vitest, 119 in a browser. |
 | **Last updated** | 2026-08-21 |
 | **Blocked on** | nothing |
 
@@ -289,13 +289,25 @@ An agent may not set a default, whatever the allow-list says, and the red-team s
 in both directions. The reasoning is in D58: it is the one call here whose effect is felt the
 next time a *person* opens a file.
 
+**Drives that are not mounted yet.** A stick that has just been plugged in is in the places list
+now, with its size and the words "nicht eingehängt"; Enter mounts it and goes to wherever udisks2
+put it, and Ctrl+E unmounts — and cuts the power, when it is something that can be unplugged.
+Unmounted Windows partitions are offered the same way, which is how somebody opens the disk they
+keep their videos on without going near a terminal.
+
+The listing needs no privileges and no D-Bus: `/sys/class/block`, the disk above a partition, and
+udev's own database. Only the mounting shells out to `udisksctl`, always with
+`--no-user-interaction`, because a daemon waiting on an authentication dialog nobody can see has
+stopped answering. Verified against this machine — a stick, three Windows partitions, an EFI
+partition and six snap loop devices — and every case reproduced in tests against a `/sys` made
+for the purpose. **Ejecting a disk that cannot be unplugged is refused**, and no agent may mount,
+unmount or eject anything at all. D60 has the reasoning.
+
 ### What M6 still needs
 
-1. **Mounting and unmounting via udisks2** — the drives are *listed* now, but a stick that is
-   not mounted yet does not appear, and there is no way to eject one.
-2. **Archives** — extract zip and tar at minimum.
-3. **Network locations**, which may be staged.
-4. **Thumbnails in the list**, not only in the preview pane.
+1. **Archives** — extract zip and tar at minimum.
+2. **Network locations**, which may be staged.
+3. **Thumbnails in the list**, not only in the preview pane.
 
 **The stepped breath layer was measured, and it bought nothing** — 116% before, 110% after. The
 explanation behind it was wrong, and what replaced it is in D59: the heartbeat runs only while
@@ -566,6 +578,36 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
+
+### 2026-08-21 — Drives that are not mounted yet
+
+M6's mounts, and the surprise is how little of it needs udisks2. Finding the drives is
+`/sys/class/block`, the disk above a partition, and udev's own database in `/run/udev/data` —
+world-readable, `E:KEY=value` a line — so the first screen stays off D-Bus and the daemon stays
+off a GLib main loop. Only the mounting shells out to `udisksctl`, and always with
+`--no-user-interaction`.
+
+Written against this machine and then reproduced in a fixture: a stick plugged in and unmounted,
+three unmounted Windows partitions, an EFI partition, a recovery partition and six snap loop
+devices carrying squashfs images that udev reports as filesystems. The scan offers the stick and
+the Windows volumes and none of the machinery. `cortex mount` put the stick at
+`/run/media/<user>/ESD-USB` with no authentication prompt, and `cortex unmount` put it back.
+
+Three things worth carrying forward:
+
+- **The dangerous rule had no test, and the break-check is what said so.** `power-off` on a disk
+  that cannot be unplugged takes it off the bus while a running system is using it — one argument
+  away from the ordinary case. The check lived inside `Surface::unmount`, where deleting it broke
+  nothing any test noticed. It is `plan_unmount` now: a decision with a name, and deleting it
+  fails `an_internal_disk_is_never_powered_off`.
+- **A refusal that misdirects is worse than no message.** Refusing an agent's mount with
+  `OutsideAllowlist` told it to add `/dev/sdb1` to `agent.write_allowlist` — which would not have
+  helped, because nothing permits this. `Refusal::NotForAgents` says what is true, and it fixes
+  the same misdirection in yesterday's `apps.set_default`.
+- **An unmounted volume's `path` is a device node**, because there is no directory yet. Opening
+  it means mounting first and going to *the mount point udisks2 answers with*. A path guessed
+  from the label sends the window somewhere empty, and the guess looks right on a stick called
+  ESD-USB.
 
 ### 2026-08-21 — The heartbeat, and what a running animation actually costs
 
