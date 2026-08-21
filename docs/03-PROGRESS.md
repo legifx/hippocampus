@@ -10,7 +10,7 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | M6 — Human View (pulled ahead of M5 at the owner's request, D43) |
-| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher, and it now opens them with whatever the desktop would open them with. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 945 tests — 784 Rust, 47 vitest, 114 in a browser. |
+| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher, and it now opens them with whatever the desktop would open them with. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 948 tests — 784 Rust, 47 vitest, 117 in a browser. |
 | **Last updated** | 2026-08-21 |
 | **Blocked on** | nothing |
 
@@ -25,24 +25,20 @@ re-derive them by reasoning:
 
 **Two of the four were answered on 2026-08-20 and acted on; two are still open.**
 
-1. **Does the overlay render correctly? — Answered: no, the glitches were back.**
-   `WEBKIT_DISABLE_DMABUF_RENDERER=1` is restored, as a drop-in at
-   `~/.config/systemd/user/hippocampus-overlay.service.d/dmabuf.conf`. **It does not cost a core
-   any more, and it never was the thing that did** — measured hidden, over thirty seconds:
-   0.07% of one core without it, 0.10% with it. D54 changed two things at once and credited the
-   wrong one; the fix was stopping the animations while hidden. See D57. The unit's comment
-   describes this correctly now.
+1. **Does the overlay render correctly, and what does it cost? — Both answered, and the second
+   answer was not the one three sessions in a row expected.**
+   `WEBKIT_DISABLE_DMABUF_RENDERER=1` stays, as a drop-in at
+   `~/.config/systemd/user/hippocampus-overlay.service.d/dmabuf.conf`, because without it the
+   glitches and black areas come back. **It costs nothing: 111% of one core with it, 111%
+   without** — measured on 2026-08-21 with the window on screen and idle.
 
-   **The cost is real, and it arrives when the window is on screen.** Same process, nobody
-   touching it: **0.14% of one core hidden, 116% visible**, four consecutive samples. The only
-   difference is D54's `animation: none` while hidden, and exactly one animation in the frontend
-   runs continuously — the breath layer, a gradient over the whole window whose opacity rises and
-   falls, which under software compositing is a full-window repaint on every frame. It now takes
-   the same breath in **steps** when the shell reports software compositing, which cuts the
-   repaints from sixty a second to a few. **That fix is built and installed but not yet
-   measured** — measuring it needs the window on screen. The number to beat is 116%: summon the
-   overlay, leave it alone, and run the CPU snippet below. Hidden, the installed build reads
-   0.05%.
+   What cost a core was the breath layer, and not for the reason D54 or D57 gave. Eight variants
+   were measured: the renderer makes no difference, nor does the backdrop filter, nor the
+   gradient, nor the size of the animated element — a three-pixel strip still cost 71%. **Any
+   running animation recomposites the whole window every frame.** The heartbeat now runs only
+   while the daemon has something to index, which is both the cheap answer and the honest one,
+   and the visible idle window measures **1.6–3.4%** against 111% before. D59 has the table.
+
 2. **Does the system clipboard survive the window being hidden? — Still open, not tested.** Copy
    in the overlay, then `wl-paste --list-types` in a terminal. Wayland only lets a focused
    window take the selection; whether the compositor keeps it after the surface unmaps is not
@@ -300,18 +296,15 @@ next time a *person* opens a file.
 3. **Network locations**, which may be staged.
 4. **Thumbnails in the list**, not only in the preview pane.
 
-**Two things are built and not yet measured, and both need the window on screen.** Neither is a
-loose end to be tidied away with a plausible number:
+**The stepped breath layer was measured, and it bought nothing** — 116% before, 110% after. The
+explanation behind it was wrong, and what replaced it is in D59: the heartbeat runs only while
+there is work. The visible idle window is now 1.6–3.4% of one core. What is still unmeasured is
+the *busy* case: during an ingest the animation runs and the core comes back, which is worth a
+number the next time a long ingest happens.
 
-- **The stepped breath layer.** Software compositing costs 116% of one core with the overlay
-  merely visible; the step change should cut that by an order of magnitude and has been verified
-  only for its wiring, in Chromium, which composites on the GPU and therefore cannot show the
-  saving. Summon the overlay, leave it alone for thirty seconds, run the CPU snippet in
-  "How to answer a report of slowness", and write the number here.
-- **The scrolling, in WebKitGTK rather than Chromium.** The gap at 420 px a frame is zero in the
-  browser tests, and the browser tests are not the renderer this ships on — the whole point of
-  the paragraph above is that this renderer behaves differently. The DOM work is the same either
-  way, so the arithmetic holds; whether it *feels* right is the owner's judgement again.
+**And the scrolling in WebKitGTK rather than Chromium** is still only judged by arithmetic. The
+gap at 420 px a frame is zero in the browser tests, and Chromium is not the renderer this ships
+on. The DOM work is the same either way; whether it *feels* right is the owner's judgement.
 
 One thing is built but unverified: dragging a row *out* of the window offers `text/uri-list`,
 and whether WebKitGTK forwards that to the compositor cannot be tested from here — the browser
@@ -572,6 +565,30 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
+
+### 2026-08-21 — The heartbeat, and what a running animation actually costs
+
+The measurement D57 asked the next session to take, taken: **the stepped breath layer bought
+nothing.** 116% of one core before, 110% after, window on screen and untouched. So the
+explanation was wrong, and eight variants were measured before a new one was believed — the full
+table is in D59. The short version is that none of the suspects did it: not the renderer (111%
+on WebKit's GPU path, 111% under software compositing), not the backdrop filter, not the
+gradient, and not the size of the animated element, because a **three-pixel strip still cost
+71%**. Any running animation recomposites the whole window every frame.
+
+The heartbeat now runs only while the daemon has something to index. Visible and idle, the
+window measures **1.6–3.4% of one core** against 111%; hidden, 0.25%. §6 reads better for it
+too: the layer exists to make background work legible, so a still layer is what "no background
+work" looks like. Design system §8 gains a rule — no animation runs continuously in a resident
+window — and it is a performance rule with a measurement behind it rather than a taste.
+
+Two notes for whoever measures next. **The CPU tool read 0.0% for a process spinning a full core
+the first time it was pointed at one**, again, for a different reason than last session: the
+spinner's output went to the journal and it never spun. Point it at `yes > /dev/null` in a
+scope of its own before believing anything it says. And **`install-user.sh` builds `dist`
+without the test harness**, which is exactly the trap `package.json` documents: an `npx
+playwright test` straight after an install times out on every test waiting for a row. Use
+`npm run test:ui`, which rebuilds first.
 
 ### 2026-08-21 — Öffnen mit, and the desktop as the source of truth
 

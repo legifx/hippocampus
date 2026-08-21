@@ -147,9 +147,11 @@ At most three, all `position: absolute; inset: 0; pointer-events: none`, animati
 `opacity` and `transform`:
 
 1. **Breath** — `radial-gradient(90% 150% at 50% -35%, rgba(255,255,255,0.06), transparent 70%)`,
-   opacity 0.4 → 1 → 0.4. Period is derived from **indexing load**: 6 s idle, down to 2.4 s at
-   full ingest. This is the system's heartbeat and it makes background work legible without a
-   progress bar.
+   opacity 0.4 → 1 → 0.4. Period is derived from **indexing load**: 2.4 s at full ingest,
+   lengthening towards 6 s as the queue drains. This is the system's heartbeat and it makes
+   background work legible without a progress bar. **With nothing to index it does not beat at
+   all** — see §8.6 for what a continuous animation costs a resident window, and note that a
+   still layer is also the honest answer when nothing is happening.
 2. **Glow** — accent hairline plus inner glow on the focused panel.
 3. **Rim** — specular highlight tracking the cursor, 150 × 80.
 
@@ -175,3 +177,9 @@ This is a hard requirement, not a nicety.
 3. No layout-triggering property is ever animated. `transform` and `opacity` only.
 4. Every list is virtualised. The DOM node count is bounded and asserted by a test (M4 DoD §3).
 5. If a visual effect cannot hold 60 fps at 10 000 rows, it is removed — not optimised later.
+6. **No animation runs continuously in a resident window.** An ambient layer animates while it
+   has something to say and stops when it does not. This is not a preference: with any animation
+   running, the overlay costs about **one CPU core** while it is on screen, and stopping it
+   brings the same window to 0.3% — independently of the renderer, the size of the animated
+   element, or what is being drawn (D59). A window that is open from login to logout pays that
+   for as long as it is looked at.

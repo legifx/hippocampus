@@ -606,7 +606,17 @@ fn mark_interactive(
 
 #[tauri::command]
 fn startup_report(state: tauri::State<'_, AppState>) -> startup::Report {
-    state.startup.report()
+    let report = state.startup.report();
+    // Logged because the answer decides what the window is allowed to cost: under software
+    // compositing an ambient animation repaints the whole window on the CPU. Without this line
+    // the only way to find out whether the page was told is to open a web inspector on a
+    // resident overlay, and "did the page ever ask" is not answerable at all.
+    tracing::info!(
+        software_compositing = report.software_compositing,
+        interactive_ms = report.interactive_ms,
+        "the page asked what it is running on"
+    );
+    report
 }
 
 /// The summoning hotkey.

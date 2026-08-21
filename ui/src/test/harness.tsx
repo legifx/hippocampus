@@ -155,7 +155,18 @@ setTransport({
       case "zones":
         return { zones: [{ id: 1, name: "Projects", root: "/home/user/Projects", hue: 210, nodes: 9 }] } as T;
       case "extract_status":
-        return { pending: 0, done: 10, failed: 0, skipped: 0 } as T;
+        // `?pending=N` is how a test says the daemon is busy, and `__hcPending` is how it
+        // changes its mind afterwards — the query string is read once when this module loads,
+        // so rewriting the URL would look like a change and be none. Nothing pending is the
+        // default and the ordinary state, and the breath layer is still while it holds.
+        return {
+          pending: Number(
+            (window as unknown as HarnessWindow).__hcPending ?? params.get("pending") ?? "0",
+          ),
+          done: 10,
+          failed: 0,
+          skipped: 0,
+        } as T;
       case "neighbors":
         return {
           target_id: 1,
@@ -282,9 +293,9 @@ setTransport({
           budget_ms: 300,
           within_budget: true,
           waited_for_daemon_ms: 0,
-          // `?compositing=software` stands in for a process launched with
-          // `WEBKIT_DISABLE_DMABUF_RENDERER=1`. The page has no other way to find out, which is
-          // the whole reason the shell reports it (D57).
+          // Reported by the shell and read by nothing in the page any more: the renderer turned
+          // out not to be what decided the cost of an animation (D59). It is still in the
+          // report because the journal answers "which renderer is this process using" with it.
           software_compositing: params.get("compositing") === "software",
         } as T;
       case "mark_interactive":
@@ -320,6 +331,8 @@ type HarnessWindow = {
   __hcOpenedWith?: { id: string; paths: string[] };
   /** A remembered choice, as the daemon would have written it into `mimeapps.list`. */
   __hcDefaultSet?: { mime: string; application: string };
+  /** How much the daemon still has to index, when a test wants to change that mid-run. */
+  __hcPending?: number;
 };
 
 (window as unknown as HarnessWindow).__hcEmit = (event, payload) => {

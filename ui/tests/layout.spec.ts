@@ -154,8 +154,11 @@ test.describe("while nobody is looking", () => {
   }
 
   test("nothing animates once the window is put away", async ({ page }) => {
+    // With work to report, so there is an animation for hiding the window to stop. The idle
+    // window does not animate at all any more (D59), and asserting this rule from that state
+    // would pass with the rule deleted.
     await page.setViewportSize({ width: 1200, height: 700 });
-    await page.goto("/harness.html?at=/");
+    await page.goto("/harness.html?at=/&pending=500");
     await page.waitForSelector(".hc-row");
 
     const breath = page.locator(".hc-breath");

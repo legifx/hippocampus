@@ -136,21 +136,6 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
   // costing before it was measured.
   const visible = useVisibility();
 
-  // Whether WebKit is painting this window on the CPU. The shell knows and the page cannot, and
-  // it decides what an ambient animation is allowed to cost: measured at 116% of one core with
-  // the window merely on screen, against 0.14% with the animations stopped (D57).
-  const [softwareCompositing, setSoftwareCompositing] = useState(false);
-  useEffect(() => {
-    let disposed = false;
-    ipc
-      .startupReport()
-      .then((report) => !disposed && setSoftwareCompositing(report.software_compositing === true))
-      .catch(() => {});
-    return () => {
-      disposed = true;
-    };
-  }, []);
-
   // Three screens, one window: the places, a directory, or results. Typing always wins — that
   // is M6's shape, "search as an overlay, not a separate page".
   const atPlaces = !searching && browse.state.path === PLACES;
@@ -693,10 +678,6 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
       // an infinite animation is an infinite animation — the CSS below stops them all rather
       // than trusting each one to know.
       data-visible={visible ? "yes" : "no"}
-      // Software compositing repaints the whole window for every frame of an opacity animation.
-      // The breath layer keeps its period and its shape and takes it in steps instead, which is
-      // the same gesture at a fraction of the repaints. See D57.
-      data-compositing={softwareCompositing ? "software" : undefined}
       onKeyDown={onKeyDown}
     >
       <Ambient load={load} />

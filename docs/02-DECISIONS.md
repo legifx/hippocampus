@@ -1548,3 +1548,54 @@ because Enter in that frame opens an application nobody pointed at. A browser te
 failing seven runs in ten under parallel load, with the rows already grown to three and the
 highlight still on the second row of the old list. The cursor now carries the list it is a
 position *in*, and a position in a list that is no longer on screen reads as zero.
+
+---
+
+### D59 — The heartbeat runs only while there is work, because a running animation costs a core whatever it animates
+
+D57 said the breath layer was expensive *because of software compositing*, and made it stepped so
+that the opacity changes a few times a second instead of sixty. The prediction was an order of
+magnitude. **Measured on the overlay, window on screen and nobody touching it: 116% before,
+110% after.** The remedy bought nothing, so the explanation behind it was wrong, and six variants
+were measured before anything was believed:
+
+| what was changed | cost, window visible and idle |
+|---|---|
+| D57's stepped timing function (`steps(24, end)`) | **110%** of one core |
+| the smooth animation it replaced | 116% |
+| the same, with `backdrop-filter` removed entirely | 111% |
+| the same, with WebKit's **GPU** renderer instead of software compositing | 111% |
+| a flat wash instead of the radial gradient | 104% |
+| a **three-pixel strip** instead of the full-window gradient | 71% |
+| opacity set from a timer twice a second, no CSS animation | 38% |
+| **no animation at all** | **0.30%** |
+
+Read down that column: it is not the renderer, not the backdrop filter, not the gradient, and
+not the size of the thing being animated. **What costs the core is the window being recomposited
+every frame while any animation is running**, and the only lever that moves the number is
+whether one is running at all. A three-pixel strip costing 71% is what settles it — 0.2% of the
+pixels for 64% of the cost.
+
+So the breath now runs while the daemon has something to index and is still when it does not.
+The window measures **1.6–3.4% of one core** visible and idle, against 111% before, and 0.25%
+hidden. That is also the truer reading of §6: the layer exists to make background work legible,
+and when there is no background work, a still layer is what that means. It still breathes during
+an ingest, which is the case §6 was written for, and the cost then is a core — worth knowing, and
+worth measuring again if a long ingest ever feels slow.
+
+Three consequences worth writing down:
+
+- **`WEBKIT_DISABLE_DMABUF_RENDERER=1` is exonerated a second time, and for a different reason
+  than in D57.** It costs nothing at all: 111% with it, 111% without. It buys correct rendering
+  on this driver and that is the whole of its effect. D54 charged it with a core, D57 charged it
+  with the visible cost, and both were wrong.
+- **The `software_compositing` field survives with no consumer in the page.** The stepped CSS it
+  was added for is gone. It stays in the startup report because it is logged, and "which
+  renderer is this process using" was a question this session could only answer by experiment.
+- **A resident window is a different animal from a page.** An infinite animation in a document
+  somebody closes after a minute is ordinary; in a window that is open from login to logout it
+  is a core, for ever. Design system §8 gets a rule about it.
+
+The measuring method is worth keeping too: the cgroup, not `ps`, and the tool checked against a
+process known to spin one core before any of its numbers were believed — it read 0.0% for that
+spinner the first time, for the same reason it did in D57's session.

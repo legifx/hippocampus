@@ -397,52 +397,65 @@ test.describe("a fast scroll shows rows, not gaps", () => {
 });
 
 /**
- * What an ambient animation is allowed to cost when the window is painted on the CPU.
+ * What an ambient animation is allowed to cost in a window that is open all day.
  *
- * `WEBKIT_DISABLE_DMABUF_RENDERER=1` is set on this machine because the DMABUF renderer and the
- * driver together produce glitches and black areas (D54, D57). It drops WebKit to software
- * compositing, and the breath layer — one gradient covering the whole window, with its opacity
- * rising and falling — is then a full-window repaint on every frame.
+ * Measured on the real overlay, not here, with the window on screen and nobody touching it:
+ * **an animation running in it costs about one CPU core, and stopping it brings the same window
+ * down to 0.3%.** Six variants were measured before the cause was believed, and the surprise is
+ * what it is *not* — not the renderer (111% on WebKit's GPU path, 111% under software
+ * compositing), not the size of the animated element (105% for the full-window gradient, 71%
+ * for a three-pixel strip), not the gradient (104% for a flat wash), not the backdrop filter
+ * (111% with it removed). What costs the core is the window being recomposited every frame
+ * while any animation is running at all. See D59.
  *
- * Measured on the real overlay, not here: **116% of one core, steady, with the window merely on
- * screen and nobody touching it**, against 0.14% with the animations stopped. That is the
- * number this exists to stop coming back. What can be asserted in a browser is the wiring —
- * that the page asks the shell, and that the answer reaches the layer — because the page cannot
- * see the variable and would otherwise animate at full rate with no way to tell.
+ * So the rule the tests below hold is not about timing functions: the heartbeat runs while
+ * there is work to report and stops when there is none, which is both the cheap answer and the
+ * honest one.
  */
-test.describe("the breath layer costs less when the window is painted on the CPU", () => {
-  test("on the GPU it breathes continuously", async ({ page }) => {
+test.describe("the heartbeat runs only while there is something to report", () => {
+  test("with nothing being indexed it does not animate at all", async ({ page }) => {
     await page.setViewportSize({ width: 1200, height: 700 });
     await page.goto(`/harness.html?at=/`);
-    await page.waitForSelector(".hc-breath-animated");
+    await page.waitForSelector(".hc-breath");
 
-    const timing = await page.evaluate(
-      () => getComputedStyle(document.querySelector(".hc-breath") as Element).animationTimingFunction,
+    // Present, and still. The layer stays because §6's gradient is part of the surface; what
+    // goes is the animation, which is the only part that costs anything.
+    await expect(page.locator(".hc-breath")).toHaveCount(1);
+    await expect(page.locator(".hc-breath-animated")).toHaveCount(0);
+    const name = await page.evaluate(
+      () => getComputedStyle(document.querySelector(".hc-breath") as Element).animationName,
     );
-    expect(timing).toContain("ease-in-out");
-    expect(await page.locator("[data-compositing]").count()).toBe(0);
+    expect(name).toBe("none");
   });
 
-  test("in software it takes the same breath in steps", async ({ page }) => {
+  test("while the daemon is working it breathes, on a period that follows the load", async ({
+    page,
+  }) => {
     await page.setViewportSize({ width: 1200, height: 700 });
-    await page.goto(`/harness.html?at=/&compositing=software`);
-    await page.waitForSelector('[data-compositing="software"]');
+    await page.goto(`/harness.html?at=/&pending=500`);
+    await page.waitForSelector(".hc-breath-animated");
 
     const style = await page.evaluate(() => {
-      const layer = document.querySelector(".hc-breath") as Element;
-      const computed = getComputedStyle(layer);
-      return {
-        timing: computed.animationTimingFunction,
-        duration: computed.animationDuration,
-        name: computed.animationName,
-      };
+      const computed = getComputedStyle(document.querySelector(".hc-breath") as Element);
+      return { name: computed.animationName, duration: parseFloat(computed.animationDuration) };
     });
-
-    // Stepped, so the opacity changes a few times a second instead of sixty.
-    expect(style.timing).toContain("steps");
-    // And still breathing, on the same period. A static layer would be cheaper and would
-    // indicate nothing, which is the one thing §6 says this element is for.
     expect(style.name).toBe("hc-breathe");
-    expect(parseFloat(style.duration)).toBeGreaterThan(0);
+    // Faster than the idle period, because there is more to report.
+    expect(style.duration).toBeGreaterThan(0);
+    expect(style.duration).toBeLessThan(6);
+  });
+
+  test("and it stops again when the work is done", async ({ page }) => {
+    // The transition is the part that could plausibly be left out and never noticed: a window
+    // that starts breathing during an ingest and never stops is the expensive state again.
+    await page.setViewportSize({ width: 1200, height: 700 });
+    await page.goto(`/harness.html?at=/&pending=500`);
+    await page.waitForSelector(".hc-breath-animated");
+
+    await page.evaluate(() => {
+      (window as unknown as { __hcPending?: number }).__hcPending = 0;
+    });
+    // The poll is on an eight-second timer; the assertion waits for it rather than for a frame.
+    await expect(page.locator(".hc-breath-animated")).toHaveCount(0, { timeout: 15000 });
   });
 });
