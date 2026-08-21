@@ -10,7 +10,7 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | M6 — Human View (pulled ahead of M5 at the owner's request, D43) |
-| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher, and it now opens them with whatever the desktop would open them with. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 977 tests — 810 Rust, 47 vitest, 120 in a browser. |
+| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher, and it now opens them with whatever the desktop would open them with. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 980 tests — 812 Rust, 47 vitest, 121 in a browser. |
 | **Last updated** | 2026-08-21 |
 | **Blocked on** | nothing |
 
@@ -578,6 +578,26 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
+
+### 2026-08-21 — The password prompt, and a negative that was not evidence
+
+The owner read the new refusal — an internal disk needs an administrator — and asked the obvious
+question: can the explorer not just ask for the password? It can, and the change is small: the
+ordinary `fs.mount` still never waits, but it now refuses with a code of its own (1004,
+`NEEDS_AUTHORISATION`), and the window answers that code by asking a second time with
+`interactive: true`. That second call lets polkit put a dialog in front of somebody who pressed
+Enter a moment ago and is therefore still there. 120 seconds, then it gives up. D61 has the rest.
+
+**The diagnosis before it was wrong, and the way it was wrong is the lesson.** `ps` showed no
+polkit agent in the session, so the conclusion was that there was none — a package was installed
+and a line added to the compositor's config to fix it. The new agent refused to start: *an
+authentication agent already exists for the given subject*. It was inside the desktop shell, a
+thread of a Quickshell process, invisible to a search for process names. Both changes were
+reverted. **A negative from `ps` is not evidence of absence**; polkit knew, and answered in one
+line. The only thing that had ever been wrong was our own `--no-user-interaction`.
+
+Verified on the real disk: refused with 1004 without asking, mounted at `/run/media/<user>/Videos`
+with `--ask`, and unmounting needs no authorisation at all.
 
 ### 2026-08-21 — What "everything is buggy and it hangs" turned out to be
 

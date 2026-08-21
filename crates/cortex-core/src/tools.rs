@@ -798,6 +798,14 @@ pub struct PlaceSection {
 pub struct FsMountParams {
     /// The device node, as a `Place` gives it: `/dev/sdb1`.
     pub device: PathBuf,
+    /// Let polkit ask for a password if the device needs one.
+    ///
+    /// **Only ever set by a client acting on something a person just did**, and only after an
+    /// ordinary attempt came back with [`crate::error::NEEDS_AUTHORISATION`]. An internal disk
+    /// requires an administrator, and the ordinary path refuses rather than wait — see D61 for
+    /// why the second attempt is a separate request instead of a retry inside the first.
+    #[serde(default)]
+    pub interactive: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

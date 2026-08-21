@@ -338,12 +338,13 @@ fn open_path(window: tauri::WebviewWindow, path: String) -> Result<(), String> {
 async fn mount_volume(
     state: tauri::State<'_, AppState>,
     device: String,
+    interactive: bool,
 ) -> Result<Value, BridgeError> {
     state
         .bridge
         .call(
             cortex_rpc::protocol::method::FS_MOUNT,
-            json!({ "device": device }),
+            json!({ "device": device, "interactive": interactive }),
         )
         .await
 }

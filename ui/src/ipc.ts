@@ -153,6 +153,14 @@ export type Capacity = {
  * **`mounted: false` means the place has no directory yet** and its `path` is a device node.
  * Opening such a row means mounting it first and going to the answer — never listing the path.
  */
+/**
+ * The refusal a client can do something about: polkit would allow it after a password.
+ *
+ * A code rather than a message, so that recognising it is not a matter of reading English prose
+ * that changes.
+ */
+export const NEEDS_AUTHORISATION = 1004;
+
 export type VolumeInfo = {
   mounted: boolean;
   fstype: string;
@@ -528,10 +536,17 @@ export const ipc = {
   appsForPath: (path: string, all = false) =>
     transport.invoke<AppsForPath>("apps_for_path", { path, all }),
 
-  /** Mount a drive that is plugged in but not mounted, and answer with where it landed. */
-  mount: (device: string) =>
+  /**
+   * Mount a drive that is plugged in but not mounted, and answer with where it landed.
+   *
+   * `interactive` lets polkit ask for a password. Only ever after an ordinary attempt came back
+   * with {@link NEEDS_AUTHORISATION}, because that is the only moment a person is standing in
+   * front of the dialog that appears.
+   */
+  mount: (device: string, interactive = false) =>
     transport.invoke<{ device: string; mount_point: string; mounted_now: boolean }>("mount_volume", {
       device,
+      interactive,
     }),
 
   /** Unmount one, optionally powering it off so it can be unplugged. */

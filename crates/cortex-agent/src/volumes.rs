@@ -314,20 +314,49 @@ pub fn plan_unmount(volume: &Volume, eject: bool) -> Result<Unmounting, VolumeEr
 /// plugged into it.
 pub struct Udisks {
     program: String,
+    /// Whether polkit may ask a person. See [`Udisks::asking`].
+    interactive: bool,
+    /// How long to wait for that person before giving up.
+    patience: std::time::Duration,
 }
 
 impl Default for Udisks {
     fn default() -> Self {
         Self {
             program: "udisksctl".to_string(),
+            interactive: false,
+            patience: PATIENCE,
         }
     }
 }
+
+/// How long an authentication may take before the attempt is abandoned.
+///
+/// Long enough for somebody to notice a dialog, find their password and type it; short enough
+/// that a dialog nobody is in front of does not leave a process waiting for ever. The waiting is
+/// on a thread of its own, so nothing else in the daemon is held up by it.
+pub const PATIENCE: std::time::Duration = std::time::Duration::from_secs(120);
 
 impl Udisks {
     pub fn using(program: impl Into<String>) -> Self {
         Self {
             program: program.into(),
+            ..Self::default()
+        }
+    }
+
+    /// The same, but polkit may ask for a password.
+    ///
+    /// **Only ever for something a person just asked for**, which is why it is a separate
+    /// constructor rather than a flag with a default. The ordinary path never asks: a daemon
+    /// that waits on a dialog nobody can see has stopped answering, and D60 says so. What makes
+    /// this safe is that it is reached only from an explicit second attempt, it runs on a thread
+    /// of its own, and it gives up after [`PATIENCE`].
+    pub fn asking(patience: std::time::Duration) -> Self {
+        Self {
+            interactive: true,
+            patience,
+            ..Self::default()
         }
     }
 
@@ -367,14 +396,25 @@ impl Udisks {
         let device = args.last().map(PathBuf::from).unwrap_or_default();
         let mut command = std::process::Command::new(&self.program);
         command.arg(operation).args(args);
-        // Never, on any path. A daemon waiting on a dialog nobody can see is a daemon that has
-        // stopped answering.
-        command.arg("--no-user-interaction");
+        if !self.interactive {
+            // The default, and the only path anything reaches on its own: a daemon waiting on a
+            // dialog nobody can see is a daemon that has stopped answering.
+            command.arg("--no-user-interaction");
+        }
 
-        let output = match command.output() {
+        let output = match self.wait_for(command) {
             Ok(output) => output,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 return Err(VolumeError::NoUdisks)
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                return Err(VolumeError::Refused {
+                    operation,
+                    message: format!(
+                        "nobody answered the authentication request within {} seconds",
+                        self.patience.as_secs()
+                    ),
+                })
             }
             Err(e) => return Err(VolumeError::Io(e.to_string())),
         };
@@ -400,6 +440,45 @@ impl Udisks {
                 message
             },
         })
+    }
+}
+
+impl Udisks {
+    /// Run it, and do not wait for ever.
+    ///
+    /// `Command::output()` waits as long as the child does, and an interactive `udisksctl` waits
+    /// as long as the dialog is on screen — which, if nobody is in front of it, is until the
+    /// machine is switched off. So the child is polled and killed when [`Udisks::patience`] runs
+    /// out. Polling rather than a signal because the interval is coarse by design: this is a
+    /// person typing a password, not a hot loop.
+    fn wait_for(&self, mut command: std::process::Command) -> std::io::Result<std::process::Output> {
+        use std::process::Stdio;
+
+        if !self.interactive {
+            return command.output();
+        }
+
+        let mut child = command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        let deadline = std::time::Instant::now() + self.patience;
+        loop {
+            if child.try_wait()?.is_some() {
+                return child.wait_with_output();
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "the authentication was not answered",
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
     }
 }
 
@@ -822,6 +901,53 @@ mod tests {
         let said = udisks.unmount(Path::new("/dev/sdb1")).unwrap_err().to_string();
         assert!(said.contains("target is busy"), "{said}");
         assert!(!said.contains("textual authentication"), "the noise is dropped: {said}");
+    }
+
+    #[test]
+    fn asking_drops_the_flag_that_forbids_asking() {
+        // The whole difference between the two paths, and it is one argument. Asserted rather
+        // than trusted because it is invisible when it works: the ordinary path would simply
+        // start refusing internal disks again, quietly, on the day somebody swaps the
+        // constructors.
+        let dir = tempfile::tempdir().unwrap();
+        let seen = dir.path().join("argv");
+        let script = format!(
+            "#!/bin/sh\n[ \"$1\" = --ready ] && exit 0\necho \"$@\" >> {}\n\
+             echo \"Mounted /dev/sda2 at /run/media/user/Videos.\"\n",
+            seen.display()
+        );
+
+        fake_udisks(dir.path(), &script).mount(Path::new("/dev/sda2")).unwrap();
+        let asking = Udisks {
+            interactive: true,
+            ..fake_udisks(dir.path(), &script)
+        };
+        asking.mount(Path::new("/dev/sda2")).unwrap();
+
+        let recorded = std::fs::read_to_string(&seen).unwrap();
+        let mut calls = recorded.lines();
+        assert!(calls.next().unwrap().contains("--no-user-interaction"), "the ordinary path never asks");
+        assert!(!calls.next().unwrap().contains("--no-user-interaction"), "and the explicit one may");
+    }
+
+    #[test]
+    fn nobody_in_front_of_the_dialog_is_not_a_process_that_waits_for_ever() {
+        // An interactive `udisksctl` waits as long as the dialog is on screen, which — if the
+        // person walked away — is until the machine is switched off.
+        let dir = tempfile::tempdir().unwrap();
+        let waiting = Udisks {
+            interactive: true,
+            patience: std::time::Duration::from_millis(300),
+            ..fake_udisks(
+                dir.path(),
+                "#!/bin/sh\n[ \"$1\" = --ready ] && exit 0\nsleep 30\n",
+            )
+        };
+
+        let started = std::time::Instant::now();
+        let error = waiting.mount(Path::new("/dev/sda2")).unwrap_err();
+        assert!(started.elapsed() < std::time::Duration::from_secs(5), "it gave up");
+        assert!(error.to_string().contains("nobody answered"), "{error}");
     }
 
     #[test]

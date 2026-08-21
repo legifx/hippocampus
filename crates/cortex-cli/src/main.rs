@@ -212,6 +212,10 @@ enum Command {
     Mount {
         /// The device node, as `cortex places` prints it: `/dev/sdb1`.
         device: std::path::PathBuf,
+        /// Let polkit ask for a password. An internal disk needs an administrator, and without
+        /// this the attempt is refused rather than left waiting on a dialog.
+        #[arg(long)]
+        ask: bool,
     },
     /// Unmount a drive, and optionally power it off so it can be unplugged.
     Unmount {
@@ -1113,9 +1117,9 @@ async fn run(args: Args) -> Result<()> {
             }
         }
 
-        Command::Mount { device } => {
+        Command::Mount { device, ask } => {
             let result: FsMountResult = client
-                .call(method::FS_MOUNT, FsMountParams { device })
+                .call(method::FS_MOUNT, FsMountParams { device, interactive: ask })
                 .await?;
             if args.json {
                 print_json(&result)?;

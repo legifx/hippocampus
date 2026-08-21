@@ -1683,3 +1683,50 @@ places list then showed it with a capacity, `cortex unmount` put it back; ejecti
 disk was refused, and so was every one of the four calls made as an agent. The unit tests
 reproduce each of those cases against a `/sys` and a `/run/udev` that were made for the purpose,
 because a suite that reads the real ones asserts what happens to be plugged in today.
+
+---
+
+### D61 — A password is asked for by asking twice, and the second time is a client's decision
+
+D60 said `--no-user-interaction` on every call, without exception, because a daemon waiting on a
+dialog nobody can see has stopped answering. That rule left internal disks unmountable: polkit
+wants `auth_admin_keep` for `filesystem-mount-system`, and the daemon had promised never to give
+anybody the chance to type a password. The owner asked for the prompt, and this is how it works.
+
+**Two requests rather than a retry inside one.** The ordinary `fs.mount` still never waits: it
+refuses with a code of its own, `NEEDS_AUTHORISATION` (1004), which means "this would work if
+somebody said so". A client that has a person in front of it — the window, where somebody just
+pressed Enter and is therefore still there — sends a second, explicit `fs.mount` with
+`interactive: true`, and *that* one lets polkit ask. The CLI spells the same thing `--ask`.
+
+Three things make it safe rather than a hole in D60's rule:
+
+- **It is never reached on its own.** `Udisks::asking` is a separate constructor, not a flag with
+  a default, so the path that reaches out from a background stage cannot fall into it.
+- **It has a deadline.** 120 seconds, then the child is killed and the answer is "nobody
+  answered the authentication request" — long enough to find a password, short enough that a
+  dialog in front of an empty chair does not leave a process waiting until the machine is
+  switched off. A test proves it gives up.
+- **The refusal travels as a number, not as prose.** A page that recognised this case by matching
+  English text would break the first time the wording improved.
+
+**And the diagnosis that led here was wrong twice, which is worth more than the fix.** The
+symptom was that nothing ever asked for a password. `ps` showed no polkit agent — no
+`polkit-gnome`, no `mate-polkit`, nothing — so the conclusion was "this session has no agent",
+and a package was installed and an autostart line added to the compositor's configuration on the
+strength of it. The new agent then refused to start: *an authentication agent already exists for
+the given subject*. It was inside the desktop shell all along, as a thread of a Quickshell
+process, invisible to a search for process names. **A negative from `ps` is not evidence of
+absence; polkit was the thing to ask, and it answered in one line.** The package and the
+configuration change were reverted.
+
+What polkit actually wants here, for the record, since it is the whole reason the stick behaved
+differently from the disks:
+
+| action | active local session |
+|---|---|
+| `org.freedesktop.udisks2.filesystem-mount` (removable) | **yes** — no authentication at all |
+| `org.freedesktop.udisks2.filesystem-mount-system` (internal) | `auth_admin_keep` — a password, remembered afterwards |
+
+Unmounting needs neither: a filesystem you mounted is yours to unmount, which a test on the real
+disk confirmed rather than assumed.

@@ -8,6 +8,15 @@
 
 import { expect, test, type Page } from "@playwright/test";
 
+/** Everything the window asked the backend to do, in order. */
+async function calls(page: Page): Promise<{ command: string; args: Record<string, unknown> }[]> {
+  return page.evaluate(
+    () =>
+      (window as unknown as { __hcCalls?: { command: string; args: Record<string, unknown> }[] })
+        .__hcCalls ?? [],
+  );
+}
+
 async function open(page: Page, width = 1200) {
   await page.setViewportSize({ width, height: 700 });
   await page.goto("/harness.html?at=/");
@@ -305,6 +314,22 @@ test.describe("the places screen", () => {
     // And the window still works afterwards: the cursor moves, and another place opens.
     await page.keyboard.press("ArrowUp");
     await expect(page.locator('.hc-place[aria-selected="true"]')).toContainText("Arbeit");
+  });
+
+  test("a disk that needs a password is asked for a second time", async ({ page }) => {
+    // The daemon never waits on a person, so it refuses with a code that means "a password
+    // would do it" — and the window asks again, which is the moment polkit puts a dialog in
+    // front of somebody who just pressed Enter and is therefore still there to answer.
+    await page.goto("/harness.html?needsauth=1");
+    await page.waitForSelector(".hc-place");
+    for (let i = 0; i < 5; i++) await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+
+    // It ends up in the directory, which only happens if the second call was made.
+    await expect(page.locator('.hc-crumb[aria-current="page"]')).toHaveText("ESD-USB");
+
+    const mounts = (await calls(page)).filter((c) => c.command === "mount_volume");
+    expect(mounts.map((c) => c.args.interactive)).toEqual([false, true]);
   });
 
   test("Ctrl+E ejects the drive under the cursor", async ({ page }) => {

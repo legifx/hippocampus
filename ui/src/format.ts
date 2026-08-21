@@ -117,3 +117,18 @@ export function messageOf(error: unknown): string {
   }
   return "das hat nicht funktioniert";
 }
+
+/**
+ * The daemon's error code, when the failure carries one.
+ *
+ * `BridgeError::Daemon` serialises as `{ code, message }` precisely so that a refusal can be
+ * recognised by number — "this needs a password" is a different reaction from "the daemon is
+ * not running", and both arrive as prose otherwise.
+ */
+export function codeOf(error: unknown): number | null {
+  if (error && typeof error === "object" && "code" in error) {
+    const code = (error as { code: unknown }).code;
+    if (typeof code === "number") return code;
+  }
+  return null;
+}

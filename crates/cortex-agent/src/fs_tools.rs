@@ -37,6 +37,14 @@ pub enum ToolError {
     #[error("{path}: {message}")]
     Io { path: PathBuf, message: String },
 
+    /// Refused by polkit, and obtainable: somebody with a password can allow it.
+    ///
+    /// Separate from [`ToolError::Io`] so that it reaches a client as a code rather than as a
+    /// sentence — the window turns it into an authentication prompt, and matching on English
+    /// prose to decide that would be a client reading a message meant for a person.
+    #[error("{path}: {message}")]
+    NeedsAuthorisation { path: PathBuf, message: String },
+
     #[error("the index could not be updated: {0}")]
     Store(String),
 }
@@ -45,6 +53,7 @@ impl ToolError {
     pub fn code(&self) -> i32 {
         match self {
             ToolError::Refused(r) => r.code(),
+            ToolError::NeedsAuthorisation { .. } => 1004,
             _ => -32603,
         }
     }
@@ -442,7 +451,15 @@ impl Surface<'_> {
             });
         }
 
-        let mount_point = crate::volumes::Udisks::default()
+        // Asking is the exception and it is never reached on its own: a client sends
+        // `interactive` only after an ordinary attempt was refused for want of a password, and
+        // only because a person is standing in front of the answer (D61).
+        let udisks = if params.interactive {
+            crate::volumes::Udisks::asking(crate::volumes::PATIENCE)
+        } else {
+            crate::volumes::Udisks::default()
+        };
+        let mount_point = udisks
             .mount(&params.device)
             .map_err(|e| self.failed(tool, &args, &params.device, e))?;
 
@@ -539,9 +556,13 @@ impl Surface<'_> {
     ) -> ToolError {
         let message = error.to_string();
         self.auditor.allowed(self.now, tool, args, &message);
-        ToolError::Io {
-            path: device.to_path_buf(),
-            message,
+        let path = device.to_path_buf();
+        match error {
+            // The one failure a client can act on rather than only report.
+            crate::volumes::VolumeError::NeedsPermission { .. } => {
+                ToolError::NeedsAuthorisation { path, message }
+            }
+            _ => ToolError::Io { path, message },
         }
     }
 

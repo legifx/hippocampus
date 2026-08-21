@@ -102,6 +102,13 @@ impl RpcError {
     /// The operation requires a confirmed dry-run plan first.
     pub const DRY_RUN_REQUIRED: i32 = 1003;
 
+    /// The operation would work, if somebody with an administrator's password said so.
+    ///
+    /// Its own code because it is the one refusal a *client* can do something about: a window
+    /// with a session can ask, where the daemon must never wait on a human. A page that had to
+    /// recognise this by reading the message would break the first time the wording changed.
+    pub const NEEDS_AUTHORISATION: i32 = 1004;
+
     pub fn new(code: i32, message: impl Into<String>) -> Self {
         Self {
             code,

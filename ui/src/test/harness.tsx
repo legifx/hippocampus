@@ -121,6 +121,17 @@ setTransport({
               "/dev/sda2 needs an administrator's permission, and this window never asks for one",
           };
         }
+        // `?needsauth=1` is an internal disk: the ordinary attempt is refused with the code that
+        // means "a password would do it", and the second one — the one that lets polkit ask —
+        // works. Both halves, because the interesting part is that the window makes the second
+        // call at all.
+        if (params.get("needsauth") && args?.interactive !== true) {
+          // eslint-disable-next-line no-throw-literal
+          throw {
+            code: 1004,
+            message: "this needs an administrator's permission",
+          };
+        }
         (window as unknown as HarnessWindow).__hcMounted = String(args?.device ?? "");
         return {
           device: String(args?.device ?? ""),

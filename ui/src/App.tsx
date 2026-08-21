@@ -34,6 +34,7 @@ import { useSearch } from "./hooks/useSearch";
 import { useViewport } from "./hooks/useViewport";
 import {
   ipc,
+  NEEDS_AUTHORISATION,
   type Application,
   type AppsForPath,
   type Place,
@@ -41,7 +42,7 @@ import {
   type SortBy,
 } from "./ipc";
 import { rowFromEntry, rowFromHit, type Row } from "./row";
-import { messageOf } from "./format";
+import { codeOf, messageOf } from "./format";
 
 const ROW_HEIGHT_COMPACT = 28;
 const ROW_HEIGHT_COMFORTABLE = 34;
@@ -471,15 +472,31 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
       // with rather than a path guessed from the label — udisks2 chooses where it lands, and
       // guessing would send the window somewhere empty.
       if (place.volume && !place.volume.mounted) {
+        const arrived = (mounted: { mount_point: string }) => {
+          setDaemonError(null);
+          places.reload();
+          browse.goTo(mounted.mount_point);
+        };
+
         setDaemonError(`${place.name} wird eingehängt …`);
         ipc
           .mount(place.path)
-          .then((mounted) => {
-            setDaemonError(null);
-            places.reload();
-            browse.goTo(mounted.mount_point);
-          })
-          .catch((e: unknown) => setDaemonError(messageOf(e)));
+          .then(arrived)
+          .catch((refusal: unknown) => {
+            // An internal disk needs an administrator, and the daemon never waits on a person.
+            // So it says so with a code, and this asks a second time — which is the moment
+            // polkit puts a password dialog in front of somebody who just pressed Enter and is
+            // therefore still there to answer it (D61).
+            if (codeOf(refusal) !== NEEDS_AUTHORISATION) {
+              setDaemonError(messageOf(refusal));
+              return;
+            }
+            setDaemonError(`${place.name} braucht eine Berechtigung — bitte bestätigen …`);
+            ipc
+              .mount(place.path, true)
+              .then(arrived)
+              .catch((e: unknown) => setDaemonError(messageOf(e)));
+          });
         return;
       }
       browse.goTo(place.path);

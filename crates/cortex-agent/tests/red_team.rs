@@ -657,7 +657,7 @@ fn an_agent_may_not_touch_the_drives() {
 
     let mount = f
         .surface(true)
-        .mount(&FsMountParams { device: device.clone() })
+        .mount(&FsMountParams { device: device.clone(), interactive: false })
         .unwrap_err();
     let unmount = f
         .surface(true)
@@ -690,6 +690,7 @@ fn a_mount_that_fails_leaves_a_trace() {
     let error = human
         .mount(&FsMountParams {
             device: std::path::PathBuf::from("/dev/definitely-not-here"),
+            interactive: false,
         })
         .unwrap_err();
     assert!(error.to_string().contains("no such volume"), "{error}");
