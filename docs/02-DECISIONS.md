@@ -1530,6 +1530,17 @@ It writes no undo entry, and that is a limit rather than an oversight: the undo 
 filesystem operations and this is a configuration key. What the previous default was goes into
 the audit line, which is what somebody putting it back needs.
 
+**A launched application gets a scope of its own, or the next restart closes it.** A child of a
+systemd user service lives in that service's cgroup, and the default kill mode takes the cgroup
+down with the service — so an editor opened from the overlay was closed again by the next
+`systemctl --user restart hippocampus-overlay`: an update, a crash, a login. Measured rather than
+reasoned about: a child spawned the ordinary way was killed with its service **even after
+`setsid`**, and one launched with `systemd-run --user --scope` survived the same stop, in a
+cgroup of its own. Launches go through that now — which is what GIO does, for this reason — and
+where there is no `systemd-run` the plain spawn is the only answer there is. This applied to
+`open_path` before "Öffnen mit" existed; it was found while measuring something else, which is
+the second time in three sessions that watching the cgroup rather than the code found the defect.
+
 **And the chooser's cursor is derived during render, not reset in an effect.** The list under it
 can be replaced — "alle anzeigen" is a longer list — and an effect commits one frame with the old
 position still highlighted. D56 paid for that lesson once as a visual glitch; here it is worse,

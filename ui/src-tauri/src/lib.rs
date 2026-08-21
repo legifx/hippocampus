@@ -327,9 +327,7 @@ fn open_path(window: tauri::WebviewWindow, path: String) -> Result<(), String> {
     if !target.exists() {
         return Err(format!("{path} is not there any more"));
     }
-    std::process::Command::new("xdg-open")
-        .arg(target)
-        .spawn()
+    spawn_detached(&["xdg-open".to_string(), target.display().to_string()])
         .map_err(|e| format!("could not open {path}: {e}"))?;
     conceal(&window);
     Ok(())
@@ -400,19 +398,78 @@ fn open_with(
             wrapped.append(&mut argv);
             argv = wrapped;
         }
-        std::process::Command::new(&argv[0])
-            .args(&argv[1..])
-            // Detached from this window's streams: an application that writes to stdout must
-            // not fill the overlay's journal, and one that reads stdin must not block on a
-            // terminal it does not have.
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
+        spawn_detached(&argv)
             .map_err(|e| format!("{} could not be started: {e}", application.name))?;
     }
     conceal(&window);
     Ok(())
+}
+
+/// Start a program so that it outlives this window.
+///
+/// **A child of a systemd user service lives in that service's cgroup, and the default kill mode
+/// takes the whole cgroup down with the service.** So an editor opened from the overlay was
+/// closed again by the next `systemctl --user restart hippocampus-overlay` — an update, a crash,
+/// a login. That is not a plausible worry, it is measured: a child spawned the ordinary way was
+/// killed with its service *even after `setsid`*, and one launched into a transient scope
+/// survived the same stop.
+///
+/// The fix is the one GIO uses for the same reason: hand the command to systemd as a scope of
+/// its own. Where there is no `systemd-run` — a session that is not systemd's — the plain spawn
+/// is the only answer there is, and it is still better than not opening the file.
+///
+/// The child is reaped on a thread rather than left behind, because a launcher that leaks one
+/// zombie per opened file is a launcher with a slow leak in it.
+fn spawn_detached(argv: &[String]) -> std::io::Result<()> {
+    let argv = launch_command(argv, systemd_run().as_deref());
+    let Some((program, rest)) = argv.split_first() else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "there is nothing to run",
+        ));
+    };
+    let child = std::process::Command::new(program)
+        .args(rest)
+        // Detached from this window's streams: an application that writes to stdout must not
+        // fill the overlay's journal, and one that reads stdin must not block on a terminal it
+        // does not have.
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+    std::thread::spawn(move || {
+        let mut child = child;
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
+/// The argv that actually gets run, given whether this machine has `systemd-run`.
+///
+/// Split out from the spawning so the wrapping is a value that can be asserted rather than a
+/// process that has to be started to be observed.
+fn launch_command(argv: &[String], systemd_run: Option<&str>) -> Vec<String> {
+    match systemd_run {
+        // `--collect` so a scope whose application fails does not stay behind as a failed unit
+        // for somebody to clean up by hand; `--quiet` because the unit name is not news.
+        Some(runner) => {
+            let mut out = vec![
+                runner.to_string(),
+                "--user".into(),
+                "--scope".into(),
+                "--collect".into(),
+                "--quiet".into(),
+                "--".into(),
+            ];
+            out.extend(argv.iter().cloned());
+            out
+        }
+        None => argv.to_vec(),
+    }
+}
+
+fn systemd_run() -> Option<String> {
+    on_path("systemd-run").then(|| "systemd-run".to_string())
 }
 
 /// The session's terminal, for the applications whose entry says `Terminal=true`.
@@ -848,4 +905,50 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("the overlay failed to start");
+}
+
+#[cfg(test)]
+mod launch_tests {
+    use super::launch_command;
+
+    fn argv(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_launch_is_wrapped_in_a_scope_of_its_own() {
+        // The whole point: the application must not end up in this service's cgroup, where the
+        // next restart of the overlay would kill it.
+        assert_eq!(
+            launch_command(&argv(&["editor", "/a/notes.txt"]), Some("systemd-run")),
+            argv(&[
+                "systemd-run",
+                "--user",
+                "--scope",
+                "--collect",
+                "--quiet",
+                "--",
+                "editor",
+                "/a/notes.txt",
+            ])
+        );
+    }
+
+    #[test]
+    fn the_arguments_are_passed_after_a_separator() {
+        // Without `--`, an application's own `--user` or `--quiet` would be read by systemd-run
+        // instead of by the application.
+        let wrapped = launch_command(&argv(&["viewer", "--quiet", "--user"]), Some("systemd-run"));
+        let separator = wrapped.iter().position(|a| a == "--").unwrap();
+        assert_eq!(&wrapped[separator + 1..], &argv(&["viewer", "--quiet", "--user"])[..]);
+    }
+
+    #[test]
+    fn without_systemd_run_the_command_is_left_alone() {
+        // A session that is not systemd's still has to be able to open a file.
+        assert_eq!(
+            launch_command(&argv(&["editor", "/a/notes.txt"]), None),
+            argv(&["editor", "/a/notes.txt"])
+        );
+    }
 }

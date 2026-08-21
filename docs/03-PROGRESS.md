@@ -10,7 +10,7 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | M6 — Human View (pulled ahead of M5 at the owner's request, D43) |
-| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher, and it now opens them with whatever the desktop would open them with. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 942 tests — 781 Rust, 47 vitest, 114 in a browser. |
+| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher, and it now opens them with whatever the desktop would open them with. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 945 tests — 784 Rust, 47 vitest, 114 in a browser. |
 | **Last updated** | 2026-08-21 |
 | **Blocked on** | nothing |
 
@@ -31,8 +31,7 @@ re-derive them by reasoning:
    any more, and it never was the thing that did** — measured hidden, over thirty seconds:
    0.07% of one core without it, 0.10% with it. D54 changed two things at once and credited the
    wrong one; the fix was stopping the animations while hidden. See D57. The unit's comment
-   still describes the old, expensive behaviour and should be corrected when somebody is next
-   in that file.
+   describes this correctly now.
 
    **The cost is real, and it arrives when the window is on screen.** Same process, nobody
    touching it: **0.14% of one core hidden, 116% visible**, four consecutive samples. The only
@@ -599,6 +598,14 @@ Two defects found on the way, neither of them in the new code:
   the worst way for a test to fail. Capacity is measured per call, so three identical numbers
   were never the property being asserted; it asserts that each surface reports one, and compares
   the rest exactly.
+
+**And a defect found while measuring, not while reading:** every application opened from the
+overlay — by Enter, which predates this session, as well as by "Öffnen mit" — was a child of the
+overlay's systemd service, and therefore in its cgroup, and therefore killed by the next restart
+of it. Launches go through `systemd-run --user --scope` now. The mechanism is measured in both
+directions (a plain child dies even after `setsid`; a scope survives) and the wrapping is
+asserted by three tests, but **the end-to-end proof is still to be done by hand**: open something
+from the overlay, restart the overlay, and see whether it stays open.
 
 And one thing found in passing, not fixed: **`fs.list` accepts a `glob` parameter and ignores
 it.** The field is on the wire type, documented there, and no implementation reads it — so a
