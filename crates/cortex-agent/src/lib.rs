@@ -11,6 +11,7 @@
 //! The reason for the layer is not paranoia. An agent with unchecked `fs.move` over an indexed
 //! home directory does more damage in 200 ms than a nightly backup undoes.
 
+pub mod apps;
 pub mod audit;
 pub mod batch;
 pub mod brain_tools;

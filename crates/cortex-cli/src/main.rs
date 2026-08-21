@@ -7,7 +7,8 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use cortex_core::paths::Paths;
 use cortex_core::tools::{
-    AnnotateParams, AnnotateResult, DiffParams, DiffResult, FsListParams, FsListResult,
+    AnnotateParams, AnnotateResult, AppsForPathParams, AppsForPathResult, AppsSetDefaultParams,
+    AppsSetDefaultResult, DiffParams, DiffResult, FsListParams, FsListResult,
     FsMoveParams, FsPlacesParams, FsPlacesResult, FsReadParams, FsReadResult, FsStatParams,
     FsStatResult, FsTrashParams,
     FsWriteParams, LinkParams, LinkResult, Mutation, NeighborsParams, NeighborsResult, PinParams,
@@ -206,6 +207,19 @@ enum Command {
     },
     /// The places worth starting from: your folders, the drives, and the filesystem.
     Places,
+    /// What opens this file: its type, and the applications that claim it.
+    ///
+    /// The same answer the window shows. When the two disagree, one of them is reading the
+    /// association files wrongly, and this is the cheap way to find out which.
+    Apps {
+        path: std::path::PathBuf,
+        /// Every installed application, not only the ones that claim the type.
+        #[arg(long)]
+        all: bool,
+        /// Make this application the default for the file's type, for the whole desktop.
+        #[arg(long, value_name = "DESKTOP_ID")]
+        set_default: Option<String>,
+    },
     /// List a directory, the way an agent sees it.
     Ls {
         path: std::path::PathBuf,
@@ -1083,6 +1097,53 @@ async fn run(args: Args) -> Result<()> {
                     result.cursor,
                     if result.more { " (more to come)" } else { "" }
                 );
+            }
+        }
+
+        Command::Apps { path, all, set_default } => {
+            if let Some(id) = set_default {
+                // The type comes from the file rather than from the caller: a default set for
+                // the wrong type looks like it worked and changes nothing anybody notices.
+                let found: AppsForPathResult = client
+                    .call(
+                        method::APPS_FOR_PATH,
+                        AppsForPathParams { path: path.clone(), all: false },
+                    )
+                    .await?;
+                let result: AppsSetDefaultResult = client
+                    .call(
+                        method::APPS_SET_DEFAULT,
+                        AppsSetDefaultParams { mime: found.mime, application: id.clone() },
+                    )
+                    .await?;
+                if args.json {
+                    print_json(&result)?;
+                } else {
+                    println!("{} now opens {} ({})", result.application, result.mime, result.file.display());
+                }
+                return Ok(());
+            }
+
+            let result: AppsForPathResult = client
+                .call(method::APPS_FOR_PATH, AppsForPathParams { path, all })
+                .await?;
+            if args.json {
+                print_json(&result)?;
+            } else {
+                println!("{}", result.mime);
+                if result.applications.is_empty() {
+                    println!("  nothing claims this type — try --all");
+                }
+                for app in &result.applications {
+                    // The marker is the whole point of the column: which of these is what a
+                    // double click does.
+                    println!(
+                        "  {} {:<40} {}",
+                        if app.is_default { "*" } else { " " },
+                        app.name,
+                        app.id
+                    );
+                }
             }
         }
 

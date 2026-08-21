@@ -850,3 +850,76 @@
   grid-row: 1 / span 2;
   grid-column: 2;
 }
+
+/* "Öffnen mit …" — the same pane as the conflict question, and taller, because it is a list
+   rather than three options. The height is capped and the list scrolls: a machine with sixty
+   applications installed must not push the buttons off the window. */
+.hc-openwith {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(460px, calc(100% - 32px));
+  background: var(--hc-surface);
+  border: 1px solid var(--hc-stroke-lift);
+  border-radius: var(--hc-radius-panel);
+  box-shadow: var(--hc-shadow-lift);
+  padding: 14px 16px;
+  outline: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.hc-openwith-question {
+  margin: 0;
+  color: var(--hc-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hc-openwith p {
+  margin: 0;
+}
+
+.hc-openwith-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: min(320px, 40vh);
+  overflow-y: auto;
+}
+
+.hc-openwith-app {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  padding: 7px 10px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--hc-radius-row);
+  color: inherit;
+  font: inherit;
+  cursor: default;
+}
+
+.hc-openwith-chosen {
+  background: var(--hc-surface-hi);
+  border-color: var(--hc-stroke-lift);
+}
+
+.hc-openwith-detail {
+  grid-column: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hc-openwith-app kbd {
+  grid-row: 1 / span 2;
+  font-family: var(--hc-mono);
+}

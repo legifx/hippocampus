@@ -231,8 +231,36 @@ fn the_places_are_the_same_through_all_three() {
     let over_cli = daemon.cli(&["places"]);
     let over_mcp = daemon.mcp("fs_places", json!({}));
 
-    assert_eq!(over_socket, over_cli);
-    assert_eq!(over_socket, over_mcp);
+    // How full a disk is cannot be compared across three calls, and comparing it made this test
+    // fail whenever something wrote to the disk between them — which, on a machine that is
+    // compiling, is often. It is *measured* on each call rather than reported from a cache, so
+    // three identical numbers were never the property being asserted. Each surface must report
+    // a capacity, and the rest must match exactly.
+    let capacities = |value: &Value| -> Vec<bool> {
+        let mut out = Vec::new();
+        for section in value["sections"].as_array().unwrap() {
+            for place in section["places"].as_array().unwrap() {
+                out.push(place.get("capacity").is_some());
+            }
+        }
+        out
+    };
+    let strip = |mut value: Value| -> Value {
+        for section in value["sections"].as_array_mut().unwrap() {
+            for place in section["places"].as_array_mut().unwrap() {
+                if let Some(object) = place.as_object_mut() {
+                    object.remove("capacity");
+                }
+            }
+        }
+        value
+    };
+
+    assert_eq!(capacities(&over_socket), capacities(&over_cli));
+    assert_eq!(capacities(&over_socket), capacities(&over_mcp));
+    let over_socket = strip(over_socket);
+    assert_eq!(over_socket, strip(over_cli));
+    assert_eq!(over_socket, strip(over_mcp));
 
     // And whatever else is on this machine, the last section is the one row that holds
     // everything technical.
@@ -241,6 +269,27 @@ fn the_places_are_the_same_through_all_three() {
     assert_eq!(last["title"], json!("System"));
     assert_eq!(last["places"].as_array().unwrap().len(), 1);
     assert_eq!(last["places"][0]["path"], json!("/"));
+}
+
+#[test]
+fn what_opens_a_file_is_the_same_answer_over_the_socket_and_the_cli() {
+    // Two surfaces rather than three, on purpose. `apps.for_path` is not on the MCP bridge: an
+    // agent has no session to open a window in, and the tool it would reach for — "what would a
+    // person open this with" — is one it has no use for and one whose companion,
+    // `apps.set_default`, it is refused outright (see the red-team suite). Reaching the same
+    // code from the window and from the CLI is what matters here, because that is the pair a
+    // person compares when the window shows something surprising.
+    let daemon = Daemon::start();
+    let file = daemon.work().join("notes.txt").display().to_string();
+
+    let over_socket = daemon.rpc("apps.for_path", json!({ "path": file }));
+    let over_cli = daemon.cli(&["apps", &file]);
+
+    assert_eq!(over_socket, over_cli);
+    // Whatever is installed on the machine running this, the file is text and the answer says
+    // so — the type is read from the desktop's database, not from the index.
+    assert_eq!(over_socket["mime"], json!("text/plain"));
+    assert!(over_socket["applications"].is_array());
 }
 
 #[test]

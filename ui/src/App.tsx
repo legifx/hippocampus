@@ -19,6 +19,7 @@ import { Ambient } from "./components/Ambient";
 import { Breadcrumb } from "./components/Breadcrumb";
 import { CommandPalette, type Command } from "./components/CommandPalette";
 import { ConflictDialog } from "./components/ConflictDialog";
+import { OpenWith } from "./components/OpenWith";
 import { ContextSidebar } from "./components/ContextSidebar";
 import { PlacesView, useFlatPlaces } from "./components/PlacesView";
 import { usePlaces, PLACES } from "./hooks/usePlaces";
@@ -31,7 +32,7 @@ import { useSelection } from "./hooks/useSelection";
 import { throttled, useDeferred } from "./hooks/useDeferred";
 import { useSearch } from "./hooks/useSearch";
 import { useViewport } from "./hooks/useViewport";
-import { ipc, type SearchHit, type SortBy } from "./ipc";
+import { ipc, type Application, type AppsForPath, type SearchHit, type SortBy } from "./ipc";
 import { rowFromEntry, rowFromHit, type Row } from "./row";
 
 const ROW_HEIGHT_COMPACT = 28;
@@ -99,6 +100,10 @@ export type AppProps = {
    */
   startPath?: string;
 };
+
+/** One array rather than a fresh one per render: the chooser resets its cursor when the list it
+ * is given is a different list, and `[]` written twice is two different lists. */
+const NO_APPLICATIONS: Application[] = [];
 
 export function App({ startPath = START_PATH }: AppProps = {}) {
   const { state, run } = useSearch();
@@ -324,9 +329,70 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
     if (current) activate(current);
   }, [current, activate]);
 
+  // "Öffnen mit …": what the desktop offers for this type, so a choice made here means the same
+  // thing as a choice made anywhere else on the desktop (D58). The list comes from the daemon;
+  // this only remembers which files the answer applies to.
+  const [chooser, setChooser] = useState<{ paths: string[]; label: string } | null>(null);
+  const [choices, setChoices] = useState<AppsForPath | null>(null);
+  const [choicesAll, setChoicesAll] = useState(false);
+  const [choicesLoading, setChoicesLoading] = useState(false);
+
+  const askWhichApplication = useCallback(
+    (paths: string[], label: string, all = false) => {
+      if (paths.length === 0) return;
+      setChooser({ paths, label });
+      setChoicesAll(all);
+      setChoicesLoading(true);
+      // Widening the list keeps the narrow one on screen until the wider one arrives, so there
+      // is no frame in which the chooser is empty and Enter chooses nothing. A different
+      // *file*, though, means the old list is about something else and has to go.
+      if (!all) setChoices(null);
+      // The type is the *first* file's. Opening a mixed selection with one application is a
+      // thing people do — five images and a stray note — and the alternative, refusing until
+      // the selection is uniform, is a dialog explaining a rule instead of opening the files.
+      ipc
+        .appsForPath(paths[0]!, all)
+        .then((found) => setChoices(found))
+        .catch(() => setChoices(null))
+        .then(() => setChoicesLoading(false));
+    },
+    [],
+  );
+
+  const closeChooser = useCallback(() => {
+    setChooser(null);
+    setChoices(null);
+    setChoicesAll(false);
+    setChoicesLoading(false);
+    input.current?.focus();
+  }, []);
+
+  const openWithChoice = useCallback(
+    (application: Application) => {
+      if (!chooser) return;
+      ipc.openWith(application, chooser.paths).catch(() => {});
+      closeChooser();
+    },
+    [chooser, closeChooser],
+  );
+
+  /** The selection, or the row under the cursor when nothing is selected. */
+  const openWithSelected = useCallback(() => {
+    const paths = targets.length > 0 ? targets : current ? [current.path] : [];
+    const label = targets.length > 1 ? `${targets.length} Dateien` : current?.name ?? "";
+    askWhichApplication(paths, label);
+  }, [targets, current, askWhichApplication]);
+
   const commands: Command[] = useMemo(
     () => [
       { id: "open", label: "Öffnen", binding: "Enter", run: openSelected },
+      {
+        id: "open-with",
+        label: "Öffnen mit …",
+        binding: "Ctrl+Enter",
+        detail: "eine andere Anwendung, oder eine neue Standardwahl",
+        run: () => openWithSelected(),
+      },
       {
         id: "copy",
         label: "Pfad kopieren",
@@ -437,6 +503,10 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
       // happens to files, and an arrow key that moved the selection underneath it would change
       // what the answer applies to.
       if (operations.pending) return;
+
+      // And the same while the application chooser is open, for the same reason: the answer is
+      // "open *these* with it", and a selection that moved underneath would open others.
+      if (chooser) return;
 
       // While something is being named, the keyboard belongs to that field. Without this the
       // overlay's Enter opens the selected row and prevents the form from submitting, so the
@@ -550,7 +620,10 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
           break;
         case "Enter":
           event.preventDefault();
-          openSelected();
+          // Ctrl is "with something else". Plain Enter stays the fast path: one key, the
+          // desktop's own choice, no dialog in front of the thing somebody asked for.
+          if (event.ctrlKey || event.metaKey) openWithSelected();
+          else openSelected();
           break;
         case "F2":
           event.preventDefault();
@@ -798,6 +871,30 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
             operations.dismissConflict();
             input.current?.focus();
           }}
+        />
+      )}
+
+      {chooser && (
+        <OpenWith
+          label={chooser.label}
+          count={chooser.paths.length}
+          mime={choices?.mime ?? "…"}
+          applications={choices?.applications ?? NO_APPLICATIONS}
+          showingAll={choicesAll}
+          loading={choicesLoading}
+          onOpen={openWithChoice}
+          onSetDefault={(application) => {
+            // Recorded first, so that a failure to write the choice is a failure to make it —
+            // opening the file anyway would look like it had been remembered.
+            const mime = choices?.mime;
+            if (!mime) return;
+            ipc
+              .appsSetDefault(mime, application.id)
+              .catch(() => {})
+              .then(() => openWithChoice(application));
+          }}
+          onShowAll={() => chooser && askWhichApplication(chooser.paths, chooser.label, true)}
+          onCancel={closeChooser}
         />
       )}
 

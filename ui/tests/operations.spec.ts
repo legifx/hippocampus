@@ -594,3 +594,147 @@ test.describe("dragging files out", () => {
     expect(offered.uris.trimEnd().split("\r\n")).toHaveLength(1);
   });
 });
+
+/**
+ * "Öffnen mit …" — the chooser, and what it does with the answer.
+ *
+ * The list itself comes from the desktop's association files and is the daemon's business; its
+ * own tests are in `cortex-agent/src/apps.rs`, checked against `xdg-mime` and `gio` on a real
+ * machine. What can only be tested here is the window's half: that the chooser opens on the
+ * right files, that it starts the application that was chosen rather than the one under the
+ * cursor a moment earlier, and that "merken" is recorded *before* the file is opened.
+ */
+test.describe("öffnen mit", () => {
+  /** Which application the window asked the shell to start, and with which files. */
+  async function opened(page: Page) {
+    return page.evaluate(
+      () => (window as unknown as { __hcOpenedWith?: { id: string; paths: string[] } }).__hcOpenedWith,
+    );
+  }
+
+  async function chooser(page: Page) {
+    await page.keyboard.press("Control+Enter");
+    await page.waitForSelector(".hc-openwith");
+  }
+
+  test("Ctrl+Enter offers what the desktop offers, with its default marked", async ({ page }) => {
+    await open(page);
+    await chooser(page);
+    await expect(page.locator(".hc-openwith-app")).toHaveCount(2);
+    await expect(page.locator(".hc-openwith-app").first()).toContainText("Editor");
+    await expect(page.locator(".hc-openwith-app").first()).toContainText("Standard");
+    // The type is on screen, because it is what a remembered choice would be remembered for.
+    await expect(page.locator(".hc-openwith")).toContainText("text/plain");
+  });
+
+  test("plain Enter still opens without asking", async ({ page }) => {
+    await open(page);
+    // Past the two directories, where Enter means "descend" rather than "open".
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".hc-openwith")).toHaveCount(0);
+    const recorded = await calls(page);
+    expect(recorded.map((c) => c.command)).toContain("open_path");
+  });
+
+  test("Enter starts the application under the cursor", async ({ page }) => {
+    await open(page);
+    await chooser(page);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".hc-openwith")).toHaveCount(0);
+    expect((await opened(page))?.id).toBe("viewer.desktop");
+  });
+
+  test("clicking one starts it", async ({ page }) => {
+    await open(page);
+    await chooser(page);
+    await page.locator('[data-app="viewer.desktop"]').click();
+    expect((await opened(page))?.id).toBe("viewer.desktop");
+  });
+
+  test("the whole selection is what gets opened", async ({ page }) => {
+    await open(page);
+    await page.keyboard.press("Shift+ArrowDown");
+    await page.keyboard.press("Shift+ArrowDown");
+    await chooser(page);
+    await expect(page.locator(".hc-openwith")).toContainText("3 Dateien");
+    await page.keyboard.press("Enter");
+    expect((await opened(page))?.paths).toHaveLength(3);
+  });
+
+  test("Umschalt+Enter remembers the choice before it opens anything", async ({ page }) => {
+    await open(page);
+    await chooser(page);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Shift+Enter");
+
+    const recorded = await calls(page);
+    const order = recorded.map((c) => c.command);
+    expect(order).toContain("apps_set_default");
+    expect(order.indexOf("apps_set_default")).toBeLessThan(order.indexOf("open_with"));
+
+    const remembered = await page.evaluate(
+      () => (window as unknown as { __hcDefaultSet?: { mime: string; application: string } }).__hcDefaultSet,
+    );
+    expect(remembered).toEqual({ mime: "text/plain", application: "viewer.desktop" });
+  });
+
+  test("A widens the list to everything installed", async ({ page }) => {
+    await open(page);
+    await chooser(page);
+    await page.keyboard.press("a");
+    await expect(page.locator(".hc-openwith-app")).toHaveCount(3);
+    await expect(page.locator('[data-app="vim.desktop"]')).toContainText("Terminal");
+  });
+
+  test("widening the list puts the cursor back at the top of it", async ({ page }) => {
+    // Otherwise Enter opens whatever happens to be in the position the cursor was left in — a
+    // different application in a different list, chosen by nobody.
+    //
+    // The wait is the point of the test rather than an inconvenience: until the wider list
+    // arrives the narrow one is still on screen, and Enter then opens what is *visible* under
+    // the cursor, which is right. Without the wait this asserted whichever of the two happened
+    // first, and failed seven runs in ten under parallel load.
+    await open(page);
+    await chooser(page);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("a");
+    await expect(page.locator(".hc-openwith-app")).toHaveCount(3);
+    await page.keyboard.press("Enter");
+    expect((await opened(page))?.id).toBe("editor.desktop");
+  });
+
+  test("a type nothing claims says so, and the wider list still works", async ({ page }) => {
+    await open(page);
+    // `bild.png` is the fixture's file that nothing has registered for.
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    await chooser(page);
+    await expect(page.locator(".hc-openwith")).toContainText("nichts beansprucht diesen Typ");
+    await page.keyboard.press("a");
+    await expect(page.locator(".hc-openwith-app")).toHaveCount(3);
+  });
+
+  test("Escape opens nothing", async ({ page }) => {
+    await open(page);
+    await chooser(page);
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".hc-openwith")).toHaveCount(0);
+    expect(await opened(page)).toBeUndefined();
+  });
+
+  test("nothing else responds to the keyboard while it is open", async ({ page }) => {
+    // The same rule as the conflict question: the answer is "open *these*", and a selection
+    // that moved underneath it would open others.
+    await open(page);
+    await chooser(page);
+    await page.keyboard.press("Delete");
+    await page.keyboard.press("ArrowRight");
+    const recorded = await calls(page);
+    expect(recorded.map((c) => c.command)).not.toContain("trash");
+    await expect(page.locator(".hc-openwith")).toHaveCount(1);
+  });
+});

@@ -315,6 +315,106 @@ impl Surface<'_> {
         Ok(result)
     }
 
+    /// What would open this file, and what the desktop would open it with by default.
+    ///
+    /// A read, gated by the deny-list like every other read (R1): the file's name decides its
+    /// type, so answering for a path an agent may not look at would leak the name it may not
+    /// see. The rest is read from the desktop's own databases — see [`crate::apps`] for why
+    /// this is the daemon's job and running the application is not.
+    pub fn apps_for_path(&self, params: &AppsForPathParams) -> ToolResult<AppsForPathResult> {
+        let tool = "apps.for_path";
+        let args = serde_json::to_value(params).unwrap_or_default();
+        self.gate_with(tool, &args)?;
+
+        let path = match self.policy.check_read(&params.path) {
+            Ok(p) => p,
+            Err(r) => return self.refuse(tool, &args, r),
+        };
+
+        let xdg = crate::apps::Xdg::from_env();
+        let mime = crate::apps::mime_for(&xdg, &path);
+        let applications = if params.all {
+            crate::apps::all_applications(&xdg)
+        } else {
+            crate::apps::applications_for(&xdg, &mime)
+        };
+
+        self.auditor.allowed(
+            self.now,
+            tool,
+            &args,
+            &summarize(&mime, applications.len(), None),
+        );
+        Ok(AppsForPathResult {
+            path,
+            mime,
+            applications,
+        })
+    }
+
+    /// Record which application opens a type of file, from now on and for the whole desktop.
+    ///
+    /// **Never for an agent, and not because of the allow-list.** The allow-list is about which
+    /// paths may be written (D44); this is a different kind of power. Changing what opens
+    /// `text/plain` changes what happens the next time a *person* double-clicks a file, in this
+    /// window and in every other application — an agent that could point a common type at a
+    /// program of its choosing would have arranged for that program to be run later, by
+    /// somebody else, with no further call to this surface to refuse. The audit log would
+    /// record one innocuous line and nothing afterwards.
+    ///
+    /// It writes no undo entry, and that is a limit rather than an oversight: the undo journal
+    /// describes filesystem operations, and this is a configuration key. What the previous
+    /// default was is recorded in the audit line, which is what somebody putting it back needs.
+    pub fn apps_set_default(
+        &self,
+        params: &AppsSetDefaultParams,
+    ) -> ToolResult<AppsSetDefaultResult> {
+        let tool = "apps.set_default";
+        let args = serde_json::to_value(params).unwrap_or_default();
+        self.gate_with(tool, &args)?;
+
+        if crate::policy::is_agent(&self.actor) {
+            return self.refuse(
+                tool,
+                &args,
+                Refusal::OutsideAllowlist {
+                    path: PathBuf::from(&params.mime),
+                },
+            );
+        }
+
+        let xdg = crate::apps::Xdg::from_env();
+        let previous = crate::apps::current_default(&xdg, &params.mime);
+        let file = crate::apps::set_default(&xdg, &params.mime, &params.application).map_err(
+            |e| match e {
+                crate::apps::SetDefaultError::NoSuchApplication(id) => ToolError::Io {
+                    path: PathBuf::from(id),
+                    message: "no such application is installed".into(),
+                },
+                crate::apps::SetDefaultError::Io { path, message } => {
+                    ToolError::Io { path, message }
+                }
+            },
+        )?;
+
+        self.auditor.allowed(
+            self.now,
+            tool,
+            &args,
+            &format!(
+                "{} opens {} (was {})",
+                params.application,
+                params.mime,
+                previous.as_deref().unwrap_or("nothing in particular")
+            ),
+        );
+        Ok(AppsSetDefaultResult {
+            mime: params.mime.clone(),
+            application: params.application.clone(),
+            file,
+        })
+    }
+
     // -----------------------------------------------------------------------
     // Mutation. Each of these either returns a plan or applies one.
     // -----------------------------------------------------------------------

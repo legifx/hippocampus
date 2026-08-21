@@ -781,6 +781,406 @@ pub struct FsPlacesResult {
     pub sections: Vec<PlaceSection>,
 }
 
+// ---------------------------------------------------------------------------
+// Applications: what opens this file, and what running it means.
+// ---------------------------------------------------------------------------
+
+/// An installed application that says it can open a type of file.
+///
+/// This is a desktop entry, reduced to what a chooser needs to draw a row and what a launcher
+/// needs to start it. The entry is *read* by the daemon (`cortex-agent/src/apps.rs`) and *run*
+/// by whichever surface has a session to run it in — the daemon is headless and has no business
+/// spawning a window (D49). [`Application::command_line`] is the seam between those two halves,
+/// and it lives here so that both use the same one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Application {
+    /// The desktop file id — `org.gnome.Nautilus.desktop`. What `mimeapps.list` records, and
+    /// therefore what a caller names when it sets a default.
+    pub id: String,
+    /// What to call it, in the session's language when the entry offers one.
+    pub name: String,
+    /// The entry's own one-line description. Two applications called "Bildbetrachter" are told
+    /// apart by this and not by their names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+    /// The `Exec` line, verbatim, field codes and all. Expanded by [`Application::command_line`]
+    /// rather than here, because expanding it needs the files.
+    pub exec: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    /// Whether this wants a terminal around it. Which terminal is a property of the session, so
+    /// the flag travels and the decision does not.
+    pub terminal: bool,
+    /// Whether this is what the desktop would open the file with — what `xdg-open` does.
+    pub is_default: bool,
+    /// The desktop entry this was read from. `%k` expands to it, and it is how a chooser can
+    /// tell two entries with the same id in different data directories apart.
+    pub path: PathBuf,
+}
+
+impl Application {
+    /// The argv to run, with the field codes of the Desktop Entry Specification expanded.
+    ///
+    /// Three rules in here are the specification's rather than a preference, and each of them is
+    /// a way of opening the wrong thing if it is guessed at instead:
+    ///
+    /// - **`%f` takes one file and `%F` takes all of them.** An application declaring `%f` can
+    ///   open one document per invocation; handing it five would open the first and silently
+    ///   drop four. The caller opens the rest by calling again.
+    /// - **An `Exec` line with no field code at all gets no files.** That is not an oversight to
+    ///   be corrected by appending them: an entry like `Exec=gimp-2.10` means the application
+    ///   takes its documents some other way, and a path appended to it is an argument it never
+    ///   agreed to parse.
+    /// - **The deprecated codes are dropped, not passed through.** `%d`, `%D`, `%n`, `%N`, `%v`
+    ///   and `%m` are removed from the standard; leaving them in argv passes the literal text
+    ///   `%d` to the program.
+    ///
+    /// The terminal flag is *not* applied here. Wrapping a command in a terminal emulator means
+    /// choosing one, and that is the session's business rather than this type's.
+    pub fn command_line(&self, paths: &[PathBuf]) -> Vec<String> {
+        let mut argv = Vec::new();
+        for token in split_exec(&self.exec) {
+            match token.as_str() {
+                // The list forms, which are the only codes that may become more than one
+                // argument — and may become none, for a launch with no file at all.
+                "%F" => argv.extend(paths.iter().map(|p| p.display().to_string())),
+                "%U" => argv.extend(paths.iter().map(|p| crate::uri::file_uri(p))),
+                // `%i` is two arguments or none: the specification spells out that it expands to
+                // `--icon` *and* its value, and to nothing when the entry has no icon.
+                "%i" => {
+                    if let Some(icon) = &self.icon {
+                        argv.push("--icon".to_string());
+                        argv.push(icon.clone());
+                    }
+                }
+                "%d" | "%D" | "%n" | "%N" | "%v" | "%m" => {}
+                _ => {
+                    if let Some(expanded) = expand_in_token(&token, self, paths) {
+                        argv.push(expanded);
+                    }
+                }
+            }
+        }
+        argv
+    }
+
+    /// Every command line it takes to open these files with this application.
+    ///
+    /// Usually one. An entry declaring `%f` rather than `%F` can open a single document per
+    /// invocation, and the specification's answer to a selection of five is to launch it five
+    /// times — the alternative is opening one of them and silently dropping four, which is the
+    /// sort of thing somebody discovers a week later.
+    ///
+    /// Launching is not here for the reason [`Application::command_line`] gives: the daemon has
+    /// no session to launch anything into. This decides *what* would be run, which is data and
+    /// can be tested; the surface that has a session does the spawning.
+    pub fn command_lines(&self, paths: &[PathBuf]) -> Vec<Vec<String>> {
+        let tokens = split_exec(&self.exec);
+        let takes_all = tokens.iter().any(|t| t.contains("%F") || t.contains("%U"));
+        let takes_one = tokens.iter().any(|t| t.contains("%f") || t.contains("%u"));
+
+        if paths.len() > 1 && takes_one && !takes_all {
+            return paths
+                .iter()
+                .map(|p| self.command_line(std::slice::from_ref(p)))
+                .collect();
+        }
+        vec![self.command_line(paths)]
+    }
+
+    /// Whether running this opens the files, or merely starts the application.
+    ///
+    /// A chooser needs to know: offering "Öffnen mit GIMP" for an entry that cannot be handed a
+    /// file promises something that will not happen.
+    pub fn takes_files(&self) -> bool {
+        split_exec(&self.exec)
+            .iter()
+            .any(|t| ["%f", "%F", "%u", "%U"].iter().any(|c| t.contains(c)))
+    }
+}
+
+/// Expand the single-file codes inside one token, or drop the token.
+///
+/// Returns `None` when the token was a single-file code and there is no file to put in it —
+/// `Exec=xdg-open %f` launched with nothing is `xdg-open`, not `xdg-open %f`.
+fn expand_in_token(token: &str, app: &Application, paths: &[PathBuf]) -> Option<String> {
+    if !token.contains('%') {
+        return Some(token.to_string());
+    }
+    let first = paths.first();
+    let mut out = String::with_capacity(token.len());
+    let mut chars = token.chars().peekable();
+    let mut dropped = false;
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('%') => out.push('%'),
+            Some('f') => match first {
+                Some(p) => out.push_str(&p.display().to_string()),
+                None => dropped = true,
+            },
+            Some('u') => match first {
+                Some(p) => out.push_str(&crate::uri::file_uri(p)),
+                None => dropped = true,
+            },
+            Some('c') => out.push_str(&app.name),
+            Some('k') => out.push_str(&app.path.display().to_string()),
+            // An unknown code is not text to be passed on. A program receiving `%z` would treat
+            // it as a file name.
+            Some(_) => {}
+            None => out.push('%'),
+        }
+    }
+    (!dropped).then_some(out)
+}
+
+/// Split an `Exec` line into arguments, obeying the specification's quoting.
+///
+/// Not `shlex` and not `split_whitespace`: the rule is narrower than a shell's and wider than
+/// whitespace. Double quotes group, a backslash inside them escapes the four characters the
+/// specification names, and single quotes are ordinary characters — a file manager that treated
+/// them as quotes would mangle every entry belonging to an application with an apostrophe in
+/// its path.
+fn split_exec(exec: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut started = false;
+    let mut chars = exec.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => {
+                in_quotes = !in_quotes;
+                started = true;
+            }
+            '\\' if in_quotes => match chars.next() {
+                Some(escaped @ ('"' | '\\' | '$' | '`')) => current.push(escaped),
+                Some(other) => {
+                    current.push('\\');
+                    current.push(other);
+                }
+                None => current.push('\\'),
+            },
+            c if c.is_whitespace() && !in_quotes => {
+                if started || !current.is_empty() {
+                    out.push(std::mem::take(&mut current));
+                    started = false;
+                }
+            }
+            c => {
+                current.push(c);
+                started = true;
+            }
+        }
+    }
+    if started || !current.is_empty() {
+        out.push(current);
+    }
+    out
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppsForPathParams {
+    pub path: PathBuf,
+    /// Every installed application instead of the ones that claim the type.
+    ///
+    /// For "open with something else". The type's own list is the right answer almost always,
+    /// and the times it is not are exactly the times somebody needs to reach past it — a file
+    /// with no extension, a type nothing has registered for.
+    #[serde(default)]
+    pub all: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppsForPathResult {
+    pub path: PathBuf,
+    /// What the file is, as the desktop's own database names it. `inode/directory` for a
+    /// directory, and `application/octet-stream` when nothing recognises it.
+    pub mime: String,
+    /// What can open it. The default first, then everything else in the order the association
+    /// files give — which is the order the rest of the desktop shows them in.
+    pub applications: Vec<Application>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppsSetDefaultParams {
+    pub mime: String,
+    /// The desktop file id, as [`Application::id`] gives it.
+    pub application: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppsSetDefaultResult {
+    pub mime: String,
+    pub application: String,
+    /// The file that was written. Every other application on the desktop reads it too, which is
+    /// the point of writing there rather than into a preference of our own.
+    pub file: PathBuf,
+}
+
+#[cfg(test)]
+mod exec_tests {
+    use super::*;
+
+    fn app(exec: &str) -> Application {
+        Application {
+            id: "test.desktop".into(),
+            name: "Ein Programm".into(),
+            comment: None,
+            exec: exec.into(),
+            icon: None,
+            terminal: false,
+            is_default: false,
+            path: PathBuf::from("/usr/share/applications/test.desktop"),
+        }
+    }
+
+    fn paths(list: &[&str]) -> Vec<PathBuf> {
+        list.iter().map(PathBuf::from).collect()
+    }
+
+    #[test]
+    fn one_file_for_the_singular_code_and_all_of_them_for_the_plural() {
+        let one = app("viewer %f").command_line(&paths(&["/a/x.png", "/a/y.png"]));
+        assert_eq!(one, vec!["viewer", "/a/x.png"], "%f opens one document per invocation");
+
+        let all = app("viewer %F").command_line(&paths(&["/a/x.png", "/a/y.png"]));
+        assert_eq!(all, vec!["viewer", "/a/x.png", "/a/y.png"]);
+    }
+
+    #[test]
+    fn the_uri_codes_hand_over_a_uri_and_not_a_path() {
+        assert_eq!(
+            app("browser %u").command_line(&paths(&["/a/two words.html"])),
+            vec!["browser", "file:///a/two%20words.html"]
+        );
+        assert_eq!(
+            app("browser %U").command_line(&paths(&["/a/x", "/a/y"])),
+            vec!["browser", "file:///a/x", "file:///a/y"]
+        );
+    }
+
+    #[test]
+    fn an_entry_with_no_field_code_is_launched_with_no_files() {
+        // Appending them would be inventing an interface the entry never claimed to have.
+        assert_eq!(app("gimp-2.10").command_line(&paths(&["/a/x.png"])), vec!["gimp-2.10"]);
+        assert!(!app("gimp-2.10").takes_files());
+        assert!(app("viewer %U").takes_files());
+    }
+
+    #[test]
+    fn a_code_with_nothing_to_put_in_it_leaves_no_argument_behind() {
+        // Launching an application from a chooser with no selection is ordinary. The literal
+        // text `%f` reaching the program would be a file it cannot find.
+        assert_eq!(app("viewer %f").command_line(&[]), vec!["viewer"]);
+        assert_eq!(app("viewer %F").command_line(&[]), vec!["viewer"]);
+        assert_eq!(app("viewer --file=%f").command_line(&[]), vec!["viewer"]);
+    }
+
+    #[test]
+    fn a_code_inside_a_token_is_substituted_in_place() {
+        assert_eq!(
+            app("viewer --file=%f --title=%c").command_line(&paths(&["/a/x"])),
+            vec!["viewer", "--file=/a/x", "--title=Ein Programm"]
+        );
+    }
+
+    #[test]
+    fn double_quotes_group_and_single_quotes_do_not() {
+        assert_eq!(
+            app(r#""/opt/An Application/run" --flag %f"#).command_line(&paths(&["/a/x"])),
+            vec!["/opt/An Application/run", "--flag", "/a/x"]
+        );
+        assert_eq!(
+            app("/opt/l'application/run %f").command_line(&paths(&["/a/x"])),
+            vec!["/opt/l'application/run", "/a/x"],
+            "an apostrophe in a path is a character, not a quote"
+        );
+    }
+
+    #[test]
+    fn a_backslash_escapes_only_inside_quotes_and_only_what_the_standard_names() {
+        assert_eq!(
+            app(r#"run "a \"quoted\" thing""#).command_line(&[]),
+            vec!["run", r#"a "quoted" thing"#]
+        );
+        assert_eq!(
+            app(r#"run "a \$dollar""#).command_line(&[]),
+            vec!["run", "a $dollar"]
+        );
+    }
+
+    #[test]
+    fn a_doubled_percent_is_a_literal_one() {
+        assert_eq!(app("run 100%%").command_line(&[]), vec!["run", "100%"]);
+    }
+
+    #[test]
+    fn the_icon_code_is_two_arguments_or_none() {
+        let mut with_icon = app("run %i %f");
+        with_icon.icon = Some("bild".into());
+        assert_eq!(
+            with_icon.command_line(&paths(&["/a/x"])),
+            vec!["run", "--icon", "bild", "/a/x"]
+        );
+        assert_eq!(app("run %i %f").command_line(&paths(&["/a/x"])), vec!["run", "/a/x"]);
+    }
+
+    #[test]
+    fn the_deprecated_codes_are_removed_rather_than_passed_on() {
+        // `%d` reaching a program is a file called `%d`.
+        assert_eq!(
+            app("run %d %D %n %N %v %m %f").command_line(&paths(&["/a/x"])),
+            vec!["run", "/a/x"]
+        );
+    }
+
+    #[test]
+    fn an_application_that_takes_one_file_is_started_once_per_file() {
+        let files = paths(&["/a/one.txt", "/a/two.txt", "/a/three.txt"]);
+        assert_eq!(
+            app("editor %f").command_lines(&files),
+            vec![
+                vec!["editor", "/a/one.txt"],
+                vec!["editor", "/a/two.txt"],
+                vec!["editor", "/a/three.txt"],
+            ]
+        );
+    }
+
+    #[test]
+    fn an_application_that_takes_all_of_them_is_started_once() {
+        let files = paths(&["/a/one.txt", "/a/two.txt"]);
+        assert_eq!(
+            app("editor %F").command_lines(&files),
+            vec![vec!["editor", "/a/one.txt", "/a/two.txt"]]
+        );
+        // And an entry declaring both is one invocation, not four.
+        assert_eq!(app("editor %f %U").command_lines(&files).len(), 1);
+    }
+
+    #[test]
+    fn one_file_and_no_file_are_both_a_single_invocation() {
+        assert_eq!(app("editor %f").command_lines(&paths(&["/a/one"])).len(), 1);
+        assert_eq!(app("editor %f").command_lines(&[]), vec![vec!["editor"]]);
+        assert_eq!(
+            app("editor").command_lines(&paths(&["/a/one", "/a/two"])),
+            vec![vec!["editor"]],
+            "an entry that takes no files is not launched twice for two of them"
+        );
+    }
+
+    #[test]
+    fn an_empty_quoted_argument_survives() {
+        // `run "" x` is three arguments, and dropping the empty one shifts every later one.
+        assert_eq!(app(r#"run "" x"#).command_line(&[]), vec!["run", "", "x"]);
+    }
+}
+
 #[cfg(test)]
 mod mode_tests {
     use super::*;

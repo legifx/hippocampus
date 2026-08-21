@@ -207,21 +207,11 @@ impl Cache {
 
 /// The URI of a local path, percent-encoded as the standard requires.
 ///
-/// Encoded by hand rather than with a dependency: the rule is "everything outside the unreserved
-/// set", it is four lines, and a URI encoder that disagreed with the rest of the desktop by one
-/// character would produce thumbnails nobody else can find.
-pub fn file_uri(path: &Path) -> String {
-    let mut out = String::from("file://");
-    for byte in path.as_os_str().as_encoded_bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
-                out.push(*byte as char)
-            }
-            other => out.push_str(&format!("%{other:02X}")),
-        }
-    }
-    out
-}
+/// The encoder itself is [`cortex_core::uri::file_uri`], because the thumbnail cache is not the
+/// only thing that has to agree with the rest of the desktop about it — a desktop entry's `%u`
+/// and `text/uri-list` on the clipboard are the same string. Re-exported rather than wrapped so
+/// that the name reads the same at the call sites below.
+pub use cortex_core::uri::file_uri;
 
 pub fn digest(uri: &str) -> String {
     let mut hasher = Md5::new();

@@ -640,3 +640,59 @@ extern "C" {
     #[link_name = "getuid"]
     fn libc_getuid() -> u32;
 }
+
+/// An agent may not decide which program opens a person's files.
+///
+/// This is not the allow-list's kind of refusal and it is not covered by the table above: the
+/// allow-list is about *paths*, and this call writes no path an agent could name. What it
+/// changes is what happens the next time a **person** opens a file — in this window and in every
+/// other application on the desktop. An agent that could point `text/plain` at a program of its
+/// choosing would have arranged to be run later, by somebody else, with no further call to this
+/// surface for anything to refuse. The audit log would hold one innocuous line and then nothing.
+///
+/// So the refusal is unconditional for an agent, and a person with an ordinary configuration is
+/// not affected by it — which is the half that D44 had to correct the first time.
+#[test]
+fn an_agent_may_not_change_which_application_opens_a_type() {
+    let f = Fixture::new();
+    let home = tempfile::tempdir().unwrap();
+
+    // A desktop of its own, so the test never reads or writes the machine's real one. The
+    // variables are process-global and this is the only test in this binary that reads them; a
+    // second one would have to be written to share this environment rather than set its own.
+    let apps = home.path().join("data/applications");
+    std::fs::create_dir_all(&apps).unwrap();
+    std::fs::write(
+        apps.join("attacker.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Attacker\nExec=payload %f\n",
+    )
+    .unwrap();
+    std::env::set_var("XDG_CONFIG_HOME", home.path().join("config"));
+    std::env::set_var("XDG_DATA_HOME", home.path().join("data"));
+    std::env::set_var("XDG_DATA_DIRS", home.path().join("data"));
+    std::env::set_var("XDG_CONFIG_DIRS", home.path().join("etc"));
+
+    let params = AppsSetDefaultParams {
+        mime: "text/plain".into(),
+        application: "attacker.desktop".into(),
+    };
+
+    let error = f.surface(true).apps_set_default(&params).unwrap_err();
+    assert!(
+        matches!(refusal(error), Refusal::OutsideAllowlist { .. }),
+        "an agent's attempt must be refused"
+    );
+    assert!(
+        !home.path().join("config/mimeapps.list").exists(),
+        "and nothing may be written on the way to refusing"
+    );
+    assert_eq!(f.refusals().len(), 1, "the refusal is in the audit log (R8)");
+
+    // The same call as a person goes through, so the refusal above is about who is asking and
+    // not about the tool being broken.
+    let mut human = f.surface(true);
+    human.actor = Actor::Human;
+    let done = human.apps_set_default(&params).unwrap();
+    assert_eq!(done.application, "attacker.desktop");
+    assert!(home.path().join("config/mimeapps.list").exists());
+}

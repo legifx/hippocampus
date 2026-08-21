@@ -10,8 +10,8 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | M6 — Human View (pulled ahead of M5 at the owner's request, D43) |
-| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 879 tests — 729 Rust, 47 vitest, 103 in a browser. |
-| **Last updated** | 2026-08-20 |
+| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher, and it now opens them with whatever the desktop would open them with. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 942 tests — 781 Rust, 47 vitest, 114 in a browser. |
+| **Last updated** | 2026-08-21 |
 | **Blocked on** | nothing |
 
 ## Start here
@@ -274,11 +274,29 @@ the transfer starts; conflicts and a dialog asks, showing both sides — what is
 would arrive, with sizes and ages — because "overwrite?" is not a question anybody can answer.
 The safest choice is first and Enter takes it, each option has a letter, Escape moves nothing.
 
+**Öffnen mit.** Ctrl+Enter offers the applications that claim the file's type, the desktop's own
+default first; Umschalt+Enter records the choice for that type from now on, in the file
+`xdg-mime default` writes to, so the rest of the session hears it. `A` widens the list to
+everything installed, for the file nothing has registered for. Plain Enter is unchanged: one key,
+no dialog.
+
+Nothing in it is invented — the type comes from shared-mime-info, the applications from
+`mimeapps.list` and `mimeinfo.cache`, and `cortex apps <file>` prints exactly what the window
+shows. **Checked against the machine and not only against the specification:** twenty-five file
+types compared with `xdg-mime query filetype` and with `gio mime`, which is what GTK applications
+use — 25 of 25 agree on the type, on the default and on the order of the list. Three corrections
+came out of that comparison and are in D58; the sharpest is that `NoDisplay=true` means "not in
+the applications menu" rather than "never offer this", and filtering those entries had hidden the
+machine's own default text editor.
+
+An agent may not set a default, whatever the allow-list says, and the red-team suite asserts it
+in both directions. The reasoning is in D58: it is the one call here whose effect is felt the
+next time a *person* opens a file.
+
 ### What M6 still needs
 
 1. **Mounting and unmounting via udisks2** — the drives are *listed* now, but a stick that is
-   not mounted yet does not appear, and there is no way to eject one — and `xdg-mime` for
-   "open with".
+   not mounted yet does not appear, and there is no way to eject one.
 2. **Archives** — extract zip and tar at minimum.
 3. **Network locations**, which may be staged.
 4. **Thumbnails in the list**, not only in the preview pane.
@@ -555,6 +573,46 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
+
+### 2026-08-21 — Öffnen mit, and the desktop as the source of truth
+
+The last session's work — the measured scroll lead and the stepped breath layer — was finished
+but never committed. It is committed now, unchanged, and the suite was green before and after.
+
+Then the next thing M6 is missing: **"Öffnen mit"**. What it does is above; what is worth
+carrying forward is how it was checked. Reading the specifications gives a plausible
+implementation, and a plausible implementation was wrong in three places that only a comparison
+with the machine could show — `xdg-mime query filetype` for the type, `gio mime` for the default
+and the order, twenty-five file types. It now agrees with both on all twenty-five. **A desktop
+integration that has not been diffed against the desktop is not finished**, and the diff took ten
+minutes.
+
+Two defects found on the way, neither of them in the new code:
+
+- **A browser test failed seven runs in ten under parallel load**, and it was not the test. The
+  chooser reset its cursor in an effect, which commits one frame with the old position still
+  highlighted — the same shape as the bug D56 paid for, except that Enter in that frame opens an
+  application nobody pointed at. The cursor is derived during render now and carries the list it
+  is a position in.
+- **`the_places_are_the_same_through_all_three` compared free disk space across three calls.**
+  It failed once during this session's full run and could not be reproduced afterwards, which is
+  the worst way for a test to fail. Capacity is measured per call, so three identical numbers
+  were never the property being asserted; it asserts that each surface reports one, and compares
+  the rest exactly.
+
+And one thing found in passing, not fixed: **`fs.list` accepts a `glob` parameter and ignores
+it.** The field is on the wire type, documented there, and no implementation reads it — so a
+caller that filters a large directory with it gets the whole directory back and no error. Either
+it works or it is not a parameter.
+
+And one measurement to distrust: **the perf scroll gate fails reproducibly while the Rust suite
+compiles in parallel** and passes on an idle machine. It measures frame time, so that is the
+tool being right about a busy machine — but anything that runs both at once will see a red gate
+that means nothing. It is the same trap §1 fell into.
+
+Still not measured, both needing the window on screen and therefore the owner: what the stepped
+breath layer costs against the 116% it replaces, and whether the scrolling feels right in
+WebKitGTK. Dragging a row out into another application is still untried.
 
 ### 2026-08-20 — "es laggt": four things that were costing frames
 

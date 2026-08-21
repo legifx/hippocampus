@@ -203,6 +203,43 @@ setTransport({
       case "cancel_operation":
         return { cancelled: true } as T;
 
+      // "Öffnen mit": in the shell these come from the desktop's association files, which a
+      // browser has none of. What the tests can check is the window's half — which application
+      // it offers, which one it calls `open_with` with, and that a remembered choice is
+      // recorded before the file is opened rather than after.
+      case "apps_for_path": {
+        const all = args?.all === true;
+        const path = String(args?.path ?? "");
+        const claiming = [
+          { id: "editor.desktop", name: "Editor", comment: "Text bearbeiten", exec: "edit %F", terminal: false, is_default: true, path: "/usr/share/applications/editor.desktop" },
+          { id: "viewer.desktop", name: "Betrachter", exec: "view %f", terminal: false, is_default: false, path: "/usr/share/applications/viewer.desktop" },
+        ];
+        const everything = [
+          ...claiming,
+          { id: "vim.desktop", name: "Vim", exec: "vim %F", terminal: true, is_default: false, path: "/usr/share/applications/vim.desktop" },
+        ];
+        // `bild.png` in the fixture listing stands for the case a chooser exists for: a type
+        // that nothing on the machine has registered for.
+        const empty = path.endsWith(".png");
+        return {
+          path,
+          mime: empty ? "application/octet-stream" : "text/plain",
+          applications: all ? everything : empty ? [] : claiming,
+        } as T;
+      }
+      case "open_with":
+        (window as unknown as HarnessWindow).__hcOpenedWith = {
+          id: String((args?.application as { id?: string })?.id ?? ""),
+          paths: (args?.paths as string[]) ?? [],
+        };
+        return undefined as T;
+      case "apps_set_default":
+        (window as unknown as HarnessWindow).__hcDefaultSet = {
+          mime: String(args?.mime ?? ""),
+          application: String(args?.application ?? ""),
+        };
+        return {} as T;
+
       // The system clipboard, which in the shell is GTK and here is a variable. The tests care
       // about *which calls the window makes* — that a copy reaches the desktop, that a paste
       // asks the desktop first — and a fixture is the only place that can be observed without
@@ -279,6 +316,10 @@ type HarnessWindow = {
   __hcClipboard?: { mode: string; paths: string[] } | null;
   /** Wayland refuses the selection to an unfocused window; this is how that is rehearsed. */
   __hcClipboardRefuses?: boolean;
+  /** Which application the window asked the shell to start, and with what. */
+  __hcOpenedWith?: { id: string; paths: string[] };
+  /** A remembered choice, as the daemon would have written it into `mimeapps.list`. */
+  __hcDefaultSet?: { mime: string; application: string };
 };
 
 (window as unknown as HarnessWindow).__hcEmit = (event, payload) => {

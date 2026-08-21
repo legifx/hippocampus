@@ -335,6 +335,118 @@ fn open_path(window: tauri::WebviewWindow, path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// What would open this file, and what the desktop opens it with by default.
+#[tauri::command]
+async fn apps_for_path(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    all: bool,
+) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(
+            cortex_rpc::protocol::method::APPS_FOR_PATH,
+            json!({ "path": path, "all": all }),
+        )
+        .await
+}
+
+/// Record which application opens a type of file, for the whole desktop.
+#[tauri::command]
+async fn apps_set_default(
+    state: tauri::State<'_, AppState>,
+    mime: String,
+    application: String,
+) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(
+            cortex_rpc::protocol::method::APPS_SET_DEFAULT,
+            json!({ "mime": mime, "application": application }),
+        )
+        .await
+}
+
+/// Open files with a named application rather than with whatever the desktop would choose.
+///
+/// The daemon said what the application is and what its `Exec` line means; this is the half
+/// with a session to run it in (D49). Two things happen here and nowhere else:
+///
+/// - **An entry can be launched more than once.** `%f` takes one document per invocation, so a
+///   selection of five files is five processes. [`Application::command_lines`] decides that,
+///   and it is decided there because it is a rule with cases rather than a spawn.
+/// - **A terminal application gets a terminal.** Which one is a property of this session and of
+///   nothing in the daemon, so the entry carries the flag and this end resolves it.
+#[tauri::command]
+fn open_with(
+    window: tauri::WebviewWindow,
+    application: cortex_core::tools::Application,
+    paths: Vec<std::path::PathBuf>,
+) -> Result<(), String> {
+    let commands = application.command_lines(&paths);
+    for argv in commands {
+        let mut argv = argv;
+        if argv.is_empty() {
+            return Err(format!("{} has nothing to run", application.name));
+        }
+        if application.terminal {
+            let Some(terminal) = terminal_emulator() else {
+                return Err(format!(
+                    "{} needs a terminal and none was found; set $TERMINAL",
+                    application.name
+                ));
+            };
+            let mut wrapped = vec![terminal, "-e".to_string()];
+            wrapped.append(&mut argv);
+            argv = wrapped;
+        }
+        std::process::Command::new(&argv[0])
+            .args(&argv[1..])
+            // Detached from this window's streams: an application that writes to stdout must
+            // not fill the overlay's journal, and one that reads stdin must not block on a
+            // terminal it does not have.
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("{} could not be started: {e}", application.name))?;
+    }
+    conceal(&window);
+    Ok(())
+}
+
+/// The session's terminal, for the applications whose entry says `Terminal=true`.
+///
+/// `$TERMINAL` first, because somebody who set it meant it. Then the Debian alternative, which
+/// is the closest thing to a standard answer. Then a list of the emulators that are actually
+/// installed on desktops, in no particular order of merit — any of them opens the program,
+/// which is what was asked for.
+fn terminal_emulator() -> Option<String> {
+    let candidates = [
+        std::env::var("TERMINAL").unwrap_or_default(),
+        "x-terminal-emulator".into(),
+        "gnome-terminal".into(),
+        "konsole".into(),
+        "xfce4-terminal".into(),
+        "alacritty".into(),
+        "kitty".into(),
+        "foot".into(),
+        "xterm".into(),
+    ];
+    candidates
+        .into_iter()
+        .find(|name| !name.is_empty() && on_path(name))
+}
+
+fn on_path(program: &str) -> bool {
+    if program.contains('/') {
+        return std::path::Path::new(program).is_file();
+    }
+    std::env::var_os("PATH")
+        .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
+        .unwrap_or(false)
+}
+
 #[tauri::command]
 fn dismiss(window: tauri::WebviewWindow) {
     conceal(&window);
@@ -724,6 +836,9 @@ pub fn run() {
             zones,
             activity_ping,
             open_path,
+            apps_for_path,
+            apps_set_default,
+            open_with,
             dismiss,
             clipboard_write,
             clipboard_read,

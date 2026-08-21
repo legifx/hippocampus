@@ -1467,3 +1467,73 @@ first:
 And an existing bound assertion in `layout.spec.ts` began failing **only under parallel load**,
 which was not flakiness to be retried: it was the 46-row transient from rule 3, visible for one
 frame. Fixing the cause removed it.
+
+---
+
+### D58 — "Öffnen mit" is read from the desktop's own databases, and the daemon is what reads them
+
+A file manager that keeps its own idea of which program opens a `.odt` disagrees with the
+session it lives in: somebody sets their editor in GNOME's settings and this window still opens
+the old one, or they set it here and nothing else notices. So nothing here is invented. The type
+comes from shared-mime-info's `globs2`, the applications come from `mimeapps.list` and
+`mimeinfo.cache` in the precedence the Association specification gives, and setting a default
+writes to the file `xdg-mime default` writes to, one line of it, leaving comments and every other
+key untouched.
+
+**Read by the daemon, run by whichever surface has a session.** The reading is judgement —
+precedence across eight configuration files, glob weighting, subclass fallback — and judgement
+implemented twice drifts (D4). The running needs a session, and the daemon is headless (D49).
+The seam is `Application::command_line`: the `Exec` line and its field codes are expanded in one
+place, in Rust, and both `cortex apps` and the window get the same argv. `cortex apps <file>`
+prints what the window shows, which is the cheap way to find out which of the two is wrong.
+
+**It was checked against the machine rather than against the specification.** Twenty-five file
+types, compared with `xdg-mime query filetype` and with `gio mime`, which is what GTK
+applications actually use: 25 of 25 agree on the type, on the default, and on the order of the
+list. Three of the four corrections that took came from that comparison and not from reading the
+standard:
+
+- **`NoDisplay=true` does not mean "do not offer this".** It means "not in the applications
+  menu". The first version filtered those entries out, and on the machine this was written on
+  the desktop's own default handler for `text/plain` is exactly such an entry — so the chooser
+  offered everything *except* the application a double click opens.
+- **With nothing naming a default, the first association is the default.** `xdg-mime` and `gio`
+  both answer that way, so it is what opening the file actually does. Leaving the list unmarked
+  would have been truthful about the configuration files and wrong about the machine.
+- **`defaults.list` is still read.** It is the name `mimeapps.list` had before, packages still
+  ship it, and on a machine where it is the only thing naming a default it is the answer.
+- And a tie has to be broken deterministically: `*.json` is claimed by `application/json` and
+  `application/schema+json` at the same weight and the same length. Deciding by the order the
+  files happened to be read in makes the answer a property of the machine. The type name does
+  not, and it agrees with `xdg-mime`.
+
+**The name is consulted before the content, which is the opposite of what the indexer does.**
+`cortex-extract`'s first rule is that a magic number outranks the extension, because it is
+deciding whether to *read* a file and a `.txt` full of JPEG bytes must not be read as text. This
+is deciding what the rest of the desktop would open the file with, and the rest of the desktop
+matches the name first. Disagreeing would mean this window opens a file with a different
+application than a double click in Nautilus does, which is the one thing the module exists to
+prevent. The content is still the fallback when the name says nothing, and it ends in the
+indexer's classifier — so a machine with no shared-mime-info installed still gets `text/markdown`
+rather than `some bytes`.
+
+**An agent may never set a default, and the write allow-list is not why.** The allow-list is
+about which paths may be written (D44); this call writes no path an agent would name. What it
+changes is what happens the next time a *person* opens a file, in this window and in every other
+application. An agent that could point `text/plain` at a program of its choosing would have
+arranged for that program to be run later, by somebody else, with no further call to this
+surface for anything to refuse — one innocuous audit line, and then nothing. The refusal is
+unconditional for an actor that is an agent, and the red-team suite asserts both halves: refused
+for an agent with nothing written, allowed for a person.
+
+It writes no undo entry, and that is a limit rather than an oversight: the undo journal describes
+filesystem operations and this is a configuration key. What the previous default was goes into
+the audit line, which is what somebody putting it back needs.
+
+**And the chooser's cursor is derived during render, not reset in an effect.** The list under it
+can be replaced — "alle anzeigen" is a longer list — and an effect commits one frame with the old
+position still highlighted. D56 paid for that lesson once as a visual glitch; here it is worse,
+because Enter in that frame opens an application nobody pointed at. A browser test caught it by
+failing seven runs in ten under parallel load, with the rows already grown to three and the
+highlight still on the second row of the old list. The cursor now carries the list it is a
+position *in*, and a position in a list that is no longer on screen reads as zero.

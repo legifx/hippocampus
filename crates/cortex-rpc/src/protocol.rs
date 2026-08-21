@@ -175,6 +175,13 @@ pub mod method {
     /// everything technical. See `cortex-agent/src/places.rs` for why the daemon decides this.
     pub const FS_PLACES: &str = "fs.places";
     pub const FS_READ: &str = "fs.read";
+    /// What opens this file: the type the desktop's own database gives it, and the applications
+    /// that claim that type, the default first. The daemon reads the association files; running
+    /// the application belongs to whichever surface has a session (D49).
+    pub const APPS_FOR_PATH: &str = "apps.for_path";
+    /// Record which application opens a type, in the file the rest of the desktop reads.
+    /// Refused for agents whatever the allow-list says — see `Surface::apps_set_default`.
+    pub const APPS_SET_DEFAULT: &str = "apps.set_default";
     pub const FS_STAT: &str = "fs.stat";
     pub const FS_WRITE: &str = "fs.write";
     pub const FS_MOVE: &str = "fs.move";
@@ -241,6 +248,7 @@ pub mod method {
                 | FS_PLACES
                 | FS_READ
                 | FS_STAT
+                | APPS_FOR_PATH
                 | BRAIN_SEARCH
                 | BRAIN_NEIGHBORS
                 | BRAIN_TIMELINE
@@ -278,6 +286,8 @@ pub mod method {
         FS_PLACES,
         FS_READ,
         FS_STAT,
+        APPS_FOR_PATH,
+        APPS_SET_DEFAULT,
         FS_WRITE,
         FS_MOVE,
         FS_TRASH,

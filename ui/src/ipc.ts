@@ -199,6 +199,30 @@ export type Conflict = {
   incoming: FsEntry;
 };
 
+/**
+ * An installed application that can open a file, as the daemon read it from its desktop entry.
+ *
+ * Passed back to `openWith` unchanged. The window never builds a command line: what an `Exec`
+ * line means is decided once, in Rust, and the shell that has a session spawns it (D58).
+ */
+export type Application = {
+  id: string;
+  name: string;
+  comment?: string;
+  exec: string;
+  icon?: string;
+  terminal: boolean;
+  /** What a double click does. Exactly one of the list has it. */
+  is_default: boolean;
+  path: string;
+};
+
+export type AppsForPath = {
+  path: string;
+  mime: string;
+  applications: Application[];
+};
+
 /** What `transfer` answers: a dry run's findings, or the handle of a started one. */
 export type TransferAnswer =
   | { outcome: "planned"; total_files: number; total_bytes: number; conflicts: Conflict[] }
@@ -479,6 +503,23 @@ export const ipc = {
   activityPing: () => transport.invoke<unknown>("activity_ping"),
 
   openPath: (path: string) => transport.invoke<void>("open_path", { path }),
+
+  /**
+   * What can open this file, the desktop's default first.
+   *
+   * `all` asks for every installed application instead — for the times the type's own list is
+   * empty or has nothing anybody wants, which is the whole reason a chooser exists.
+   */
+  appsForPath: (path: string, all = false) =>
+    transport.invoke<AppsForPath>("apps_for_path", { path, all }),
+
+  /** Open these files with a named application rather than with the desktop's choice. */
+  openWith: (application: Application, paths: string[]) =>
+    transport.invoke<void>("open_with", { application, paths }),
+
+  /** Make this application what the whole desktop opens the type with, from now on. */
+  appsSetDefault: (mime: string, application: string) =>
+    transport.invoke<unknown>("apps_set_default", { mime, application }),
 
   dismiss: () => transport.invoke<void>("dismiss"),
 
