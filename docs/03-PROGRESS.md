@@ -582,6 +582,14 @@ too: the layer exists to make background work legible, so a still layer is what 
 work" looks like. Design system §8 gains a rule — no animation runs continuously in a resident
 window — and it is a performance rule with a measurement behind it rather than a taste.
 
+**And the commit that carried all this went out without the change in it.** A break-check —
+delete the rule, watch the named test fail — ended with `git checkout` on the file, which
+restored it to `HEAD`, which did not yet have the rule. The docs, the tests and the design-system
+entry were committed; the four lines they were about were not. What caught it was the *number*:
+the shipped build measured 111.5% again. The perf gate would have caught it too and was not
+re-run after the restore. **After a break-check that reverts a file, run the gate again before
+committing** — the whole point of the exercise is that the file has been changed twice.
+
 Two notes for whoever measures next. **The CPU tool read 0.0% for a process spinning a full core
 the first time it was pointed at one**, again, for a different reason than last session: the
 spinner's output went to the journal and it never spun. Point it at `yes > /dev/null` in a

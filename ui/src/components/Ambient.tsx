@@ -24,6 +24,11 @@ export function Ambient({ load }: { load: number }) {
     return <div className="hc-breath" style={{ opacity: 0.7 }} aria-hidden="true" />;
   }
 
+  // Nothing is being indexed, so there is nothing to beat about.
+  if (load <= 0) {
+    return <div className="hc-breath" aria-hidden="true" />;
+  }
+
   return (
     <div
       className="hc-breath hc-breath-animated"
