@@ -2218,3 +2218,48 @@ human has no reason to believe the button did anything.
 
 **Revisit when:** the memory count makes a flat list useless. Then it needs the same treatment as
 the result list — the daemon decides the order, the window renders it.
+
+---
+
+### D79 — The token budget is an estimate, and says so
+**Status:** ACCEPTED
+
+M11's Definition of Done said the context budget would be measured "with a tokeniser, not a
+divisor". Building it made clear that the sentence hides a question it does not answer: *whose*
+tokeniser.
+
+Claude, GPT and Llama tokenise the same sentence differently. The daemon cannot know which one
+the caller uses, and the only tokeniser this repository ships belongs to the embedding model — a
+384-dimension WordPiece vocabulary for a retrieval model, which has nothing to do with any
+language model's context window. Budgeting with it would have been *precise about the wrong
+number*, which is worse than being honestly approximate about the right one, and it would have
+looked rigorous while being wrong.
+
+So `cortex_core::tokens` is a structural estimate, deliberately biased upwards, and every
+surface that reports a token count reports it as an estimate:
+
+- a run of ASCII letters or digits costs one token per 3.5 characters, rounded up, minimum one;
+- punctuation costs one per character;
+- a newline costs one; a run of spaces costs nothing, because a leading space merges into the
+  word after it;
+- anything outside ASCII costs one per character — accented Latin is about half that and CJK
+  about one, which is where the upward bias does the most good, since German with umlauts is
+  exactly the case `chars / 4` gets worst.
+
+**The bias is not a hedge, it is the asymmetry.** Over-estimating wastes a little of the budget.
+Under-estimating truncates a system prompt at a byte boundary. There is no symmetric answer.
+
+**One property makes it safe to budget with, and it is asserted rather than assumed:** a
+byte-pair encoding does not merge across a word boundary, so the true count is never below the
+word count — and neither is the estimate. The tests also hold it under one token per character,
+which no tokeniser exceeds on text. Between those two bounds it is calibration, and
+`chars_per_token` is a parameter so that somebody who has measured their own model can say so
+instead of being told a number this crate invented.
+
+**Definition of Done §3 is amended to match**: the budget is honoured against the estimate, the
+estimate is bounded by word count below and character count above, and the pack reports
+`used_tokens` as an estimate rather than as a measurement.
+
+**Revisit when:** the caller can declare its tokeniser and ship the vocabulary — an MCP client
+could — or when a measurement of the estimate against a real tokeniser on this corpus exists.
+Until then, adding a second tokeniser would be adding a second wrong answer.

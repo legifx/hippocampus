@@ -869,9 +869,11 @@ the decision log as D74.
    byte-identical canonical dump — including supersession chains, usefulness counts and
    deletions. **The dump is the assertion.** A rebuild that exits zero having lost a column is
    the failure this criterion exists to catch.
-3. The token budget is honoured for budgets of 512, 2 048 and 8 192 against 5 000 memories,
-   measured with a tokeniser rather than by dividing characters by four, and no item is truncated
-   mid-structure.
+3. The token budget is honoured for budgets of 512, 2 048 and 8 192 against 5 000 memories, and
+   no item is truncated mid-structure. The count is a structural estimate that is biased upwards
+   and reported as an estimate — the daemon cannot know which tokeniser the caller uses, and the
+   only one this repository ships belongs to a retrieval model. It is bounded below by the word
+   count, which a byte-pair encoding cannot go under, and above by the character count.
 4. `brain.context` P95 **under 120 ms** at a 2 048-token budget over 5 000 memories and 100 000
    file chunks, warm — written as a benchmark before the implementation.
 5. MMR at λ = 0.7 returns strictly fewer duplicate facts than λ = 1.0 at the same budget on a

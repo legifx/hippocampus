@@ -818,9 +818,12 @@ deterministic (D66) — live means new data, not a jittering scene.
    across every scope and kind reproduces a byte-identical canonical dump, including
    supersession chains and usefulness. The dump is the assertion; a passing rebuild that lost a
    column is the failure this criterion exists to catch.
-3. **The budget is honoured.** `brain.context(budget_tokens = N)` returns a pack whose measured
-   token count is ≤ N for every N in {512, 2048, 8192} against a store of 5 000 memories, and
-   never truncates an item mid-structure. The measurement is a tokeniser, not a divisor.
+3. **The budget is honoured.** `brain.context(budget_tokens = N)` returns a pack whose token
+   count is ≤ N for every N in {512, 2048, 8192} against a store of 5 000 memories, and never
+   truncates an item mid-structure. The count is a **structural estimate, biased upwards, and
+   reported as an estimate** — not a divisor, and not a tokeniser belonging to a different
+   model. It is bounded below by the word count and above by the character count, both
+   asserted. D79 says why there is no honest third option.
 4. **Latency.** `brain.context` P95 **under 120 ms** for a 2 048-token budget over 5 000
    memories and 100 000 file chunks, warm. Written as a benchmark before the implementation,
    and added to the gate table.
