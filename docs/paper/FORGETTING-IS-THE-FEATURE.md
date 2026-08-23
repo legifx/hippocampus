@@ -3,11 +3,11 @@
 ### A filesystem-native memory architecture for humans and agents, and an argument that the field is optimising the wrong objective
 
 **Status of this document.** This is a design paper with a measured implementation behind it, not
-a peer-reviewed result. Every number reported in §10 was produced by the system described here,
+a peer-reviewed result. Every number reported in §9 was produced by the system described here,
 on one machine, in one session, and is reproducible from the repository. Every claim that is *not*
-measured is marked as an argument or a hypothesis. The comparison in §13 is against published
+measured is marked as an argument or a hypothesis. The comparison in §12 is against published
 descriptions of other systems, not against re-implementations of them on a shared benchmark —
-that work does not exist yet and §14 says so plainly. A reader looking for a benchmark table
+that work does not exist yet and §13 says so plainly. A reader looking for a benchmark table
 proving superiority will not find one here; a reader looking for an architecture, its
 justification, and an honest account of what it cost to build will.
 
@@ -42,7 +42,7 @@ quadratic in sequence length, effective context is measurably shorter than nomin
 position within the prompt changes retrieval accuracy, and prompt caching makes *where* a memory
 injects its output an architectural decision with a direct cost consequence.
 
-Finally we report what building it actually cost, including three defects that no amount of
+Finally we report what building it actually cost, including four defects that no amount of
 reasoning found and that only real data, a real clock and a real test suite exposed. We consider
 that section the most useful part of the paper.
 
@@ -119,7 +119,7 @@ every quarter. A representation that cannot be regenerated cheaply is a liabilit
 
 The second generation is more sophisticated and more interesting. MemGPT (Packer et al., 2023)
 treats the context window as virtual memory with paging between a small resident context and
-external storage, an analogy we think is exactly right and return to in §4.1. Generative Agents
+external storage, an analogy we think is exactly right and return to in §3.1. Generative Agents
 (Park et al., 2023) is the closest published relative of the scoring function in this paper: its
 memory stream ranks retrievals by a weighted sum of recency, importance and relevance, with
 recency as an exponential decay — the same three-ingredient recipe, arrived at independently and
@@ -226,7 +226,7 @@ with `fzf`.
 
 In an agentic system, the tokens spent are dominated not by the model's output but by what tools
 put into the context. A memory tool that returns a naive dump is the single most expensive
-component in the loop. This is why the interface described in §6.5 returns summaries and handles
+component in the loop. This is why the interface described in §5.3 returns summaries and handles
 by default, why `brain.graph` — the one call that genuinely returns a large object — is documented
 as needing a result gate, and why Mem0's reported token savings come primarily from *not returning
 things*.
@@ -298,7 +298,7 @@ would destroy history and force a pointless re-index.
 **`episodes`** — `(ts, actor, action, node_id, session_id, metadata)`. Append-only, never mutated.
 `node_id` is deliberately **not** a foreign key: an episode about a deleted file must outlive the
 file, because the log is the ground truth from which nodes are rebuilt. This decision is correct
-and it caused a production defect; §11.1.
+and it caused a production defect; §10.1.
 
 **`edges`** — typed and weighted: `contains`, `co_access`, `imports`, `similar_to`,
 `derived_from`, `annotates`. Each carries a `source`: `observed`, `inferred`, or `explicit`. That
@@ -397,7 +397,7 @@ decay for two engineering reasons — it composes into the incremental fold abov
 one multiply per episode rather than a full re-integration, and it has a single interpretable
 parameter, a half-life, that a user can be asked about. **The trade is real and we state it: a
 power law has a heavier tail, and the exponential form will forget genuinely long-lived references
-faster than human memory does.** The pin exists partly to cover that gap; §14 lists it as a threat
+faster than human memory does.** The pin exists partly to cover that gap; §13 lists it as a threat
 to validity.
 
 ### 6.3 Tiering: two deliberate asymmetries
@@ -416,7 +416,7 @@ far worse, teaches the owner that the tiering cannot be trusted.
 indexed an hour ago is forgetting something before ever having had it. This has a visible
 consequence on a fresh install — every node sits in one tier and the tier legend reads
 `working 0 / ltm 0 / cold 0` — which looks like a bug and is not. The snapshot therefore explains
-it in words rather than leaving the reader to infer it, a point we return to in §12.
+it in words rather than leaving the reader to infer it, a point we return to in §11.
 
 ### 6.4 A pin is an exemption
 
@@ -463,7 +463,7 @@ episodes makes the resulting graph depend on how often consolidation happened to
 consolidated hourly and one consolidated weekly would disagree about what is related to what, from
 identical histories. Replaying everything and upserting makes the edge set a pure function of the
 log — run it twice, get the same graph — which is the idempotence property the milestone required.
-The cost is bounded by a cap on replayed episodes, and measured in §10 at 240 ms for 31 000
+The cost is bounded by a cap on replayed episodes, and measured in §9 at 240 ms for 31 000
 episodes.
 
 ### 6.7 What is deliberately missing, and why the report says so
@@ -573,20 +573,33 @@ The tier distribution is the result that matters: **41 % of the index has been d
 hot tier after sixty simulated days, and the pinned node survived all of it.** That is the
 behaviour §1 argued for, produced by the engine rather than asserted.
 
-**Tests.** 399 Rust tests pass under `cargo test --workspace`, 29 of them covering the scoring,
-decay, tiering and association mathematics in isolation with no database, and 14 covering
-consolidation against a real SQLite index. Nine further tests cover the visualisation's layout and
-snapshot validation.
+**Tests.** 857 Rust tests pass under `cargo test --workspace` — 29 of them covering the scoring,
+decay, tiering and association mathematics in isolation with no database, 14 covering consolidation
+against a real SQLite index, and 2 guarding the response path against the hang in §10.3. Nine
+further tests cover the visualisation's layout and snapshot validation.
+
+**The visualisation**, on the real GPU, headless. The frame rate is pinned to 60 by the browser's
+animation clock, so the measurement is the time spent inside each frame against the 16.67 ms a
+60 Hz frame is allowed:
+
+| nodes | idle p50 | rotating p95 | layout transition p95 | worst frame |
+|---|---|---|---|---|
+| 3 000 | 0.30 ms | 0.40 ms | 0.80 ms | 2.10 ms |
+| 6 022 | 0.40 ms | 1.10 ms | 3.30 ms | 4.30 ms |
+| 20 019 | 0.40 ms | 1.10 ms | 6.30 ms | 9.50 ms |
+
+60 fps held in every mode at every size, including the layout transition, which rewrites every
+instance matrix and every edge vertex per frame. At four times the required node count the worst
+frame used under two thirds of its budget. Two draw calls, whatever the node count, is why.
 
 **What is not measured, and should be.** Retrieval quality before and after consolidation, on a
-gold set. Whether salience-boosted ranking beats unboosted ranking for a real user. The frame rate
-of the visualisation on real hardware — it was verified to render 6 022 nodes correctly under
-software rasterisation, where the frame rate is meaningless. Each of these is a real gap and none
-of them is hidden behind a plausible-sounding proxy.
+gold set. Whether salience-boosted ranking beats unboosted ranking for a real user. Whether any of
+this helps somebody find things. Each is a real gap and none is hidden behind a plausible-sounding
+proxy.
 
 ---
 
-## 10. Three defects that reasoning did not find
+## 10. Four defects that reasoning did not find
 
 We report these because the failure modes are general and the mechanisms that caught them are
 transferable.
@@ -613,7 +626,24 @@ that asks whether anything is ever forgotten. A test suite made only of unit tes
 scoring calls would never have shown it. The test that found it simulates thirty days and asserts
 that a specific node has left the hot tier.
 
-### 10.3 A connection pool deadlocks against itself, silently
+### 10.3 An answer that will not fit is a hang, not an error
+
+The protocol is newline-delimited JSON with an 8 MB line limit. A snapshot request for 50 000
+nodes produced roughly 19 MB, so the daemon could not write it — and the concurrent response path
+discarded the write error, leaving the caller waiting for an answer that was never coming. Both
+processes at 0.0 % of one core.
+
+The interesting part is not the limit; it is that the error was *available and thrown away*. A
+`let _ =` on a write is a decision that failing to answer is acceptable, and on a request/response
+protocol it never is. The fix is at two layers: a reply that will not fit comes back as an error
+naming its own size and telling the caller to ask for less, and the method that can produce a
+large answer caps its own request at a size measured to fit.
+
+**The general form:** every point where a system discards an error is a point where a failure
+becomes a hang, and a hang is the most expensive failure to diagnose because it produces no
+evidence at all.
+
+### 10.4 A connection pool deadlocks against itself, silently
 
 The snapshot function held a pooled database connection while calling helpers that each ask for a
 connection. On a file-backed store with four connections this is a latent bug under load. On an
@@ -667,7 +697,7 @@ Two details we would defend to anyone building something similar:
 
 ## 12. Comparison
 
-Against published descriptions, not against re-implementations. §14 states what this is worth.
+Against published descriptions, not against re-implementations. §13 states what this is worth.
 
 | property | vector-store memory | conversational agent memory | Hippocampus |
 |---|---|---|---|
@@ -711,7 +741,6 @@ section is advertising.
    concept nodes. The system therefore has associative memory but not yet semantic memory.
 6. **Single-machine, single-user, one operating system.** Everything measured here ran on one
    Linux desktop. Multi-device federation is designed and not built.
-7. **The visualisation's performance target is unverified on real hardware** (§9).
 8. **The simulator's history is invented.** Its *response* to that history is the real engine, but
    a generator written by the same author as the scoring function can accidentally generate the
    history the scoring function likes. §10.1 is a worked example of exactly that risk.
@@ -742,7 +771,7 @@ Each of these is instrumented or instrumentable today. None has been run.
 
 The companion document `BUILD-PROMPT.md` in this directory specifies the complete system in
 buildable form: milestones with executable acceptance criteria, the schema, the mathematics with
-its failure modes, the hard rules, and the three defects above as regression tests to write before
+its failure modes, the hard rules, and the four defects above as regression tests to write before
 the code that would contain them.
 
 It is written to be handed to a competent implementer — human or agent — who has not read this

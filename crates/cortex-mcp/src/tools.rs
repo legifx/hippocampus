@@ -176,8 +176,9 @@ pub const TOOLS: &[Tool] = &[
             object(
                 json!({
                     "limit": { "type": "integer",
-                               "description": "Nodes, by salience. Default 3000. Ancestors are \
-                                               added on top so nothing floats." },
+                               "description": "Nodes, by salience. Default 3000, capped at \
+                                               15000 so the answer fits the transport. \
+                                               Ancestors are added on top so nothing floats." },
                     "min_salience": { "type": "number" },
                     "zone": { "type": "integer", "description": "Restrict to one zone." },
                     "events": { "type": "integer", "description": "Recent episodes. Default 500." },

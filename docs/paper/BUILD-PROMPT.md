@@ -410,7 +410,7 @@ is the difference between a project that knows where it is and one that believes
 
 ---
 
-## 7. Three traps
+## 7. Four traps
 
 These are defects found in a real implementation of this specification, after the code had passed
 its unit tests. Write the regression test **before** the code that would contain the bug.
@@ -435,7 +435,20 @@ append-only log difficult. Put deletions in your simulator.
 summed with. **Test:** simulate ninety days with one touch on day zero and assert the node reaches
 Cold, and that a pinned node beside it does not.
 
-### 7.3 A connection pool deadlocks against itself
+### 7.3 An answer that will not fit is a hang, not an error
+
+Whatever framing your transport uses will have a size limit. A response above it cannot be sent —
+and if the code that sends it discards the write error, the caller waits for ever. Both processes
+sit at zero per cent CPU, which produces no evidence at all and is the most expensive failure to
+diagnose.
+
+**Rule:** never `let _ =` a write on a request/response protocol. **Fix, at two layers:** a reply
+that does not fit comes back as an error naming its size and telling the caller to ask for less;
+and any method that can produce a large answer caps its own request at a size you have measured.
+**Test:** hand the responder an oversized result and assert an error comes back on the wire, with
+the request's id, small enough to send.
+
+### 7.4 A connection pool deadlocks against itself
 
 If your store hands out pooled connections, a function that holds one while calling a helper that
 asks for another will wait for itself. On a pool of four this is latent and load-dependent. On an
@@ -510,7 +523,7 @@ idempotent: two passes over the same log produce identical edges and, once settl
 tiers. ④ the report is generated and a human can tell from it what the system did without reading
 logs — including what it discarded and what it did not do. ⑤ the stored component breakdown sums to
 the score actually used, for every node, asserted. ⑥ a full rebuild after aggressive demotion
-restores every node from episodes plus the filesystem (R10). ⑦ the three traps in §7 each have a
+restores every node from episodes plus the filesystem (R10). ⑦ the four traps in §7 each have a
 named regression test.
 
 ### M6 — Human View
@@ -620,7 +633,8 @@ Three interface rules worth stating explicitly:
 - **`brain.diff` exists so that an agent does not poll.** It returns everything that changed since a
   cursor, plus a new cursor.
 - **`brain.graph` is the one call that returns a large object.** Document it as needing a result
-  gate. In an agent loop, tool output is the dominant token cost, and a memory tool that dumps is
+  gate, and cap its `limit` at a size you have measured against your transport's framing limit
+  (§7.3). In an agent loop, tool output is the dominant token cost, and a memory tool that dumps is
   the most expensive component in the loop.
 - **`brain.working_set` must say what it is based on.** If it is derived from recent episodes rather
   than from a salience-weighted working memory, the answer says so in a field. A tool that claims a

@@ -217,6 +217,9 @@ enum Command {
         #[arg(long, default_value = "graph.json")]
         out: String,
         /// How many nodes, chosen by salience. Ancestors are added on top.
+        ///
+        /// The daemon caps this at 15 000: beyond that the answer no longer fits the
+        /// protocol's line limit. Ask for more and you get 15 000, and the count is printed.
         #[arg(long, default_value_t = 3000)]
         limit: usize,
         /// How many recent episodes to include, for the animation.

@@ -302,7 +302,12 @@ impl Surface<'_> {
         self.gate_args(tool, &args)?;
 
         let request = cortex_store::memory::GraphParams {
-            limit: params.limit.unwrap_or(3_000).min(50_000),
+            // Capped where the answer still fits the transport. Measured on a real index:
+            // 20 000 nodes serialise to 7.55 MB against an 8 MB line limit, and a request for
+            // 50 000 produced a reply the daemon could not send at all. The daemon now answers
+            // that with an error rather than silence, but a cap that avoids the situation is
+            // better than an error that explains it.
+            limit: params.limit.unwrap_or(3_000).min(15_000),
             min_salience: params.min_salience.unwrap_or(f64::NEG_INFINITY),
             zone: params.zone,
             events: params.events.unwrap_or(500).min(20_000),

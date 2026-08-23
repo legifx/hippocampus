@@ -354,6 +354,47 @@ pub async fn serve(listener: UnixListener, daemon: Arc<Daemon>) {
     }
 }
 
+/// Send a response, and if it cannot be sent because it is too large, send an error saying so.
+///
+/// The transport is newline-delimited JSON with a line limit. A reply over that limit used to be
+/// dropped — the concurrent path discarded the write error, so the caller waited for an answer
+/// that was never coming. Both processes sat at zero per cent CPU, which is what a deadlock
+/// looks like and is a considerably worse failure than an error. `brain.graph` on a large index
+/// is the request that found it.
+async fn respond<W>(
+    writer: &Arc<tokio::sync::Mutex<W>>,
+    id: serde_json::Value,
+    response: Response,
+) -> Result<(), transport::TransportError>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let value = serde_json::to_value(&response).expect("a response serialises");
+    let mut guard = writer.lock().await;
+    match transport::write_message(&mut *guard, &value).await {
+        Err(transport::TransportError::LineTooLong) => {
+            let bytes = serde_json::to_vec(&value).map(|v| v.len()).unwrap_or(0);
+            let fallback = Response::err(
+                id,
+                RpcError::new(
+                    RpcError::RESULT_TOO_LARGE,
+                    format!(
+                        "the answer is {bytes} bytes and the protocol's line limit is {} — \
+                         ask for less, with a smaller `limit`",
+                        transport::MAX_LINE_BYTES
+                    ),
+                ),
+            );
+            transport::write_message(
+                &mut *guard,
+                &serde_json::to_value(&fallback).expect("an error serialises"),
+            )
+            .await
+        }
+        other => other,
+    }
+}
+
 async fn handle_connection(
     stream: UnixStream,
     daemon: Arc<Daemon>,
@@ -467,14 +508,8 @@ async fn handle_connection(
                     Ok(result) => Response::ok(id.clone(), result),
                     Err(error) => Response::err(id.clone(), error),
                 };
-                {
-                    let mut guard = writer.lock().await;
-                    let _ = transport::write_message(
-                        &mut *guard,
-                        &serde_json::to_value(&response).unwrap(),
-                    )
+                let _ = respond(&writer, serde_json::to_value(&id).unwrap_or_default(), response)
                     .await;
-                }
 
                 if let Some(outcome) = refinable {
                     spawn_rerank(daemon.clone(), writer.clone(), id, outcome);
@@ -484,7 +519,7 @@ async fn handle_connection(
             continue;
         }
 
-        // A search keeps its outcome here so the reranker can reuse it. Re-running the search in
+// A search keeps its outcome here so the reranker can reuse it. Re-running the search in
         // the background task would be simpler and would double every query's retrieval work.
         let mut refinable: Option<search::Outcome> = None;
         let outcome = dispatch(&daemon, &method, request.params, &mut refinable, &mut ctx).await;
@@ -497,10 +532,7 @@ async fn handle_connection(
             Ok(result) => Response::ok(id.clone(), result),
             Err(error) => Response::err(id.clone(), error),
         };
-        {
-            let mut guard = writer.lock().await;
-            transport::write_message(&mut *guard, &serde_json::to_value(&response).unwrap()).await?;
-        }
+        respond(&writer, serde_json::to_value(&id).unwrap_or_default(), response).await?;
 
         // The answer is out. Anything better than it arrives separately.
         if let Some(outcome) = refinable {
@@ -1608,4 +1640,54 @@ fn explain_reasons(
     }
 
     reasons
+}
+
+#[cfg(test)]
+mod respond_tests {
+    use super::*;
+
+    /// The answer that does not fit must come back as an error, not as silence.
+    ///
+    /// This is the regression test for a hang: a `brain.graph` over a large index produced a
+    /// reply above the transport's line limit, the concurrent path discarded the write error,
+    /// and the caller waited for ever with both processes idle.
+    #[tokio::test]
+    async fn a_reply_that_does_not_fit_comes_back_as_an_error() {
+        let writer = Arc::new(tokio::sync::Mutex::new(Vec::<u8>::new()));
+        let id = serde_json::json!(7);
+        let oversized = serde_json::json!({
+            "s": "x".repeat(transport::MAX_LINE_BYTES + 1_024)
+        });
+
+        respond(&writer, id.clone(), Response::ok(id.clone(), oversized))
+            .await
+            .expect("the fallback must be sendable even when the answer is not");
+
+        let written = writer.lock().await.clone();
+        let line = String::from_utf8(written).unwrap();
+        let value: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
+        assert_eq!(value["id"], id);
+        assert_eq!(value["error"]["code"], RpcError::RESULT_TOO_LARGE);
+        assert!(
+            value["error"]["message"].as_str().unwrap().contains("ask for less"),
+            "the error has to say what to do about it: {value}"
+        );
+        assert!(line.len() < transport::MAX_LINE_BYTES, "the error itself must fit");
+    }
+
+    /// The ordinary case must be untouched: one line, the result, nothing added.
+    #[tokio::test]
+    async fn an_ordinary_reply_is_written_once_and_unchanged() {
+        let writer = Arc::new(tokio::sync::Mutex::new(Vec::<u8>::new()));
+        let id = serde_json::json!("abc");
+        respond(&writer, id.clone(), Response::ok(id.clone(), serde_json::json!({ "n": 1 })))
+            .await
+            .unwrap();
+
+        let line = String::from_utf8(writer.lock().await.clone()).unwrap();
+        assert_eq!(line.lines().count(), 1);
+        let value: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
+        assert_eq!(value["result"]["n"], 1);
+        assert!(value.get("error").is_none());
+    }
 }

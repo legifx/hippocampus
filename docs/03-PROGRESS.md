@@ -10,7 +10,7 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | M8 — Agent View, and the half of M5 it needs (pulled ahead at the owner's request, D62) |
-| **Status** | M4 complete. M6 begun and paused. **M5 half-built and M8 built on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. What M5 still lacks — the semantic abstraction step — is printed by every report it produces. **399 Rust tests pass** under `cargo test --workspace` on this commit — 29 of them in the new `cortex-memory`, 14 in `cortex-store::memory` — plus 9 vitest in `ui-agent`. (An earlier entry in this file claimed 812 Rust tests. That number is not reproducible with that command and is not repeated here; whoever wrote it should say what they counted.) |
+| **Status** | M4 complete. M6 begun and paused. **M5 half-built and M8 built on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. What M5 still lacks — the semantic abstraction step — is printed by every report it produces. **857 Rust tests pass** under `cargo test --workspace` across 40 test binaries — 29 of them in the new `cortex-memory`, 14 in `cortex-store::memory`, 2 guarding the response path — plus 9 vitest in `ui-agent`. **A note on that number:** this file briefly said 399 and accused the previous entry's 812 of being unreproducible. The 399 was wrong: the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Check the measuring tool before disbelieving the measurement — this file already says that about latency, and it applies to counting. |
 | **Last updated** | 2026-08-23 |
 | **Blocked on** | nothing |
 
@@ -130,6 +130,17 @@ thirty-day simulation **not one node ever reached Cold**. Both counts are now ag
 using the specification's own decay law. See D63 — the law was already written down, in a
 different paragraph from the sum, and the two had never been connected.
 
+**A fourth, found while measuring the third criterion above.** `brain.graph --limit 50000`
+produced a reply of about 19 MB. The transport is newline-delimited JSON with an 8 MB line limit,
+so the daemon could not write it — and the concurrent response path discarded the write error, so
+the caller waited for an answer that was never coming. Both processes sat at **0.0 % of one core**,
+which is what a deadlock looks like from the outside and is a worse failure than an error because
+it does not localise itself. Two fixes, at two layers: a response that will not fit now comes back
+as `RESULT_TOO_LARGE` naming its size and telling the caller to ask for less, and `brain.graph`
+caps `limit` at 15 000, which is where a real index's answer still fits (20 000 nodes measured at
+7.55 MB). A request for 50 000 now returns 15 022 nodes in 0.27 s. Regression tests:
+`a_reply_that_does_not_fit_comes_back_as_an_error` and its ordinary-case twin.
+
 **And one thing a test found rather than a person:** `graph_snapshot` held a pooled connection
 while calling helpers that ask for one. An in-memory store has exactly one connection, so it
 waited for itself. No error, no CPU load, the suite simply stopped. Everything that needs its own
@@ -151,12 +162,34 @@ self-contained HTML file produced by `scripts/bake.mjs` that needs no server at 
 | # | criterion | state |
 |---|---|---|
 | 1 | consolidation is visually comprehensible | **met** — five captioned steps, the daemon's numbers |
-| 2 | 5 000 nodes stay interactive | **not measured on real hardware.** Verified rendering correctly at 6 022 nodes under software rasterisation (`swiftshader`), where the frame rate is meaningless. One instanced mesh and one line buffer keep the draw calls at two. Somebody has to open it on a GPU and read the counter in the corner. |
+| 2 | 5 000 nodes stay interactive | **met, measured** — see the table below. |
 | 3 | read-only with respect to the filesystem | **met** — the app has no write path at all; `brain.graph` is a read |
+
+### Criterion 2, measured
+
+Headless Chromium with `--use-angle=vulkan`, which reaches the real GPU without opening a window
+(the default and `--use-gl=egl` both fall back to SwiftShader — check the reported renderer before
+believing any frame rate). The frame rate is pinned to 60 by the browser's own animation clock, so
+the honest number is the **time spent inside each frame** against the 16.67 ms a 60 Hz frame has.
+`requestAnimationFrame` was wrapped before the app loaded, so every frame it drew is timed from
+the inside.
+
+| nodes | idle p50 | rotating p95 | layout transition p95 | worst frame seen |
+|---|---|---|---|---|
+| 3 000 | 0.30 ms | 0.40 ms | 0.80 ms | 2.10 ms |
+| 6 022 | 0.40 ms | 1.10 ms | 3.30 ms | 4.30 ms |
+| 20 019 | 0.40 ms | 1.10 ms | 6.30 ms | 9.50 ms |
+
+60 fps held in every mode at every size, including during the layout transition — the expensive
+case, which rewrites every instance matrix and every edge vertex on each frame. At four times the
+required node count the worst frame still used well under two thirds of its budget.
+
+**What this does not measure:** the wrapper times the work inside the frame callback, which
+includes issuing the draw calls but not the GPU finishing them. The frame rate holding at the cap
+is the evidence for the GPU side.
 
 ### What to do next here
 
-- **Measure §2 on a GPU.** Open the baked file, watch the frame counter, and record the number.
 - **The abstraction step (D62).** It needs `embeddings` to stop being 0, which needs the model
   the daemon has not been asked to load.
 - **The grace window shows up as a flat legend.** A five-day-old index has every node in `stm`

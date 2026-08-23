@@ -109,6 +109,15 @@ impl RpcError {
     /// recognise this by reading the message would break the first time the wording changed.
     pub const NEEDS_AUTHORISATION: i32 = 1004;
 
+    /// The answer was produced, and it is too large to send.
+    ///
+    /// The protocol is newline-delimited JSON with a line limit, so an oversized reply cannot
+    /// be written at all. Before this code existed the daemon simply failed to write it and the
+    /// caller waited for an answer that was never coming — a hang, which is a worse failure
+    /// than an error because it does not localise itself. A caller that sees this should ask
+    /// for less: every method capable of producing a large answer takes a `limit`.
+    pub const RESULT_TOO_LARGE: i32 = 1005;
+
     pub fn new(code: i32, message: impl Into<String>) -> Self {
         Self {
             code,
