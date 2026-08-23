@@ -9,9 +9,9 @@ If you finish work without editing this file, the next agent starts from nothing
 
 | | |
 |---|---|
-| **Active milestone** | M6 — Human View (pulled ahead of M5 at the owner's request, D43) |
-| **Status** | M4 **complete**, all eight Definition-of-Done items met. M6 begun: the overlay browses directories, which is the part that makes it a file manager rather than a launcher, and it now opens them with whatever the desktop would open them with. §1 was recorded here as failing at 418 ms; that measurement was taken while the machine was compiling, and on an idle machine it is **265 ms, ten runs out of ten inside the budget** (D41). 980 tests — 812 Rust, 47 vitest, 121 in a browser. |
-| **Last updated** | 2026-08-21 |
+| **Active milestone** | M8 — Agent View, and the half of M5 it needs (pulled ahead at the owner's request, D62) |
+| **Status** | M4 complete. M6 begun and paused. **M5 half-built and M8 built on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. What M5 still lacks — the semantic abstraction step — is printed by every report it produces. **399 Rust tests pass** under `cargo test --workspace` on this commit — 29 of them in the new `cortex-memory`, 14 in `cortex-store::memory` — plus 9 vitest in `ui-agent`. (An earlier entry in this file claimed 812 Rust tests. That number is not reproducible with that command and is not repeated here; whoever wrote it should say what they counted.) |
+| **Last updated** | 2026-08-23 |
 | **Blocked on** | nothing |
 
 ## Start here
@@ -86,6 +86,83 @@ snippet above reported **0.0% for a process spinning a full core**, because `$!`
 subshell and `utime + stime` is a process's own time and not its children's. It agreed with
 every good result and could not be distinguished from one. Point it at `yes > /dev/null` first;
 it must read 100%.
+
+## Where M8 and M5 stand — the newest work, read this first
+
+**The order was forced by the data.** M8 draws concept nodes, salience, tiers and consolidation
+events. Before this session the real index had **24 edges, `salience = 0.0` on all 108 000 nodes
+and every node in `stm`**, because M5 had not been built. A three-dimensional view of that is a
+directory tree with extra steps, so M5 came first — see D62 for what was built and what was
+deliberately left.
+
+### What M5 does now
+
+`cortex consolidate [--dry-run]`, `cortex report`, `cortex graph`. One pass, in the order the
+components depend on each other:
+
+1. **Replay** the episode log — the whole of it, every pass, so the derived graph is a pure
+   function of the log rather than of how often consolidation happened to run (D65).
+2. **Associate.** Bursts of activity become `co_access` edges. A burst touching more than twelve
+   nodes is discarded whole: that is a build, not a person, and letting builds form edges turns
+   the graph into a hairball in which everything relates to everything.
+3. **Score.** Seven bounded components, weighted, summing to a number that can explain itself.
+   Stored breakdowns sum to the score actually used, and there is a test that says so.
+4. **Tier.** Promotion is immediate, demotion is one tier per pass, pins are exempt rather than
+   heavily weighted.
+5. **Report.** Including a `not done in this pass` section, which is where the missing half of
+   M5 is named every single time.
+
+Measured on the real index — 108 139 nodes, 9 500 episodes: **dry run 109 ms, full pass 1 516 ms.**
+On the simulator — 3 069 nodes, 31 120 episodes: **200–240 ms.**
+
+### Two bugs that only real data could find
+
+**Episodes outlive the files they are about; `edges` has a foreign key.** `episodes.node_id` is
+deliberately not a foreign key (R10) so that the log survives a deletion. Deriving an association
+between two nodes that have since been deleted therefore fails the entire transaction with
+`FOREIGN KEY constraint failed`, and the first real consolidation did exactly that. The replay
+query now joins `nodes`. The simulator could never have found it — nothing in it is ever deleted.
+Regression test: `an_episode_about_a_file_that_no_longer_exists_does_not_break_the_pass`.
+
+**A count that never decays means nothing is ever forgotten.** `w1·log(1+access_count)` is
+monotonic, so any file ever touched keeps a permanent floor of salience, and in the first
+thirty-day simulation **not one node ever reached Cold**. Both counts are now age-weighted folds
+using the specification's own decay law. See D63 — the law was already written down, in a
+different paragraph from the sum, and the two had never been connected.
+
+**And one thing a test found rather than a person:** `graph_snapshot` held a pooled connection
+while calling helpers that ask for one. An in-memory store has exactly one connection, so it
+waited for itself. No error, no CPU load, the suite simply stopped. Everything that needs its own
+connection now happens before the long-lived one is taken.
+
+### What M8 is
+
+`ui-agent/` — its own Vite app, three.js, read-only, German by default. Hue is the zone,
+brightness the tier, size the salience, halo the Working Set. Two deterministic layouts: the
+containment tree, and concentric shells by tier in which a demoted node visibly moves outward.
+**Play consolidation** replays the last pass in five captioned steps using the daemon's own
+numbers — nothing in the animation is computed in the frontend (D4, D66).
+
+It runs three ways: `npm run dev` against a snapshot, live against the daemon, and as one
+self-contained HTML file produced by `scripts/bake.mjs` that needs no server at all.
+
+### Definition of Done for M8, honestly
+
+| # | criterion | state |
+|---|---|---|
+| 1 | consolidation is visually comprehensible | **met** — five captioned steps, the daemon's numbers |
+| 2 | 5 000 nodes stay interactive | **not measured on real hardware.** Verified rendering correctly at 6 022 nodes under software rasterisation (`swiftshader`), where the frame rate is meaningless. One instanced mesh and one line buffer keep the draw calls at two. Somebody has to open it on a GPU and read the counter in the corner. |
+| 3 | read-only with respect to the filesystem | **met** — the app has no write path at all; `brain.graph` is a read |
+
+### What to do next here
+
+- **Measure §2 on a GPU.** Open the baked file, watch the frame counter, and record the number.
+- **The abstraction step (D62).** It needs `embeddings` to stop being 0, which needs the model
+  the daemon has not been asked to load.
+- **The grace window shows up as a flat legend.** A five-day-old index has every node in `stm`
+  and the tier legend reads `working 0 / ltm 0 / cold 0`. The snapshot's `basis` now explains
+  this in words, but it is worth watching whether the explanation is enough.
+- M6 is where it was; nothing in this session touched it.
 
 ## Where M6 stands
 

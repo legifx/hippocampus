@@ -8,12 +8,14 @@ members = [
     "crates/cortex-ingest",
     "crates/cortex-extract",
     "crates/cortex-embed",
+    "crates/cortex-memory",
     "crates/cortex-agent",
     "crates/cortexd",
     "crates/cortex-cli",
     "crates/cortex-mcp",
     "crates/cortex-preview",
     "ui/src-tauri",
+    "bench/brain-sim",
     "bench/corpus-gen",
     "bench/latency",
     "bench/goldset",
@@ -35,6 +37,7 @@ cortex-query = { path = "crates/cortex-query" }
 cortex-ingest = { path = "crates/cortex-ingest" }
 cortex-extract = { path = "crates/cortex-extract" }
 cortex-embed = { path = "crates/cortex-embed" }
+cortex-memory = { path = "crates/cortex-memory" }
 cortex-agent = { path = "crates/cortex-agent" }
 
 anyhow = "1"

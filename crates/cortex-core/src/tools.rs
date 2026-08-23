@@ -492,6 +492,39 @@ pub struct NeighborsResult {
     pub annotations: Vec<crate::model::AnnotationView>,
 }
 
+/// Parameters for `brain.graph` — one snapshot of the brain, for a visualisation.
+///
+/// Everything is optional and every default is a number the daemon chose, not the caller: a
+/// view that picked its own limit would produce a different picture per client, and the whole
+/// point of the Agent View is that it shows what the daemon believes rather than what a
+/// frontend decided to draw.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GraphParams {
+    /// How many nodes, chosen by salience. Ancestors are added on top so nothing floats.
+    #[serde(default)]
+    pub limit: Option<usize>,
+    /// Only nodes at or above this salience.
+    #[serde(default)]
+    pub min_salience: Option<f64>,
+    /// Restrict to one zone.
+    #[serde(default)]
+    pub zone: Option<i64>,
+    /// How many recent episodes to send along, for the animation.
+    #[serde(default)]
+    pub events: Option<usize>,
+    /// How far back "recently touched" reaches, in seconds.
+    #[serde(default)]
+    pub window_secs: Option<i64>,
+}
+
+/// Parameters for `brain.consolidate`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ConsolidateRequest {
+    /// Compute the whole pass and report it, but write nothing.
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimelineParams {
     /// Unix seconds, inclusive. Absent means "from the beginning".

@@ -226,6 +226,12 @@ pub mod method {
     pub const BRAIN_DIFF: &str = "brain.diff";
     pub const BRAIN_RECALL: &str = "brain.recall";
     pub const BRAIN_EXPLAIN: &str = "brain.explain";
+    /// The whole brain in one answer, for a visualisation. A read, and a large one.
+    pub const BRAIN_GRAPH: &str = "brain.graph";
+    /// Run a consolidation pass: replay, associate, score, tier. Writes to the brain only.
+    pub const BRAIN_CONSOLIDATE: &str = "brain.consolidate";
+    /// The last consolidation report, without running one.
+    pub const BRAIN_REPORT: &str = "brain.report";
 
     /// Every method this build serves. Used by `status` so a client can discover the surface.
     /// Methods that may be answered out of order, concurrently with each other.
@@ -257,6 +263,8 @@ pub mod method {
                 | WATCH_STATUS
                 | ZONES_LIST
                 | AGENT_STATUS
+                | BRAIN_GRAPH
+                | BRAIN_REPORT
                 | AUDIT_RECENT
                 | FS_LIST
                 | FS_PLACES
@@ -320,6 +328,9 @@ pub mod method {
         BRAIN_NEIGHBORS,
         BRAIN_TIMELINE,
         BRAIN_WORKING_SET,
+        BRAIN_GRAPH,
+        BRAIN_CONSOLIDATE,
+        BRAIN_REPORT,
         BRAIN_DIFF,
         BRAIN_RECALL,
         BRAIN_EXPLAIN,

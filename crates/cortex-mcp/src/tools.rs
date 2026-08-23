@@ -155,6 +155,40 @@ pub const TOOLS: &[Tool] = &[
         schema: || object(json!({}), &[]),
     },
     Tool {
+        name: "brain_report",
+        method: method::BRAIN_REPORT,
+        gated: false,
+        description: "What the last consolidation pass did: how many episodes it replayed, what \
+                      it associated, what changed tier, what it deliberately did not do. Use it \
+                      before concluding that the memory has forgotten something — it may simply \
+                      never have been consolidated.",
+        schema: || object(json!({}), &[]),
+    },
+    Tool {
+        name: "brain_graph",
+        method: method::BRAIN_GRAPH,
+        gated: false,
+        description: "The whole brain in one answer: the most salient nodes, their edges, the \
+                      zones, the Working Set and the recent episodes. A large result — put it \
+                      through a result gate rather than into a prompt. For 'what does this \
+                      index look like', not for finding a file; use brain_search for that.",
+        schema: || {
+            object(
+                json!({
+                    "limit": { "type": "integer",
+                               "description": "Nodes, by salience. Default 3000. Ancestors are \
+                                               added on top so nothing floats." },
+                    "min_salience": { "type": "number" },
+                    "zone": { "type": "integer", "description": "Restrict to one zone." },
+                    "events": { "type": "integer", "description": "Recent episodes. Default 500." },
+                    "window_secs": { "type": "integer",
+                                     "description": "How far back 'recently touched' reaches." }
+                }),
+                &[],
+            )
+        },
+    },
+    Tool {
         name: "brain_diff",
         method: method::BRAIN_DIFF,
         gated: false,

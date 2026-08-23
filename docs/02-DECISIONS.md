@@ -1730,3 +1730,127 @@ differently from the disks:
 
 Unmounting needs neither: a filesystem you mounted is yours to unmount, which a test on the real
 disk confirmed rather than assumed.
+
+---
+
+### D62 — M8 is pulled ahead of the rest of M5, and M5 ships without its language model
+**Status:** ACCEPTED (owner's request, 2026-08-23)
+
+The owner asked for the Agent View — M8 — as a finished, showable thing. M8 draws concept
+nodes, salience, tiers and consolidation events, and before this session the index had **24
+edges, a salience of 0.0 on all 108 000 nodes and every node in `stm`**. A three-dimensional
+view of that is a directory tree with extra steps. So M5 came first, and it came in halves.
+
+**What M5 now has:** the salience engine with explainable components, decay, tiering with
+one-step demotion and immune pins, co-access edge formation from the episode log, and a
+consolidation pass with a human-readable report. `cortex consolidate`, `cortex report`.
+
+**What M5 still does not have, and says so in every report it prints:** step 2 of the
+consolidation loop — one semantic concept node per cluster, which needs an embedding model and
+a summariser — and step 5, promotion into the sync outbox, which is M7's job anyway.
+
+The report lists both under "not done in this pass". A system that quietly omits half of what
+its own specification promised is how a project ends up believing it is further along than it
+is; printing the omission in the same paragraph as the achievement costs three lines.
+
+**Revisit when:** the embedding model is loaded and `embeddings` stops being 0, at which point
+the abstraction step becomes implementable and this entry is superseded rather than amended.
+
+---
+
+### D63 — Every salience component is bounded before it is weighted, and every count decays
+**Status:** ACCEPTED
+
+The formula in `01-BUILD-PROMPT.md` §M5 is a weighted sum of seven signals. Implemented
+literally it has two failure modes, and the second one was found by a test rather than by
+reasoning.
+
+**Bounded components.** Each signal is squashed into `[0, 1]` before its weight is applied, so
+a weight *is* the most that signal can ever contribute. Without this the weights are not
+comparable with each other — `w1` would mean "per log-access" and `w5` "once" — and a file
+opened ten thousand times by a build script outranks everything a person ever cared about.
+
+**Decaying counts.** `w1·log(1+access_count)` never decreases. A file opened once in 2019 keeps
+a floor of salience for ever, and in the first thirty-day simulation **nothing ever reached the
+Cold tier**: every node that had ever been touched sat above the threshold permanently. The fix
+is that `access_count` and `edit_count` are *effective* counts — each episode is a reinforcement
+of size 1 and the running total decays between episodes by the specification's own law,
+`salience(t) = base·e^(−λ·Δt) + Σ(reinforcements)`. Fifty accesses two years ago now count for
+less than three accesses this week, which is what "how much is this being used" has to mean in
+a memory that forgets.
+
+The law was already in the specification. It was written down as a separate mechanism from the
+sum, and the two were never connected. They are the same mechanism.
+
+**Revisit when:** somebody wants a signal that genuinely should not decay. Pins are that case
+and are handled by exemption, not by weight.
+
+---
+
+### D64 — The salience log keeps what changed, not every computation
+**Status:** ACCEPTED — deviates from `01-BUILD-PROMPT.md` §M5 deliberately
+
+The milestone says every computation is logged to `salience_log`. Taken literally that is one
+row per node per pass: a hundred thousand rows a day on this machine, forty million a year, for
+a table that is only ever read one row at a time by `brain.explain`.
+
+What is stored instead: a row for every node whose score moved by more than 0.01 **or** whose
+tier changed, and only the newest three per node. A settled index therefore writes almost
+nothing, and the question the table exists to answer — "why is this ranked here" — is still
+answerable for anything that has moved recently.
+
+**Revisit when:** somebody needs to audit a score that has not changed in months. The honest
+answer today is to recompute it, which is deterministic from the inputs.
+
+---
+
+### D65 — Consolidation replays the whole episode log every pass
+**Status:** ACCEPTED
+
+Deriving associations only from episodes since the last pass makes the resulting graph depend on
+how often consolidation happened to run — an index consolidated hourly and one consolidated
+weekly would disagree about what is related to what, from the same history. Definition-of-Done
+item 3 asks for idempotence, and this is the cheap way to get it: replay everything, upsert the
+edges, and the edge set is a pure function of the log. Run it twice, get the same graph.
+
+The cost has a ceiling (`MAX_REPLAY_EPISODES`, 500 000 newest) and the pass is 240 ms over
+31 000 episodes and 3 000 nodes in the simulator. If that ever becomes the bottleneck the fix is
+an incremental derivation with a stored fold, not a smaller window.
+
+**Revisit when:** a real index passes half a million episodes.
+
+---
+
+### D66 — The Agent View is its own app, and its layout is deterministic
+**Status:** ACCEPTED
+
+`ui-agent/` is a second Vite application rather than a route inside `ui/`. The file manager's
+bundle is on a latency budget that a WebGL renderer and a graph layout have no business being
+inside, and the two are opened for different reasons by different people.
+
+**No force-directed layout**, although §M8 suggests reusing a force-graph component. A force
+layout settles into a different arrangement on every reload, which means two screenshots of the
+same brain cannot be compared and a node cannot be found twice in the same place. Both layouts
+here are pure functions of the snapshot: a containment tree, and concentric shells by tier. The
+transition between them is the animation in which forgetting is actually visible — a demoted
+node moves outward — and it only reads as movement because the node was somewhere stable before.
+
+Rendering: one `InstancedMesh` for all nodes and one `LineSegments` buffer for all edges. Per-node
+meshes would be thousands of draw calls, which is the thing that makes such views unusable.
+
+**Revisit when:** concept nodes exist (D62) and have no place in a containment tree — they will
+need a layout of their own, probably near the nodes they abstract.
+
+---
+
+### D67 — A snapshot of a real index is treated like the index
+**Status:** ACCEPTED
+
+`brain.graph` answers with paths. A `graph.json` taken from somebody's own daemon is therefore
+as sensitive as the index it came from, and `cortex graph` says so on the terminal when it
+writes one. It is in `.gitignore`, it is never committed, and the demo that ships in this public
+repository is generated by `brain-sim` from a seed — a synthetic workspace whose every salience,
+tier and edge was nonetheless computed by the same engine the daemon runs (R9).
+
+**Revisit when:** a sharing feature is wanted, at which point the snapshot needs a redaction
+mode and this entry is superseded.

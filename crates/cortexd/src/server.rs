@@ -1237,6 +1237,31 @@ async fn dispatch(
             json(surface(daemon, &ctx.actor, &auditor).working_set(idle).map_err(tool_error)?)
         }
 
+        method::BRAIN_GRAPH => {
+            let params = params
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(|e| RpcError::invalid_params(e.to_string()))?
+                .unwrap_or_default();
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            json(surface(daemon, &ctx.actor, &auditor).graph(&params).map_err(tool_error)?)
+        }
+
+        method::BRAIN_CONSOLIDATE => {
+            let params = params
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(|e| RpcError::invalid_params(e.to_string()))?
+                .unwrap_or_default();
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            json(surface(daemon, &ctx.actor, &auditor).consolidate(&params).map_err(tool_error)?)
+        }
+
+        method::BRAIN_REPORT => {
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            json(surface(daemon, &ctx.actor, &auditor).report().map_err(tool_error)?)
+        }
+
         method::BRAIN_DIFF => {
             let params = params
                 .map(serde_json::from_value)

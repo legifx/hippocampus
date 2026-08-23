@@ -53,6 +53,7 @@ crates/
   cortex-mcp       MCP server binary (Agent Surface) — a bridge, no policy in it
   cortex-preview   the thumbnailer: previews in a process that is meant to be killable
 ui/                Tauri v2 + React frontend (from M3)
+ui-agent/          the Agent View: three.js, read-only, its own Vite app (M8, D66)
 bench/             benchmark suite — the CI gate
 docs/              see reading order above
 ```

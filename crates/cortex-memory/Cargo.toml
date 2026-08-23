@@ -1,0 +1,15 @@
+[package]
+name = "cortex-memory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Salience, decay, tiering and edge formation. The part of the brain that forgets."
+
+[dependencies]
+cortex-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]

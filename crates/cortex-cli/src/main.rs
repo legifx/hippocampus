@@ -199,6 +199,33 @@ enum Command {
     },
     /// What has been touched lately.
     WorkingSet,
+    /// Run a consolidation pass: replay the episode log, form associations, rescore, retier.
+    Consolidate {
+        /// Compute the whole pass and print the report, but write nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// The last consolidation report, without running one.
+    Report,
+    /// One snapshot of the brain as JSON — nodes, edges, zones, recent episodes.
+    ///
+    /// This is what the Agent View draws. Written to a file rather than to standard output by
+    /// default, because a snapshot of a real index is tens of megabytes and a terminal is not
+    /// where it belongs.
+    Graph {
+        /// Where to write it. `-` writes to standard output.
+        #[arg(long, default_value = "graph.json")]
+        out: String,
+        /// How many nodes, chosen by salience. Ancestors are added on top.
+        #[arg(long, default_value_t = 3000)]
+        limit: usize,
+        /// How many recent episodes to include, for the animation.
+        #[arg(long, default_value_t = 500)]
+        events: usize,
+        /// Only one zone, by id. `cortex zones` lists them.
+        #[arg(long)]
+        zone: Option<i64>,
+    },
     /// What changed since an episode id. For an agent that should not poll.
     Diff {
         #[arg(long)]
@@ -1087,6 +1114,57 @@ async fn run(args: Args) -> Result<()> {
                     println!("nothing recent");
                 }
                 println!("\n{}", result.basis);
+            }
+        }
+
+        Command::Consolidate { dry_run } => {
+            let report: cortex_memory::ConsolidationReport = client
+                .call(method::BRAIN_CONSOLIDATE, serde_json::json!({ "dry_run": dry_run }))
+                .await?;
+            if args.json {
+                print_json(&report)?;
+            } else {
+                print!("{}", report.render());
+            }
+        }
+
+        Command::Report => {
+            let report: Option<cortex_memory::ConsolidationReport> =
+                client.call(method::BRAIN_REPORT, serde_json::json!({})).await?;
+            match report {
+                Some(report) if args.json => print_json(&report)?,
+                Some(report) => print!("{}", report.render()),
+                None if args.json => print_json(&serde_json::Value::Null)?,
+                None => println!("consolidation has never run. `cortex consolidate` starts one."),
+            }
+        }
+
+        Command::Graph { out, limit, events, zone } => {
+            let snapshot: serde_json::Value = client
+                .call(
+                    method::BRAIN_GRAPH,
+                    serde_json::json!({
+                        "limit": limit,
+                        "events": events,
+                        "zone": zone,
+                    }),
+                )
+                .await?;
+            let text = serde_json::to_string(&snapshot)?;
+            if out == "-" {
+                println!("{text}");
+            } else {
+                std::fs::write(&out, text.as_bytes())?;
+                // The path is the user's own and is printed, not logged. A snapshot of a real
+                // index contains real paths, so the message says so rather than leaving the
+                // reader to find out by opening it.
+                let nodes = snapshot["nodes"].as_array().map(Vec::len).unwrap_or(0);
+                let edges = snapshot["edges"].as_array().map(Vec::len).unwrap_or(0);
+                println!(
+                    "wrote {out}: {nodes} nodes, {edges} edges, {} bytes.\n\
+                     It contains the paths of the files it describes. Treat it like the index.",
+                    text.len()
+                );
             }
         }
 

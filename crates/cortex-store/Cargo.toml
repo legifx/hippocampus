@@ -9,6 +9,7 @@ description = "Storage layer for the Cortex memory daemon: schema, migrations an
 
 [dependencies]
 cortex-core.workspace = true
+cortex-memory.workspace = true
 rusqlite.workspace = true
 # HNSW over f16 vectors. C++ under the hood, header-only, no system library to install.
 usearch.workspace = true

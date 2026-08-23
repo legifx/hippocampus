@@ -11,6 +11,7 @@ description = "Policy engine, kill switch and audit log for the Agent Surface."
 cortex-core = { workspace = true }
 cortex-extract = { workspace = true }
 cortex-store = { workspace = true }
+cortex-memory = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

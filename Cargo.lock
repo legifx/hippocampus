@@ -410,6 +410,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "brain-sim"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "clap",
+ "cortex-core",
+ "cortex-memory",
+ "cortex-store",
+ "serde_json",
+]
+
+[[package]]
 name = "brotli"
 version = "8.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -787,6 +799,7 @@ dependencies = [
  "blake3",
  "cortex-core",
  "cortex-extract",
+ "cortex-memory",
  "cortex-store",
  "serde",
  "serde_json",
@@ -803,6 +816,7 @@ dependencies = [
  "clap",
  "cortex-core",
  "cortex-embed",
+ "cortex-memory",
  "cortex-rpc",
  "serde",
  "serde_json",
@@ -883,6 +897,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cortex-memory"
+version = "0.0.1"
+dependencies = [
+ "cortex-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cortex-preview"
 version = "0.0.1"
 dependencies = [
@@ -929,6 +952,7 @@ name = "cortex-store"
 version = "0.0.1"
 dependencies = [
  "cortex-core",
+ "cortex-memory",
  "rusqlite",
  "serde",
  "serde_json",

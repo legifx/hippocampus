@@ -45,7 +45,9 @@ impl NodeKind {
 /// Nothing is ever deleted by decay — it moves down. `Cold` keeps path and stat only and is
 /// read exclusively on an explicit deep search. Because the index is reconstructible, a
 /// demotion is always reversible.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Tier {
     /// In the Working Set: the human is touching this right now.

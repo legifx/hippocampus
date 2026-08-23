@@ -1,0 +1,231 @@
+/*
+ * The interface is a thin layer over a dark canvas, so everything here is either translucent or
+ * hairline. Two rules that are not taste:
+ *
+ * - The panels never take pointer events except on their own controls. A three-dimensional view
+ *   that cannot be dragged where a panel happens to overlap is infuriating in a way nobody
+ *   reports as a bug.
+ * - Type is small but never below 11px, and every number is tabular, so a value that changes
+ *   every frame does not make its row jitter.
+ */
+
+:root {
+  --ink: rgba(232, 238, 248, 0.92);
+  --ink-dim: rgba(232, 238, 248, 0.52);
+  --ink-faint: rgba(232, 238, 248, 0.3);
+  --panel: rgba(10, 14, 22, 0.72);
+  --edge: rgba(150, 180, 230, 0.14);
+  --accent: #ffa64d;
+  --font: ui-sans-serif, system-ui, "Inter", "Segoe UI", sans-serif;
+  --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #05070c;
+  color: var(--ink);
+  font-family: var(--font);
+  overflow: hidden;
+}
+
+#app { position: relative; width: 100vw; height: 100vh; }
+#app canvas { display: block; }
+
+.hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.panel {
+  position: absolute;
+  max-width: 300px;
+  padding: 14px 16px;
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  backdrop-filter: blur(14px);
+  pointer-events: auto;
+}
+
+.top-left { top: 20px; left: 20px; }
+.bottom-left { bottom: 20px; left: 20px; max-height: 46vh; overflow: auto; }
+.top-right { top: 20px; right: 20px; width: 290px; }
+
+.heading { position: relative; padding-right: 64px; }
+.heading h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: 0.01em; }
+.heading .subtitle { margin: 2px 0 10px; color: var(--ink-dim); font-size: 11px; }
+
+.badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border: 1px solid currentColor;
+}
+.badge-live { color: #6ee7a8; }
+.badge-baked { color: #7fb2ff; }
+.badge-generated { color: #c9a2ff; }
+
+h2 { margin: 0 0 10px; font-size: 11px; font-weight: 500; color: var(--ink-dim); }
+h3 { margin: 12px 0 6px; font-size: 10px; font-weight: 600; letter-spacing: 0.08em;
+     text-transform: uppercase; color: var(--ink-faint); }
+h3:first-child { margin-top: 0; }
+
+.stats { display: grid; grid-template-columns: auto 1fr; gap: 3px 14px; margin: 0; }
+.stats dt { color: var(--ink-dim); }
+.stats dd { margin: 0; text-align: right; font-family: var(--mono);
+            font-variant-numeric: tabular-nums; font-size: 11px; }
+
+.basis {
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--edge);
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.legend-group { margin-bottom: 12px; }
+.legend-row { display: flex; align-items: center; gap: 8px; color: var(--ink-dim); }
+.swatch { width: 10px; height: 10px; border-radius: 3px; flex: 0 0 auto; }
+.swatch.line { height: 2px; border-radius: 1px; }
+
+.inspector-body .path {
+  margin: 0 0 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  word-break: break-all;
+  line-height: 1.4;
+}
+.muted { color: var(--ink-dim); }
+.small { font-size: 10.5px; }
+
+.controls {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+button {
+  padding: 7px 13px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  backdrop-filter: blur(14px);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+button:hover { border-color: rgba(150, 180, 230, 0.4); }
+button.off { color: var(--ink-faint); }
+button.link { margin-top: 10px; padding: 4px 12px; }
+
+.fps {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  color: var(--ink-faint);
+  min-width: 62px;
+  text-align: right;
+}
+.fps.warn { color: var(--accent); }
+
+.caption {
+  position: absolute;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 10px 18px;
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  backdrop-filter: blur(14px);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.caption .step { font-family: var(--mono); font-size: 10px; color: var(--ink-faint); }
+.caption .detail { color: var(--ink-dim); }
+
+.report {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(520px, 80vw);
+  max-height: 70vh;
+  overflow: auto;
+  padding: 22px 26px;
+  background: rgba(8, 11, 18, 0.9);
+  border: 1px solid var(--edge);
+  border-radius: 16px;
+  backdrop-filter: blur(18px);
+  pointer-events: auto;
+}
+.report .close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 2px 9px;
+  font-size: 14px;
+  line-height: 1;
+}
+.report-group { margin-bottom: 16px; }
+.report .move,
+.report .highlight {
+  margin: 2px 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-dim);
+  word-break: break-all;
+}
+
+.hidden { display: none; }
+
+.fatal {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+  padding: 40px;
+}
+.fatal h1 { font-size: 16px; margin: 0; }
+.fatal p { color: var(--ink-dim); margin: 0; }
+.fatal pre {
+  margin-top: 12px;
+  padding: 12px 16px;
+  max-width: 60ch;
+  white-space: pre-wrap;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+}
+
+@media (max-width: 900px) {
+  .top-right, .bottom-left { display: none; }
+}

@@ -289,6 +289,80 @@ impl Surface<'_> {
         })
     }
 
+    /// The whole brain, in one answer, for something that wants to draw it.
+    ///
+    /// A read, and a large one — the Result Gate an agent harness puts in front of its tools
+    /// exists for answers like this. It is on the surface anyway rather than being private to
+    /// the GUI, because "what does the memory currently believe" is a question an agent has as
+    /// much right to ask as a person, and answering it twice in two places would guarantee the
+    /// two answers eventually differ.
+    pub fn graph(&self, params: &GraphParams) -> ToolResult<cortex_store::memory::GraphSnapshot> {
+        let tool = "brain.graph";
+        let args = serde_json::to_value(params).unwrap_or_default();
+        self.gate_args(tool, &args)?;
+
+        let request = cortex_store::memory::GraphParams {
+            limit: params.limit.unwrap_or(3_000).min(50_000),
+            min_salience: params.min_salience.unwrap_or(f64::NEG_INFINITY),
+            zone: params.zone,
+            events: params.events.unwrap_or(500).min(20_000),
+            window_secs: params.window_secs.unwrap_or(7 * 86_400),
+            now: self.now,
+        };
+        let mut snapshot = self.store.graph_snapshot(&request)?;
+        snapshot.report = self.store.last_consolidation()?;
+
+        self.auditor.allowed(
+            self.now,
+            tool,
+            &args,
+            &crate::audit::summarize("nodes", snapshot.nodes.len(), None),
+        );
+        Ok(snapshot)
+    }
+
+    /// Run a consolidation pass.
+    ///
+    /// This writes to the brain and to nothing else — no file is touched, which is why it sits
+    /// with the `brain.*` tools rather than behind the write allow-list (R6). It is still gated
+    /// and audited: a pass that demoted half the index without leaving a trace would be exactly
+    /// the kind of invisible change that makes a memory untrustworthy.
+    pub fn consolidate(
+        &self,
+        params: &ConsolidateRequest,
+    ) -> ToolResult<cortex_memory::ConsolidationReport> {
+        let tool = "brain.consolidate";
+        let args = serde_json::to_value(params).unwrap_or_default();
+        self.gate_args(tool, &args)?;
+
+        let mut request = cortex_store::memory::ConsolidateParams::new(self.now);
+        request.dry_run = params.dry_run;
+        let report = self.store.consolidate(&request)?;
+
+        self.auditor.allowed(
+            self.now,
+            tool,
+            &args,
+            &crate::audit::summarize("nodes scored", report.nodes_scored, None),
+        );
+        Ok(report)
+    }
+
+    /// The last consolidation report, without running one.
+    pub fn report(&self) -> ToolResult<Option<cortex_memory::ConsolidationReport>> {
+        let tool = "brain.report";
+        let args = serde_json::json!({});
+        self.gate_args(tool, &args)?;
+        let report = self.store.last_consolidation()?;
+        self.auditor.allowed(
+            self.now,
+            tool,
+            &args,
+            &crate::audit::summarize("reports", usize::from(report.is_some()), None),
+        );
+        Ok(report)
+    }
+
     /// What changed, for an agent that should not poll.
     pub fn diff(&self, params: &DiffParams) -> ToolResult<DiffResult> {
         let tool = "brain.diff";

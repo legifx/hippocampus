@@ -1,0 +1,24 @@
+{
+  "name": "hippocampus-agent-view",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "data": "cargo run --release -p brain-sim --manifest-path ../Cargo.toml -- --out public/graph.json --days 60",
+    "bake": "node scripts/bake.mjs"
+  },
+  "dependencies": {
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@types/three": "^0.185.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "vite-plugin-singlefile": "^2.1.0",
+    "vitest": "^2.1.5"
+  }
+}

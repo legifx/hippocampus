@@ -1,0 +1,16 @@
+[package]
+name = "brain-sim"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Simulated usage against a synthetic index: the M5 thirty-day test, and the demo the Agent View ships with."
+
+[dependencies]
+cortex-core.workspace = true
+cortex-store.workspace = true
+cortex-memory.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+anyhow.workspace = true
