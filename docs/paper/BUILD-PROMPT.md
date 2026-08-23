@@ -695,6 +695,53 @@ is green on the release commit.
 
 ---
 
+### M10 — The explorer as a memory browser
+
+**Goal:** the window stops being a file manager that consults a memory and becomes a memory
+browser that can show a directory. **Everything the memory computes should be navigable with what
+the user already knows: they are in a place, they can go back, they can open things.**
+
+Full argument, current state, the four steps and the acceptance criteria for each:
+**[`A-DIRECTORY-IS-JUST-ONE-QUERY.md`](A-DIRECTORY-IS-JUST-ONE-QUERY.md)**.
+A session prompt for an agent picking it up: **[`EXPLORER-KICKOFF-PROMPT.md`](EXPLORER-KICKOFF-PROMPT.md)**.
+
+### Scope
+
+- **One row stream, many origins.** `view.open(source)` replaces the several row-producing calls
+  at the view layer. A source is a directory, a query, a concept, a zone, the working set, the
+  neighbours of a node, a slice of time, or a tier. The row shape does not depend on which.
+- **Ordering is the daemon's for every source**, salience beside name, size and modification time.
+- **Every view states its own basis in words** — what this list is, and what it is not.
+- **The memory columns on every row**: salience, tier, degree, last episode, zone, pinned, and
+  which concepts it belongs to. Tier renders as brightness, the same encoding the graph view uses.
+- **Concepts, the working set and the cold tier become places**, in the same navigation and the
+  same history stack as directories.
+- The context panel keeps what belongs to one selection — why this ranked here, what happened to
+  it, annotate it — and gives up "related", which is a place now.
+
+### Definition of Done
+
+1. The frontend contains no branch on "am I browsing or searching", and no code path orders,
+   filters or merges rows. Asserted by the architectural test that already guards this.
+2. Every M4 performance gate still holds **with the memory columns present**, measured on an idle
+   machine: 300 ms cold start, 80 ms P95 keystroke to first row, first row of a 10 000-entry
+   directory in 100 ms, 60 fps scrolling, bounded DOM nodes.
+3. A concept can be opened, its members operated on like any other rows, and its basis line says
+   how it was named — including that the naming is lexical.
+4. The cold tier is one place that explains itself, and a row can be pinned back out of it.
+5. `brain.explain` for the selected row is one keystroke away and shows the component breakdown.
+6. Navigating back out of every new kind of place works with the same key as a directory.
+7. **The measurement that decides it:** ordering a directory by salience finds a file the owner
+   knows they have faster than ordering by modification time — tried by hand, with a stopwatch,
+   and the result written into `docs/03-PROGRESS.md` whichever way it goes.
+
+**Do not start this while the file-manager basics are missing.** Archives, drag-and-drop out of
+the window, network locations and correct permission display come first: a file manager that
+cannot do the basics will not be used, however good the brain is.
+
+
+---
+
 ## 9. Latency budgets
 
 These are the specification, not aspirations. Write the benchmark before the implementation, and

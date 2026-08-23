@@ -245,6 +245,20 @@ required node count the worst frame still used well under two thirds of its budg
 includes issuing the draw calls but not the GPU finishing them. The frame rate holding at the cap
 is the evidence for the GPU side.
 
+### The explorer's next shape is written down now
+
+`docs/paper/A-DIRECTORY-IS-JUST-ONE-QUERY.md` argues the restructure the window needs, and §M10 of
+`docs/paper/BUILD-PROMPT.md` is its scope and Definition of Done. The short version: the row
+renderer already does not know whether its rows came from a directory or from a search, and that
+convenience is actually a statement about architecture — **a directory is one query among
+several, not the ground truth of the view.** Following it gives concepts, the working set and the
+cold tier the same navigation directories already have, in four shippable steps.
+
+**It waits behind M6's mandatory list.** Archives, drag-and-drop out of the window, network
+locations and permission display are still missing, and the largest scope risk in this project is
+that the memory features are more interesting to build than those are.
+`docs/paper/EXPLORER-KICKOFF-PROMPT.md` is the session prompt when it is time.
+
 ### What to do next here
 
 - **The abstraction step (D62).** It needs `embeddings` to stop being 0, which needs the model

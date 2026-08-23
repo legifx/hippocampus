@@ -65,9 +65,19 @@ The numbering differs from the source spec because the order does; the mapping i
 | **M7** | Federation: outbox protocol in Core, bridge in Extension | M6 |
 | **M8** | Agent View: brain-state visualisation | M7 |
 | **M9** | Release: packaging, onboarding, second-user install | M8 |
+| **M10** | The explorer as a memory browser — see below | (new) |
 
 **M0–M3 are headless.** That is deliberate. If the search does not convince in the CLI, it will
 not convince in a GUI.
+
+**M10 is specified elsewhere**, because it is an argument before it is a task list:
+[`paper/A-DIRECTORY-IS-JUST-ONE-QUERY.md`](paper/A-DIRECTORY-IS-JUST-ONE-QUERY.md) restructures
+the window around the memory — one row stream with many origins, a directory being one of them —
+in four shippable steps with acceptance criteria. Its scope and Definition of Done are §M10 of
+[`paper/BUILD-PROMPT.md`](paper/BUILD-PROMPT.md), and
+[`paper/EXPLORER-KICKOFF-PROMPT.md`](paper/EXPLORER-KICKOFF-PROMPT.md) is the session prompt for
+picking it up. **It waits behind M6's mandatory list**: a file manager that cannot do the basics
+will not be used, however good the brain is.
 
 ---
 
