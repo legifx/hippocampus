@@ -404,11 +404,32 @@ impl Store {
         now: i64,
         limit: usize,
     ) -> Result<Vec<MemoryHit>> {
+        self.search_memories_with(match_expr, scopes, now, limit, false)
+    }
+
+    /// The same, with the option of reaching superseded memories.
+    ///
+    /// A separate entry point rather than a fifth positional `bool` on the common one: the
+    /// caller that wants history is rare and says so, and the caller that does not cannot get
+    /// it by accident.
+    pub fn search_memories_with(
+        &self,
+        match_expr: &str,
+        scopes: &[String],
+        now: i64,
+        limit: usize,
+        include_superseded: bool,
+    ) -> Result<Vec<MemoryHit>> {
         if scopes.is_empty() {
             return Ok(Vec::new());
         }
         let conn = self.conn();
         let holes = vec!["?"; scopes.len()].join(", ");
+        let supersession = if include_superseded {
+            ""
+        } else {
+            "AND m.superseded_by IS NULL"
+        };
         let sql = format!(
             "SELECT m.node_id, c.id, bm25(chunks_fts)
              FROM chunks_fts
@@ -416,7 +437,7 @@ impl Store {
              JOIN memories m ON m.node_id = c.node_id
              WHERE chunks_fts MATCH ?
                AND m.scope IN ({holes})
-               AND m.superseded_by IS NULL
+               {supersession}
                AND (m.expires_at IS NULL OR m.expires_at > ?)
              ORDER BY bm25(chunks_fts)
              LIMIT ?"

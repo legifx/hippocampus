@@ -42,6 +42,12 @@ use std::time::{Duration, Instant};
 /// inference calls without holding much text in memory.
 const CLAIM: usize = 64;
 
+/// How many memories to claim per pass.
+///
+/// Smaller than the file claim on purpose: memories arrive one at a time, from a human or an
+/// agent that is waiting, and a large claim would only add latency to the first one.
+const MEMORY_CLAIM: usize = 32;
+
 /// How often the usearch index is written out while a backlog drains.
 ///
 /// The index is derived, so losing it costs a rebuild rather than data — but a rebuild of a
@@ -182,7 +188,17 @@ impl Embedding {
                 }
             };
 
+            // Memories are few and their queue is cheap to check, so it is checked on every
+            // pass rather than only when the file queue is empty: a memory written during a
+            // long first index run would otherwise wait hours for its vector.
+            let memories_embedded = self.embed_memories(&session);
+
             if batch.is_empty() {
+                if memories_embedded > 0 {
+                    // There was work after all, so this pass is not the settled one.
+                    self.save_index(&session);
+                    continue;
+                }
                 settled_at = watermark;
                 // Nothing left to compute does not mean everything is findable. The ANN index
                 // keys by chunk id while the vectors key by content, so re-deriving chunks —
@@ -190,6 +206,7 @@ impl Embedding {
                 // empty. Checking here is what makes that self-healing, and it is the same path
                 // that rebuilds the index when its file is deleted (Definition of Done §8).
                 self.reconcile_index(&session);
+                self.reconcile_memory_index(&session);
                 if !self.stats.caught_up.swap(true, Ordering::Relaxed) {
                     // Nothing left to add, so the index goes back to being a mapping: its pages
                     // become file-backed and the daemon stops holding a hundred megabytes of
@@ -398,6 +415,138 @@ impl Embedding {
         if let Err(e) = session.loaded.vectors.save() {
             tracing::warn!(error = %e, "could not save the vector index");
         }
+        if let Err(e) = session.loaded.memory_vectors.save() {
+            tracing::warn!(error = %e, "could not save the memory vector index");
+        }
+    }
+
+    /// Embed whatever memories have no vector yet, into the second collection.
+    ///
+    /// Deliberately a separate pass rather than a branch inside [`Self::run_batch`], and the
+    /// reason is that the two queues differ in the one place that matters: a file chunk is
+    /// re-read from the file and its hash checked before it is embedded, and a memory has no
+    /// file. Threading "sometimes the text is already here" through the file path would put a
+    /// conditional inside the loop that verifies the corpus, which is the loop that must stay
+    /// obvious.
+    ///
+    /// Returns how many were embedded, so the caller knows whether it did any work.
+    fn embed_memories(&self, session: &Session) -> usize {
+        let batch = match self
+            .store
+            .memory_chunks_without_embedding(session.reference(), MEMORY_CLAIM)
+        {
+            Ok(batch) => batch,
+            Err(e) => {
+                tracing::warn!(error = %e, "could not read the memory embedding queue");
+                return 0;
+            }
+        };
+        if batch.is_empty() {
+            return 0;
+        }
+
+        let mut embedded = 0;
+        for group in batch.chunks(self.config.embedding.batch_size) {
+            if self.state.stop_requested() || self.state.is_paused() {
+                break;
+            }
+            let inputs: Vec<Input<'_>> = group
+                .iter()
+                .map(|chunk| Input::Passage(chunk.text.as_str()))
+                .collect();
+            let vectors = match session.loaded.embedder.embed(&inputs) {
+                Ok(vectors) => vectors,
+                Err(e) => {
+                    self.stats.failures.fetch_add(1, Ordering::Relaxed);
+                    tracing::warn!(error = %e, memories = group.len(), "embedding a memory failed");
+                    continue;
+                }
+            };
+            let rows: Vec<EmbeddingWrite> = group
+                .iter()
+                .zip(&vectors)
+                .map(|(chunk, vector)| EmbeddingWrite {
+                    chunk_id: chunk.chunk_id,
+                    chunk_hash: chunk.hash.clone(),
+                    vector: vector.clone(),
+                })
+                .collect();
+
+            match self
+                .store
+                .upsert_embeddings(session.reference(), &rows, crate::ingest::unix_now())
+            {
+                Ok(written) => embedded += written,
+                Err(e) => {
+                    self.stats.failures.fetch_add(1, Ordering::Relaxed);
+                    tracing::warn!(error = %e, "could not store memory embeddings");
+                    continue;
+                }
+            }
+            if let Err(e) = session
+                .loaded
+                .memory_vectors
+                .add_many(rows.iter().map(|r| (r.chunk_id, r.vector.as_slice())))
+            {
+                tracing::warn!(error = %e, "could not add vectors to the memory index");
+            }
+        }
+        embedded
+    }
+
+    /// The memory collection's half of [`Self::reconcile_index`].
+    fn reconcile_memory_index(&self, session: &Session) {
+        let expected = match self
+            .store
+            .indexable_memory_vector_count(session.reference())
+        {
+            Ok(count) => count,
+            Err(e) => {
+                tracing::warn!(error = %e, "could not count indexable memory vectors");
+                return;
+            }
+        };
+        if expected == session.loaded.memory_vectors.len() {
+            return;
+        }
+        tracing::info!(
+            expected,
+            present = session.loaded.memory_vectors.len(),
+            "rebuilding the memory vector index from the store"
+        );
+        if let Err(e) = session.loaded.memory_vectors.clear() {
+            tracing::warn!(error = %e, "could not clear the memory vector index");
+            return;
+        }
+        let mut batch: Vec<(cortex_core::ids::ChunkId, Vec<f32>)> = Vec::with_capacity(256);
+        let mut added = 0usize;
+        let flush = |batch: &mut Vec<(cortex_core::ids::ChunkId, Vec<f32>)>| {
+            if batch.is_empty() {
+                return;
+            }
+            if let Err(e) = session
+                .loaded
+                .memory_vectors
+                .add_many(batch.iter().map(|(id, v)| (*id, v.as_slice())))
+            {
+                tracing::warn!(error = %e, "could not refill the memory vector index");
+            }
+            batch.clear();
+        };
+        let result =
+            self.store
+                .for_each_indexable_memory_vector(session.reference(), |chunk, vector| {
+                    batch.push((chunk, vector.to_vec()));
+                    added += 1;
+                    if batch.len() == 256 {
+                        flush(&mut batch);
+                    }
+                });
+        flush(&mut batch);
+        match result {
+            Ok(_) => tracing::info!(vectors = added, "memory vector index rebuilt"),
+            Err(e) => tracing::warn!(error = %e, "could not read memory embeddings back"),
+        }
     }
 
     fn rest(&self, worked: Duration) {
@@ -542,6 +691,24 @@ mod tests {
             self.semantics.get().unwrap().vectors
         }
 
+        fn memory_vectors(&self) -> Arc<cortex_store::vectors::VectorIndex> {
+            self.semantics.get().unwrap().memory_vectors
+        }
+
+        fn remember(&self, text: &str) -> cortex_core::ids::NodeId {
+            use cortex_core::memory::{MemoryKind, MemoryScope};
+            use cortex_core::model::Actor;
+            use cortex_store::memories::NewMemory;
+            self.store
+                .remember(
+                    &NewMemory::new(MemoryScope::Global, MemoryKind::Fact, text),
+                    &Actor::Agent("a".into()),
+                    1,
+                )
+                .unwrap()
+                .node_id
+        }
+
         fn model_ref(&self) -> cortex_store::embeddings::ModelRef<'static> {
             ModelRef {
                 id: HashingEmbedder::ID,
@@ -549,6 +716,81 @@ mod tests {
                 dim: cortex_embed::hashing::DIM,
             }
         }
+    }
+
+    /// The two collections stay apart, and this is the test that says so.
+    ///
+    /// A memory's vector belongs in the memory index and nowhere else. If it landed in the file
+    /// index instead, nothing would fail loudly: search would go on working, and a memory
+    /// recall would simply lose to a hundred thousand file chunks every time.
+    #[test]
+    fn a_memory_is_embedded_into_the_memory_collection_and_not_the_file_one() {
+        let harness = Harness::new();
+        harness.add("notes.txt", "an ordinary file with ordinary words in it");
+        harness.drain();
+        let files_before = harness.vectors().len();
+        assert!(files_before > 0, "the fixture embedded no file chunks");
+
+        harness.remember("the hygiene gate runs before every commit");
+        let stage = harness.stage();
+        let session = stage.session().unwrap();
+        assert_eq!(stage.embed_memories(&session), 1);
+
+        assert_eq!(harness.memory_vectors().len(), 1);
+        assert_eq!(
+            harness.vectors().len(),
+            files_before,
+            "a memory's vector was added to the file collection"
+        );
+    }
+
+    /// The reconcile has to be able to tell the collections apart too, or it rebuilds one of
+    /// them on every single pass because the count it compares against includes the other.
+    #[test]
+    fn the_file_reconcile_does_not_count_memory_vectors() {
+        let harness = Harness::new();
+        harness.add("notes.txt", "an ordinary file with ordinary words in it");
+        harness.drain();
+        harness.remember("something an agent learned");
+        let stage = harness.stage();
+        let session = stage.session().unwrap();
+        stage.embed_memories(&session);
+
+        let expected = harness
+            .store
+            .indexable_vector_count(harness.model_ref())
+            .unwrap();
+        assert_eq!(
+            expected,
+            harness.vectors().len(),
+            "the file collection's expected count included a memory, so it would rebuild for ever"
+        );
+        assert_eq!(
+            harness
+                .store
+                .indexable_memory_vector_count(harness.model_ref())
+                .unwrap(),
+            1
+        );
+    }
+
+    /// Deleting the memory index is a supported way to recover from anything, exactly as it is
+    /// for the file one: everything in it is in the table at full precision.
+    #[test]
+    fn the_memory_collection_rebuilds_from_the_table_without_the_model() {
+        let harness = Harness::new();
+        harness.remember("one");
+        harness.remember("two");
+        let stage = harness.stage();
+        let session = stage.session().unwrap();
+        stage.embed_memories(&session);
+        assert_eq!(harness.memory_vectors().len(), 2);
+
+        harness.memory_vectors().clear().unwrap();
+        assert_eq!(harness.memory_vectors().len(), 0);
+
+        stage.reconcile_memory_index(&session);
+        assert_eq!(harness.memory_vectors().len(), 2);
     }
 
     #[test]
@@ -696,6 +938,7 @@ mod tests {
                 loaded: Loaded {
                     embedder: counter.clone(),
                     vectors: harness.semantics.get().unwrap().vectors,
+                    memory_vectors: harness.semantics.get().unwrap().memory_vectors,
                 },
                 model: counter.model(),
             };

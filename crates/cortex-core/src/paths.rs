@@ -90,6 +90,11 @@ impl Paths {
         self.state_dir.join("vectors.usearch")
     }
 
+    /// The ANN index over memory chunks. A second collection, same format, same rebuild path.
+    pub fn memory_vector_index(&self) -> PathBuf {
+        self.state_dir.join("memories.usearch")
+    }
+
     pub fn models_dir(&self) -> PathBuf {
         self.state_dir.join("models")
     }

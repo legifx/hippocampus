@@ -24,7 +24,18 @@ use std::sync::{Arc, RwLock};
 #[derive(Clone)]
 pub struct Loaded {
     pub embedder: Arc<dyn Embedder>,
+    /// The ANN index over file chunks.
     pub vectors: Arc<VectorIndex>,
+    /// The ANN index over memory chunks — a second collection of the same type, in its own
+    /// file (D75).
+    ///
+    /// Not a filter over the first one, and the reason is arithmetic rather than tidiness: a
+    /// memory recall against an index holding 122 137 file chunks competes for its twenty slots
+    /// against every one of them and loses. Over-fetching and filtering afterwards does not fix
+    /// it, because the memory that answers the question can be at rank five thousand. Two
+    /// collections make the memory arm exact and microsecond-cheap, and cost one more file that
+    /// is rebuildable from the same table as the first.
+    pub memory_vectors: Arc<VectorIndex>,
 }
 
 /// What `cortex status` and `cortex model status` need to say.
@@ -214,9 +225,22 @@ impl Semantics {
                 return Err(note);
             }
         };
+        let memory_path = self.state_dir.join("memories.usearch");
+        let memory_vectors = match VectorIndex::open(&memory_path, dim) {
+            Ok(index) => Arc::new(index),
+            Err(e) => {
+                let note = format!("the memory vector index could not be opened: {e}");
+                self.set_note(&note);
+                return Err(note);
+            }
+        };
 
         let backend = embedder.backend();
-        *self.loaded.write().unwrap() = Some(Loaded { embedder, vectors });
+        *self.loaded.write().unwrap() = Some(Loaded {
+            embedder,
+            vectors,
+            memory_vectors,
+        });
         *self.note.write().unwrap() = None;
         Ok(backend)
     }

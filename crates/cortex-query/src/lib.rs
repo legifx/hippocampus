@@ -10,6 +10,7 @@
 //! composes them against a real store, and it lives here rather than in the daemon so that the
 //! benchmark measures the code that ships instead of a second copy of it.
 
+pub mod context;
 pub mod fusion;
 pub mod fuzzy;
 pub mod lexical;

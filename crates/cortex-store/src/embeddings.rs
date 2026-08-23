@@ -28,7 +28,7 @@
 use crate::error::{Result, StoreError};
 use crate::Store;
 use cortex_core::ids::{ChunkId, NodeId};
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use std::path::PathBuf;
 
 /// Which model an operation is about.
@@ -60,6 +60,15 @@ pub struct ChunkToEmbed {
     pub byte_end: i64,
     /// What the chunk hashed to when it was indexed. The re-read is refused if it disagrees,
     /// because embedding text the index does not describe would be worse than embedding nothing.
+    pub hash: String,
+}
+
+/// A memory chunk waiting for a vector. Carries its text, because there is no file to re-read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryChunkToEmbed {
+    pub chunk_id: ChunkId,
+    pub node_id: NodeId,
+    pub text: String,
     pub hash: String,
 }
 
@@ -192,9 +201,14 @@ impl Store {
     pub fn indexable_vector_count(&self, model: ModelRef<'_>) -> Result<usize> {
         let conn = self.conn();
         let count: i64 = conn.query_row(
+            // `n.path IS NOT NULL` is what keeps memory chunks out of the file collection's
+            // count. Without it, the moment a memory is embedded this number exceeds what the
+            // file index holds, the reconcile concludes the index has drifted, and it rebuilds
+            // the whole thing on every pass for ever.
             "SELECT count(*) FROM chunks c
+             JOIN nodes n ON n.id = c.node_id
              JOIN embeddings e ON e.chunk_hash = c.hash
-             WHERE e.model_id = ?1 AND e.model_version = ?2",
+             WHERE e.model_id = ?1 AND e.model_version = ?2 AND n.path IS NOT NULL",
             params![model.id, model.version],
             |r| r.get(0),
         )?;
@@ -215,8 +229,9 @@ impl Store {
         let mut stmt = conn.prepare(
             "SELECT c.id, e.dim, e.vector
              FROM chunks c
+             JOIN nodes n ON n.id = c.node_id
              JOIN embeddings e ON e.chunk_hash = c.hash
-             WHERE e.model_id = ?1 AND e.model_version = ?2
+             WHERE e.model_id = ?1 AND e.model_version = ?2 AND n.path IS NOT NULL
              ORDER BY c.id",
         )?;
         let mut rows = stmt.query(params![model.id, model.version])?;
@@ -231,6 +246,117 @@ impl Store {
             count += 1;
         }
         Ok(count)
+    }
+
+    /// The memory chunks this model has not embedded yet.
+    ///
+    /// A separate queue from [`Store::chunks_without_embedding`] rather than a flag on it,
+    /// because the text comes from a different place: a file chunk is re-read from the file and
+    /// its hash verified, and a memory has no file to re-read. The text is in the row.
+    pub fn memory_chunks_without_embedding(
+        &self,
+        model: ModelRef<'_>,
+        limit: usize,
+    ) -> Result<Vec<MemoryChunkToEmbed>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT c.id, m.node_id, m.text, c.hash
+             FROM chunks c
+             JOIN memories m ON m.node_id = c.node_id
+             LEFT JOIN embeddings e
+                 ON e.chunk_hash = c.hash AND e.model_id = ?1 AND e.model_version = ?2
+             WHERE e.chunk_hash IS NULL
+             ORDER BY c.id
+             LIMIT ?3",
+        )?;
+        let rows = stmt
+            .query_map(params![model.id, model.version, limit as i64], |r| {
+                Ok(MemoryChunkToEmbed {
+                    chunk_id: ChunkId(r.get(0)?),
+                    node_id: NodeId(r.get(1)?),
+                    text: r.get(2)?,
+                    hash: r.get(3)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// How many memory chunks have a vector this model produced.
+    pub fn indexable_memory_vector_count(&self, model: ModelRef<'_>) -> Result<usize> {
+        let conn = self.conn();
+        let count: i64 = conn.query_row(
+            "SELECT count(*) FROM chunks c
+             JOIN memories m ON m.node_id = c.node_id
+             JOIN embeddings e ON e.chunk_hash = c.hash
+             WHERE e.model_id = ?1 AND e.model_version = ?2",
+            params![model.id, model.version],
+            |r| r.get(0),
+        )?;
+        Ok(count as usize)
+    }
+
+    /// Every memory vector, streamed. Rebuilds the memory collection without the model.
+    pub fn for_each_indexable_memory_vector(
+        &self,
+        model: ModelRef<'_>,
+        mut f: impl FnMut(ChunkId, &[f32]),
+    ) -> Result<usize> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT c.id, e.dim, e.vector
+             FROM chunks c
+             JOIN memories m ON m.node_id = c.node_id
+             JOIN embeddings e ON e.chunk_hash = c.hash
+             WHERE e.model_id = ?1 AND e.model_version = ?2
+             ORDER BY c.id",
+        )?;
+        let mut rows = stmt.query(params![model.id, model.version])?;
+        let mut count = 0;
+        while let Some(row) = rows.next()? {
+            let chunk = ChunkId(row.get(0)?);
+            let dim: i64 = row.get(1)?;
+            let blob: Vec<u8> = row.get(2)?;
+            let vector = decode_vector(&blob, dim as usize)?;
+            f(chunk, &vector);
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    /// The vectors for a specific set of chunks, for callers that already have candidates.
+    ///
+    /// Used by the diversification step, which needs the vectors of the twenty things it is
+    /// choosing between and not of the hundred thousand it is not.
+    pub fn embeddings_for_chunks(
+        &self,
+        model: ModelRef<'_>,
+        chunks: &[ChunkId],
+    ) -> Result<std::collections::HashMap<ChunkId, Vec<f32>>> {
+        let mut out = std::collections::HashMap::with_capacity(chunks.len());
+        if chunks.is_empty() {
+            return Ok(out);
+        }
+        let conn = self.conn();
+        // One statement, re-used. A single `IN (...)` would need the placeholder count baked
+        // into the SQL and re-prepared for every distinct candidate count, which is a prepared
+        // statement cache that never hits.
+        let mut stmt = conn.prepare(
+            "SELECT e.dim, e.vector FROM chunks c
+             JOIN embeddings e ON e.chunk_hash = c.hash
+             WHERE c.id = ?1 AND e.model_id = ?2 AND e.model_version = ?3",
+        )?;
+        for chunk in chunks {
+            let row: Option<(i64, Vec<u8>)> = stmt
+                .query_row(params![chunk.0, model.id, model.version], |r| {
+                    Ok((r.get(0)?, r.get(1)?))
+                })
+                .optional()?;
+            if let Some((dim, blob)) = row {
+                out.insert(*chunk, decode_vector(&blob, dim as usize)?);
+            }
+        }
+        Ok(out)
     }
 
     /// Every vector this model produced, handed to `f` one at a time.
