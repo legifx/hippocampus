@@ -8,7 +8,7 @@ add it here first.
 |---|---|
 | **Cortex** | The daemon on the local machine. The core of the system. Binary name `cortexd`. |
 | **Main Brain** | A remote, always-on semantic memory instance the Cortex may federate with. **Optional.** The Core works fully without one. |
-| **Node** | A memory entry. May be a file, a directory, a chunk, a concept or an annotation. |
+| **Node** | A memory entry. May be a file, a directory, a chunk, a concept, an annotation or a **Memory**. |
 | **Episode** | A timestamped event (file opened, created, searched, moved). Immutable, append-only. |
 | **Working Set** | What the human is doing *right now*. Volatile, TTL-based, in memory. |
 | **STM** | Short-Term Memory. Hot, fully indexed zone covering the last N days. |
@@ -23,6 +23,12 @@ add it here first.
 | **Extension** | Private, personal add-on. Separate repository. Never merged into Core. |
 | **Ingest** | The pipeline from filesystem event to indexed chunk. |
 | **Outbox** | Local append-only queue of sync events waiting for a reachable peer. |
+| **Memory** | A Node with `kind = 'memory'`: something an agent or the human knows that is **not in a file**. Has text, a Scope and a memory kind, no path. Indexed, scored, decayed and consolidated exactly like a file's chunks (D74). |
+| **Scope** | Who a Memory belongs to: `session:<id>`, `agent:<name>`, `project:<zone_id>` or `global`. Writes default to the narrowest; reads never cross into another agent's private scope. |
+| **Context Pack** | The answer `brain.context` gives: a token-budgeted, deduplicated, attributed block of memory, addressable by `pack_id` so an outcome can be reported against it (D77). |
+| **Usefulness** | The learned component of a Memory's salience, moved by `brain.outcome`. Distinct from **confidence**, which is the writer's own claim and is never treated as evidence (D76). |
+| **Agent Session** | One agent's run against the Surface. Every episode, audit row and Memory written during it carries its id, which is what makes "what did this task do" answerable. |
+| **Agent Inspector** | The panel in the explorer that shows the Agent area: live sessions, the memory list, policy, the undo journal, and the Agent View embedded. Renders; does not decide (D4). |
 | **Peer** | A federation counterpart. A Main Brain is a peer. The protocol does not know what kind. |
 
 ## Terms deliberately avoided
@@ -31,3 +37,8 @@ add it here first.
 - "AI search" — the system is a hybrid retrieval engine; models improve ranking, they do not
   produce the result set.
 - "Sidecar file" — Hippocampus writes nothing next to the user's files. Ever.
+- "Agent memory" as a *separate system* — there is one memory. An agent's Memory is a Node in it,
+  distinguished by Scope, not by living somewhere else (D74). Saying "the agent memory" invites
+  building the second store that decision exists to prevent.
+- "Vector database" as a component to be chosen — the vector index is one arm of retrieval and a
+  derived cache of the `embeddings` table, not a system of record (D75).

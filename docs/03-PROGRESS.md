@@ -9,9 +9,9 @@ If you finish work without editing this file, the next agent starts from nothing
 
 | | |
 |---|---|
-| **Active milestone** | M8 — Agent View, and the half of M5 it needs (pulled ahead at the owner's request, D62) |
+| **Active milestone** | **M11 — The Agent Brain** (added at the owner's request 2026-08-23, D74). M8 and M5 as below. |
 | **Status** | M4 complete. M6 begun and paused. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **881 Rust tests pass** under `cargo test --workspace` across 40 test binaries — 44 of them in the new `cortex-memory`, 23 in `cortex-store::memory`, 2 guarding the response path — plus 11 vitest in `ui-agent`. **A note on that number:** this file briefly said 399 and accused the previous entry's 812 of being unreproducible. The 399 was wrong: the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Check the measuring tool before disbelieving the measurement — this file already says that about latency, and it applies to counting. |
-| **Last updated** | 2026-08-23 |
+| **Last updated** | 2026-08-23 (M11 specification) |
 | **Blocked on** | nothing |
 
 ## Start here
@@ -759,6 +759,51 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
+
+### 2026-08-23 — M11 specified: the agent brain, and the vector question answered
+
+Specification only; no code in this commit. The owner asked for the agent area to be built out,
+for Hippocampus itself to become the memory an agent works from, and for that to go into the
+build prompt and the documentation before it goes into the code. It is milestone **M11** in both
+build prompts, with five decisions behind it.
+
+**The design in one sentence: a memory is a node.** What an agent learns that is not in a file
+becomes `kind = 'memory'` — no path, its own text, a scope — and every faculty the file memory
+already has applies to it unchanged. The alternative, a second agent-flavoured store, was
+considered and rejected in **D74** for three reasons that are one reason: two stores means two
+rankings and the second is always worse; the interesting queries cross the boundary and merging
+two incomparable score scales is the mistake RRF exists to avoid; and a second store holding the
+only copy of what an agent learned would not satisfy R10.
+
+**Was the vector database supposed to become Qdrant? No — D75 says why**, and the table in it is
+the short answer: a network service against R5, a second install step against M9, and a measured
+1.01 ms P95 against a 40 ms budget on the index that already exists. What is actually missing is
+not a different engine but **a second collection**: a memory recall against one index shared with
+122 137 file chunks competes for twenty slots and loses, whatever the engine is. The existing
+`VectorIndex` gets instantiated twice.
+
+**The two ideas in it that are not obvious:**
+
+- **Retrieval without use is evidence *against* a memory (D76).** Every salience component so far
+  rewards being touched, which is right for files — a human opening a file found it useful — and
+  wrong for a memory, because a memory in a context pack was not chosen by anybody, it was chosen
+  by the ranking being evaluated. So `brain.outcome` reports back, and a memory that keeps
+  arriving in context and is never reported useful decays *faster* than one never retrieved.
+- **`brain.context` returns a pack, not rows (D77).** Budget in measured tokens rather than
+  characters over four; pinned preferences unconditionally, because their whole value is being
+  present; MMR before truncation, because restatement is the specific failure of embedding
+  retrieval over a memory store; a basis on every item, because a memory an agent cannot attribute
+  is one it cannot argue with.
+
+**M6 still gates M10 and this does not change that.** M11 was put ahead of the file-manager
+basics deliberately and the exception is written into the milestone map: M6 gates the *window*,
+M11 is mostly daemon, and its window component is a panel inside the existing toplevel rather
+than a new surface. Archives, drag-and-drop out of the window, network locations and correct
+permission display are still missing and still come before M10.
+
+Next: migration 0007, the store layer, then `brain.context`, then the Inspector. The
+Definition of Done is twelve items and item 2 — a rebuild reproducing a byte-identical dump
+including usefulness counts and deletions — is the one that will find the bugs.
 
 ### 2026-08-21 — The password prompt, and a negative that was not evidence
 

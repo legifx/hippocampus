@@ -2048,3 +2048,173 @@ is written down here so that nobody adds one.
 
 **Revisit when:** a legitimate mass-deletion case appears, e.g. a zone being removed. Then the
 guard needs an explicit `allow_collapse` rather than a lower ratio.
+
+---
+
+### D74 — An agent's memory is the same memory, with a scope
+**Status:** ACCEPTED
+
+The owner asked, on 2026-08-23, for the agent area to be built out and for Hippocampus to be
+*the* memory an agent works from. The obvious shape — a second store, agent-flavoured, next to
+the file index — was considered and rejected before any code was written, for three reasons that
+are all the same reason.
+
+**One: two memories means two rankings, and the second one is always worse.** Salience, decay,
+tiering, co-access, consolidation and `explain` took M5 and most of M2 to get right, and they
+were measured. A parallel agent store starts with none of that and acquires a bad copy of it over
+six months.
+
+**Two: the interesting queries cross the boundary.** "What do I know about this file" has to
+return the file's chunks *and* the note an agent wrote about it *and* the failure it recorded
+while working on it, ranked against each other. Two stores means merging two ranked lists whose
+scores are not comparable, which is exactly the mistake RRF exists to avoid and which nothing
+downstream can repair.
+
+**Three: R10.** The file index is a cache because everything in it is derivable. A second store
+holding the only copy of what an agent learned would not be, so it would need its own durability
+story, its own backup, its own rebuild. There is already one: an assertion goes into `episodes`
+and everything else is a projection of it (D35). Reusing it costs a migration; not reusing it
+costs a second set of invariants.
+
+So a memory is a node with `kind = 'memory'`, no path, its own text, and a scope. The scope is
+the only genuinely new idea, and it is there because a shared pool without one fails in a
+specific way: one agent's wrong guess becomes every agent's premise, silently. Writes default to
+`agent:<name>`, `global` requires an explicit argument, and reads never cross into another
+agent's private scope.
+
+**What this costs, stated plainly.** The `nodes` table now holds rows that are not on the
+filesystem and cannot be re-derived from it, so `rebuild` must replay assertions to restore them —
+which it already does for annotations, but the memory layer has more columns to lose and losing
+one silently is the failure mode. Definition of Done §2 exists for that and asserts a
+byte-identical dump rather than a successful exit code.
+
+**Revisit when:** memories outnumber file chunks, or a memory query's latency stops being
+dominated by the file arm. Either would mean the memory layer has become the main workload and
+deserves its own physical layout rather than a shared table.
+
+---
+
+### D75 — usearch stays; Qdrant is refused
+**Status:** ACCEPTED
+
+Asked directly whether the vector database should be Qdrant. The answer is no, and the reasoning
+is worth keeping because the question will come back.
+
+| | usearch, as built | Qdrant |
+|---|---|---|
+| process model | a library in the daemon | a separate server, HTTP or gRPC |
+| R5 (no network by default) | satisfied by construction | needs a loopback exception and a story for why that is not network |
+| M9 (a stranger installs in ten minutes) | one binary | a binary, a service, a port, a version to keep in step |
+| measured ANN cost | **1.01 ms P95 over 122 137 vectors** against a 40 ms budget | unmeasured here, and it starts with a serialisation hop |
+| failure mode | a file that can be deleted and rebuilt from the table in 152 ms | an external service that can be down while the daemon is up |
+| filtered search | in SQL, against a store that already holds every attribute | in a second query language over a second copy of the attributes |
+
+The last row is the one that decides it. Qdrant's real advantage over an embedded HNSW is
+payload filtering at scale — and this system already holds every attribute in SQLite next to the
+data it filters on, so buying that advantage would mean duplicating the attributes into the
+vector store and keeping two copies honest. That is a synchronisation problem in exchange for a
+latency win over a budget that is already met by a factor of forty.
+
+**What is actually missing is not a different engine, it is a second collection.** A memory
+recall against one index shared with 122 000 file chunks competes for its twenty slots and loses,
+whatever the engine. M11 §6 instantiates the existing `VectorIndex` a second time over memory
+chunks. Same type, same file format, same rebuild path, no new dependency.
+
+**Revisit when:** one of three things is true — a single collection passes ten million vectors
+and the HNSW build time becomes the bottleneck; filtered search needs an attribute the store does
+not hold; or the daemon has to serve more than one machine, at which point a server process is
+the point rather than the cost.
+
+---
+
+### D76 — Retrieval without use is evidence against a memory
+**Status:** ACCEPTED
+
+Every salience model in this project so far rewards being touched: access count, recency, degree.
+That is right for files, because a human opening a file is a human finding it useful. It is
+wrong for an agent's memory, because a memory retrieved into a context pack was not chosen by
+anybody — it was chosen by the ranking that is being evaluated. Rewarding it for having been
+retrieved closes the loop: whatever ranked highly first goes on ranking highly, and the system
+has no way to find out it was wrong.
+
+So `brain.outcome` reports back which items of a pack helped and which were noise, and
+`usefulness` enters salience as a component with its own sign:
+
+- reported **helpful** → usefulness rises, weighted by who said so;
+- reported **noise** → usefulness falls;
+- **retrieved repeatedly and never reported at all** → usefulness falls slowly. This is the
+  counter-intuitive one and it is the one that makes the signal work. A memory that keeps
+  arriving in context and never earns a mention is costing tokens for nothing.
+
+Three guards, because a feedback signal that can be gamed will be:
+
+1. **The reporter is recorded, and weighted.** `human_confirmed > agent_reported > unobserved`.
+   An agent reporting on its own success is an unreliable narrator; it is not ignored, it is
+   discounted, and `brain.explain` prints which of the three moved the number.
+2. **A negative report is not a delete.** It lowers a component. Forgetting stays with the decay
+   engine, so one bad session cannot erase a year, and a pin still beats everything.
+3. **`helped` and `noise` are counted separately, not netted.** A memory that is strongly useful
+   in one context and noise in another is a memory that needs splitting, and netting to zero
+   hides that. The Inspector shows both counts.
+
+**Revisit when:** enough outcome reports exist to measure whether they predict anything. If a
+memory's usefulness score does not correlate with a human calling it useful, the signal is
+decoration and should be removed rather than tuned.
+
+---
+
+### D77 — A context pack, not a result list
+**Status:** ACCEPTED
+
+`brain.search` returns rows. An agent does not have rows, it has a context window, and every
+agent built on this surface would otherwise write the same four hundred lines: fetch k results,
+drop the near-duplicates, decide what fits, format it, and remember where each piece came from.
+Done in the agent that is done badly — it has neither the scores nor the embeddings — done in
+the daemon it is done once, with both.
+
+`brain.context(task, budget_tokens)` returns a budgeted, deduplicated, attributed block.
+Four properties, each of which is there because omitting it is a known failure:
+
+- **The budget is in tokens and it is measured.** Characters divided by four is wrong by up to
+  40 % on code and on German, and the direction of the error decides between wasting money and
+  truncating a system prompt mid-structure.
+- **Preferences are unconditional.** They are tiny and their entire value is being present. If
+  they do not fit, the call reports that the budget is too small rather than dropping them
+  quietly, because an agent that silently loses "never run this without `--dry-run`" is worse
+  than one that errors.
+- **MMR before truncation.** Restatement is the specific failure mode of embedding retrieval over
+  a memory store, because people and agents restate. Three phrasings of one fact cost three slots
+  and are worth one.
+- **Every item carries its basis.** Which arm found it, what it scored, who wrote it and when.
+  A memory an agent cannot attribute is a memory it cannot argue with, and an agent that cannot
+  argue with its memory will follow it off a cliff.
+
+The pack has an id, and that id is what `brain.outcome` reports against — which is the only
+reason the pack is a stored object rather than a formatted string.
+
+**Revisit when:** an agent framework arrives with its own context assembly that is better than
+this one. Then the pack becomes optional and the arms are exposed individually.
+
+---
+
+### D78 — The human can read and delete what an agent believes
+**Status:** ACCEPTED
+
+The Agent Inspector's Memory tab can edit and delete. That is the one place in the window, apart
+from the kill switch and the undo journal, where a read-only surface writes, and it was not added
+for convenience.
+
+A system that lets a machine form durable beliefs about a person's work, and does not let the
+person read them, is a system keeping secrets. It is also, more prosaically, a system with no
+repair path: the first wrong memory an agent forms — a stale build command, a misread convention —
+is repeated confidently for as long as it survives, and nothing in the decay model removes a
+memory that keeps being retrieved.
+
+So: every memory is listed with its scope, kind, text, provenance, usefulness and supersession
+chain; the human can supersede it, correct it, or delete it. A deletion writes a `forget_memory`
+episode with `actor = human`, which is what makes it survive a rebuild — replaying the assertions
+must replay the deletion too, or the memory returns the first time the index is rebuilt and the
+human has no reason to believe the button did anything.
+
+**Revisit when:** the memory count makes a flat list useless. Then it needs the same treatment as
+the result list — the daemon decides the order, the window renders it.

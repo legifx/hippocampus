@@ -146,7 +146,9 @@ $XDG_CONFIG_HOME/hippocampus/
 $XDG_STATE_HOME/hippocampus/     mode 0700
     cortex.db                SQLite, WAL — authoritative index
     cortex.db-wal
-    vectors.usearch          ANN index, memory-mapped, rebuildable from cortex.db
+    vectors.usearch          ANN index over file chunks, memory-mapped, rebuildable
+    memories.usearch         ANN index over memory chunks — a second collection, same type,
+                             so a memory recall does not compete with 100 000 file chunks (D75)
     models/                  downloaded ONNX models, checksum-verified
     audit.log                append-only agent audit trail
 
@@ -158,6 +160,53 @@ $XDG_RUNTIME_DIR/hippocampus/
 Thumbnails go to the **shared XDG thumbnail cache**, not to a private directory. Sharing it means
 other applications' thumbnails are reused and ours are reusable.
 
+## The agent brain (M11)
+
+There is one memory, and an agent's share of it is a **Scope**, not a second store. The reason is
+D74; the shape is this:
+
+```
+                    an agent, over MCP or the socket
+                                  │
+             agent.session.begin ─┤ every episode, audit row and memory
+                                  │ from here on carries this session id
+                                  ▼
+      ┌───────────────────────────────────────────────────────────────┐
+      │  brain.remember(text, kind, scope, subject?, supersedes?)      │
+      │      writes an episode  ──►  projects a node + chunk + vector  │
+      │      R10: the episode is the authority, the rest is a cache    │
+      └───────────────────────────────────────────────────────────────┘
+                                  │
+      ┌───────────────────────────▼───────────────────────────────────┐
+      │  brain.context(task, budget_tokens)                            │
+      │      pinned preferences (unconditional)                        │
+      │    + working set                                               │
+      │    + memories: lexical ∪ memory-ANN ─► RRF ─► MMR ─► budget    │
+      │    + the files those memories point at (path + byte range)     │
+      │      every item with its basis; the whole thing gets a pack_id │
+      └───────────────────────────┬───────────────────────────────────┘
+                                  │
+      ┌───────────────────────────▼───────────────────────────────────┐
+      │  brain.outcome(pack_id, helped[], noise[])                     │
+      │      moves `usefulness`, which enters salience — and which     │
+      │      falls when a memory is retrieved and never reported (D76) │
+      └───────────────────────────────────────────────────────────────┘
+```
+
+Two things about this diagram are the whole design:
+
+**The middle box is the only one an agent needs on a good day.** Everything else in the surface
+exists so that the middle box can be explained, corrected and audited.
+
+**The loop closes at the bottom.** Without `brain.outcome` the ranking is evaluated by the thing
+being evaluated, and a memory system with no feedback path converges on whatever it happened to
+rank first. That is not a refinement; it is the difference between a store and a brain.
+
+The **Agent Inspector** in the explorer is a fifth client of the same socket. It renders the
+sessions, the memory list, the policy state, the undo journal and the M8 view — and, apart from
+the kill switch, the undo button and the human's right to delete a memory (D78), it writes
+nothing.
+
 ## The rebuildability invariant
 
 Everything except `episodes` is derivable from `episodes` plus the filesystem.
@@ -165,6 +214,13 @@ Everything except `episodes` is derivable from `episodes` plus the filesystem.
 This is what allows the memory to forget aggressively without risk, and it is what makes the
 index a cache. Any proposed feature that stores unrecoverable state fails review. The test is
 `cortex --rebuild-index` producing a byte-identical canonical dump (M2 DoD §7).
+
+**Memories are the hard case and the reason the invariant is stated as "episodes plus the
+filesystem" rather than "the filesystem".** What an agent learned is not on disk anywhere. It
+survives a rebuild because the `remember` assertion is an episode and the memory row is a
+projection of it — the same trick annotations use (D35), with more columns to lose. A deletion is
+an assertion too, for the same reason: a `forget_memory` episode, or the memory comes back the
+first time the index is rebuilt and the delete button was a lie (D78).
 
 ## Federation model
 

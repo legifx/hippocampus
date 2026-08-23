@@ -148,6 +148,15 @@ ranking, they do not produce the result set.
 
 ---
 
+### Added by M11
+
+| term | meaning |
+|---|---|
+| **Memory** | a node with `kind = 'memory'`: what is known and is not in a file. Text, a scope, a kind, no path. |
+| **Scope** | `session:<id>` · `agent:<name>` · `project:<zone_id>` · `global`. Who a memory belongs to. |
+| **Context Pack** | what `brain.context` returns: budgeted, deduplicated, attributed, and addressable by `pack_id`. |
+| **Usefulness** | the learned salience component `brain.outcome` moves. Not the same as **confidence**, which is the writer's own claim and is never evidence. |
+
 ## 4. Architecture and layout
 
 ```
@@ -198,8 +207,9 @@ CREATE TABLE zones (
 
 CREATE TABLE nodes (
     id           INTEGER PRIMARY KEY,
-    kind         TEXT    NOT NULL CHECK (kind IN ('file','dir','chunk','concept','annotation')),
-    path         TEXT,                       -- NULL for concepts and annotations
+    kind         TEXT    NOT NULL CHECK (kind IN
+                 ('file','dir','chunk','concept','annotation','memory')),
+    path         TEXT,                       -- NULL for concepts, annotations and memories
     parent_id    INTEGER REFERENCES nodes(id) ON DELETE CASCADE,
     mime         TEXT,
     size         INTEGER NOT NULL DEFAULT 0,
@@ -229,7 +239,9 @@ CREATE TABLE edges (
     src        INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
     dst        INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
     type       TEXT    NOT NULL CHECK (type IN
-                 ('contains','co_access','imports','similar_to','derived_from','annotates')),
+                 ('contains','co_access','imports','similar_to','derived_from','annotates',
+                  -- M11: which memory replaced which, and which memories were pulled together
+                  'supersedes','recalled_with')),
     weight     REAL    NOT NULL DEFAULT 1.0,
     created_at INTEGER NOT NULL,
     -- How we came to believe this edge. `explicit` edges are human or agent assertions and
@@ -243,7 +255,11 @@ CREATE TABLE episodes (
     ts            INTEGER NOT NULL,
     actor         TEXT    NOT NULL,          -- 'human' | 'system' | 'agent:<name>'
     action        TEXT    NOT NULL CHECK (action IN
-                    ('create','modify','open','move','delete','search','annotate')),
+                    ('create','modify','open','move','delete','search','annotate',
+                     -- M11. `remember` and `forget_memory` are assertions: the memory row is a
+                     -- projection of them, so a rebuild replays both. A deletion that is not an
+                     -- episode comes back on the next rebuild.
+                     'remember','outcome','supersede','forget_memory')),
     -- DELIBERATELY NOT A FOREIGN KEY. An episode about a deleted file must outlive the node:
     -- this log is the ground truth from which nodes are rebuilt. See §7.3, trap 1 — this
     -- decision is correct and it will break your first consolidation if you forget it.
@@ -258,6 +274,65 @@ CREATE TABLE salience_log (
     score           REAL    NOT NULL,
     components_json TEXT    NOT NULL,
     PRIMARY KEY (node_id, computed_at)
+);
+
+-- M11 — what is known and is not in a file. Derived from `remember` episodes, exactly the way
+-- annotations are, which is what lets a rebuild restore it.
+CREATE TABLE memories (
+    node_id        INTEGER PRIMARY KEY REFERENCES nodes(id) ON DELETE CASCADE,
+    -- 'session:<id>' | 'agent:<name>' | 'project:<zone_id>' | 'global'
+    scope          TEXT    NOT NULL,
+    kind           TEXT    NOT NULL CHECK (kind IN
+                     ('fact','preference','procedure','decision','failure','observation')),
+    -- Held here because there is no file to re-read it from. The one place this system stores
+    -- text rather than a pointer to it, and the reason is that there is nothing to point at.
+    text           TEXT    NOT NULL,
+    subject_id     INTEGER REFERENCES nodes(id) ON DELETE SET NULL,
+    -- The writer's own claim. Never treated as evidence; see `usefulness`, which is earned.
+    confidence     REAL    NOT NULL DEFAULT 0.5,
+    usefulness     REAL    NOT NULL DEFAULT 0.0,
+    helped_count   INTEGER NOT NULL DEFAULT 0,
+    noise_count    INTEGER NOT NULL DEFAULT 0,
+    -- Counted, not netted: a memory that is useful in one context and noise in another needs
+    -- splitting, and a net of zero hides that.
+    retrieved_count INTEGER NOT NULL DEFAULT 0,
+    human_confirmed INTEGER NOT NULL DEFAULT 0 CHECK (human_confirmed IN (0,1)),
+    expires_at     INTEGER,                  -- only 'session:' scope has one
+    superseded_by  INTEGER REFERENCES nodes(id) ON DELETE SET NULL,
+    session_id     TEXT,
+    episode_id     INTEGER NOT NULL,         -- the assertion this row is a projection of
+    actor          TEXT    NOT NULL,
+    ts             INTEGER NOT NULL
+);
+
+CREATE TABLE agent_sessions (
+    id         TEXT PRIMARY KEY,
+    name       TEXT    NOT NULL,
+    task       TEXT,
+    started_at INTEGER NOT NULL,
+    ended_at   INTEGER,
+    calls      INTEGER NOT NULL DEFAULT 0,
+    refusals   INTEGER NOT NULL DEFAULT 0
+);
+
+-- What a context pack contained, so that an outcome reported minutes later can be attributed
+-- to the items that were actually in it rather than to whatever ranks highly now.
+CREATE TABLE context_packs (
+    id            TEXT PRIMARY KEY,
+    session_id    TEXT,
+    task          TEXT    NOT NULL,
+    budget_tokens INTEGER NOT NULL,
+    used_tokens   INTEGER NOT NULL,
+    created_at    INTEGER NOT NULL
+);
+CREATE TABLE context_pack_items (
+    pack_id  TEXT    NOT NULL REFERENCES context_packs(id) ON DELETE CASCADE,
+    node_id  INTEGER NOT NULL,
+    rank     INTEGER NOT NULL,
+    arm      TEXT    NOT NULL,
+    score    REAL    NOT NULL,
+    reported TEXT,                           -- NULL | 'helped' | 'noise'
+    PRIMARY KEY (pack_id, node_id)
 );
 
 -- Plus: chunks, a contentless full-text index over them, embeddings keyed by content hash
@@ -739,6 +814,83 @@ A session prompt for an agent picking it up: **[`EXPLORER-KICKOFF-PROMPT.md`](EX
 the window, network locations and correct permission display come first: a file manager that
 cannot do the basics will not be used, however good the brain is.
 
+### M11 — The Agent Brain
+
+**Goal:** an agent working through the surface remembers what it learned, gets it back next
+session inside a context budget it can afford, and is measurably better for it. The human can
+read, correct and delete every part of that.
+
+The whole milestone is one sentence: **a memory is a node.** What an agent knows that is not in a
+file becomes a `kind = 'memory'` node with no path, its own text and a **scope** — and every
+faculty the file memory already has applies to it unchanged: chunking, embedding, salience,
+decay, tiering, co-access, consolidation, `explain`, the graph, the audit log. Building a second,
+agent-flavoured store instead is the mistake this design exists to avoid; the reasoning is in
+the decision log as D74.
+
+### Scope
+
+- **Scope, so a shared brain stays usable.** `session:<id>` · `agent:<name>` ·
+  `project:<zone_id>` · `global`. Writes default to the narrowest, `global` needs an explicit
+  argument, reads never cross into another agent's private scope. A shared pool without this
+  fails in one specific way: one agent's wrong guess becomes every agent's premise, silently.
+- **Memory kinds, because retrieval differs.** `fact · preference · procedure · decision ·
+  failure · observation`. The kind is a retrieval prior, not a separate index — a `failure`
+  should surface when the agent is about to repeat it, a `preference` should surface always.
+- **`brain.context(task, budget_tokens)` — the primitive the milestone is for.** Not a result
+  list: a token-budgeted, deduplicated, attributed block, containing pinned preferences
+  unconditionally, the working set, memories fused and then diversified by MMR, and the files
+  those memories point at as path plus byte range. Every item carries its basis. The pack has an
+  id.
+- **`brain.outcome(pack_id, helped[], noise[])` — the learning signal, and the only one.** It
+  moves a `usefulness` component of salience. Its point is the property no recency-and-frequency
+  model has: **a memory retrieved often and never reported useful decays faster than one never
+  retrieved at all.** Retrieval without use is evidence against a memory, because the retrieval
+  was chosen by the ranking being evaluated and not by anybody.
+- **Supersession, so contradictions resolve instead of accumulating.** A new memory may supersede
+  an old one; retrieval excludes superseded memories unless asked for history. The daemon
+  *detects* likely supersessions by embedding similarity within scope and kind and reports the
+  candidate ids — it does not decide, because deciding is a language model's job and there is no
+  language model in this daemon.
+- **A second vector collection.** Memories are thousands, file chunks are millions; one shared
+  ANN index means a memory recall competes for twenty slots and loses. Same index type, second
+  file. Not a different engine — see D75 for why the answer to "should this be Qdrant" is no.
+- **Sessions.** `agent.session.begin/end`, so that "what did this task do" is answerable and
+  `session:` scope has something to expire against.
+- **The Agent Inspector**, one button and one binding in the explorer: live sessions and their
+  calls, the memory list with provenance, the policy and kill-switch state, the undo journal, and
+  the M8 view embedded and live. It renders; it does not decide. It writes in exactly three
+  places, all deliberate: the kill switch, undo, and the human's right to delete a memory.
+
+### Definition of Done
+
+1. A memory written in one session is returned by `brain.context` in the next, identically
+   through all three surfaces.
+2. `rebuild` over an index of 1 000 memories across every scope and kind reproduces a
+   byte-identical canonical dump — including supersession chains, usefulness counts and
+   deletions. **The dump is the assertion.** A rebuild that exits zero having lost a column is
+   the failure this criterion exists to catch.
+3. The token budget is honoured for budgets of 512, 2 048 and 8 192 against 5 000 memories,
+   measured with a tokeniser rather than by dividing characters by four, and no item is truncated
+   mid-structure.
+4. `brain.context` P95 **under 120 ms** at a 2 048-token budget over 5 000 memories and 100 000
+   file chunks, warm — written as a benchmark before the implementation.
+5. MMR at λ = 0.7 returns strictly fewer duplicate facts than λ = 1.0 at the same budget on a
+   seeded near-duplicate store, without losing recall of the distinct ones. Both numbers recorded.
+6. The learning signal moves the ranking in all three directions, including the counter-intuitive
+   one: a memory retrieved fifty times with no outcome reported ranks below one never retrieved.
+7. A memory in one agent's scope is never returned to another's, asserted per surface; an
+   unrequested promotion to `global` is refused and audited.
+8. With the surface off, every memory tool refuses, nothing is written, and the Inspector says so
+   rather than showing an empty list.
+9. Deleting a memory in the Inspector writes a `forget_memory` episode as the human, removes it
+   from retrieval at once, and **survives a rebuild as a deletion**.
+10. The Inspector renders at 400 px, costs under 1 % of one core while streaming, and closing it
+    returns the window to its measured idle cost.
+11. **The measurement that decides it:** a real task, twice. Session one discovers something
+    non-obvious and remembers it; session two, with no transcript from session one, is faster or
+    more correct because of the context pack — timed, and written into the progress file
+    whichever way it goes.
+
 
 ---
 
@@ -756,6 +908,8 @@ run it in CI on a fixed corpus generated from a seed — **commit the generator,
 | consolidation, dry run | 500 ms | 100 000 nodes |
 | consolidation, full pass | 3 s | same |
 | snapshot for the view | 2 s | 6 000 nodes |
+| context pack, 2 048-token budget | 120 ms | 5 000 memories + 100 000 file chunks |
+| memory ANN, top 100 | 5 ms | the memory collection alone |
 
 For reference, the implementation these numbers come from measured 109 ms and 1 516 ms for the two
 consolidation rows on 108 139 nodes with 9 534 episodes.
@@ -784,6 +938,12 @@ brain.annotate · brain.pin · brain.forget ·       memory, writing (not gated 
   brain.link                                        write allow-list — see R6)
 brain.consolidate · brain.report                  the memory pass and its result
 brain.graph                                       the whole brain, for a visualisation
+brain.remember · brain.recall_memories ·          the agent's own memory (M11)
+  brain.supersede · brain.forget_memory
+brain.context                                     a context pack, not a result list (M11)
+brain.outcome                                     the learning signal (M11)
+agent.session.begin · agent.session.end ·         attribution (M11)
+  agent.sessions
 index.path · index.set_paused                     control
 agent.status · agent.set_enabled                  the kill switch (R7)
 audit.recent                                      (R8)
@@ -797,6 +957,10 @@ Three interface rules worth stating explicitly:
   gate, and cap its `limit` at a size you have measured against your transport's framing limit
   (§7.3). In an agent loop, tool output is the dominant token cost, and a memory tool that dumps is
   the most expensive component in the loop.
+- **`brain.context` is the one an agent should reach for first, and the one to get right.** Every
+  other read tool returns rows; an agent has a context window, not rows. Assembling twenty results
+  into two thousand useful tokens is work the daemon can do once with the scores in front of it,
+  or every agent can do badly without them.
 - **`brain.working_set` must say what it is based on.** If it is derived from recent episodes rather
   than from a salience-weighted working memory, the answer says so in a field. A tool that claims a
   faculty the daemon does not have is worse than one that admits the gap.
