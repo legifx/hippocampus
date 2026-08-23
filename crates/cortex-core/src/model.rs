@@ -15,6 +15,10 @@ pub enum NodeKind {
     Chunk,
     Concept,
     Annotation,
+    /// What is known and is not in a file. Has text and a scope, never a path. See M11 and D74:
+    /// this is a node kind rather than a second store so that salience, decay, tiering,
+    /// consolidation and `explain` apply to it without being written twice.
+    Memory,
 }
 
 impl NodeKind {
@@ -25,6 +29,7 @@ impl NodeKind {
             NodeKind::Chunk => "chunk",
             NodeKind::Concept => "concept",
             NodeKind::Annotation => "annotation",
+            NodeKind::Memory => "memory",
         }
     }
 
@@ -35,6 +40,7 @@ impl NodeKind {
             "chunk" => NodeKind::Chunk,
             "concept" => NodeKind::Concept,
             "annotation" => NodeKind::Annotation,
+            "memory" => NodeKind::Memory,
             _ => return None,
         })
     }
@@ -122,6 +128,15 @@ pub enum Action {
     Delete,
     Search,
     Annotate,
+    /// M11 assertions. `remember` and `forget_memory` are the authority for the memory layer:
+    /// the `memories` row is a projection of them, so a rebuild replays both. A deletion that
+    /// is not an episode returns the first time the index is rebuilt (D78).
+    Remember,
+    Supersede,
+    ForgetMemory,
+    /// A context pack's outcome report. Not an assertion — it moves a learned score, and a
+    /// score is derived. It is an episode so that the Inspector can show who reported what.
+    Outcome,
 }
 
 impl Action {
@@ -134,6 +149,10 @@ impl Action {
             Action::Delete => "delete",
             Action::Search => "search",
             Action::Annotate => "annotate",
+            Action::Remember => "remember",
+            Action::Supersede => "supersede",
+            Action::ForgetMemory => "forget_memory",
+            Action::Outcome => "outcome",
         }
     }
 
@@ -146,6 +165,10 @@ impl Action {
             "delete" => Action::Delete,
             "search" => Action::Search,
             "annotate" => Action::Annotate,
+            "remember" => Action::Remember,
+            "supersede" => Action::Supersede,
+            "forget_memory" => Action::ForgetMemory,
+            "outcome" => Action::Outcome,
             _ => return None,
         })
     }
@@ -387,6 +410,12 @@ pub enum EdgeType {
     DerivedFrom,
     /// An annotation about a node.
     Annotates,
+    /// One memory replaced another. The old one keeps its row and leaves retrieval (M11).
+    Supersedes,
+    /// Two nodes were in the same context pack. Weak, observed, and the raw material for
+    /// co-access between things an agent used together rather than things a human opened
+    /// together.
+    RecalledWith,
 }
 
 impl EdgeType {
@@ -398,6 +427,8 @@ impl EdgeType {
             EdgeType::SimilarTo => "similar_to",
             EdgeType::DerivedFrom => "derived_from",
             EdgeType::Annotates => "annotates",
+            EdgeType::Supersedes => "supersedes",
+            EdgeType::RecalledWith => "recalled_with",
         }
     }
 
@@ -409,6 +440,8 @@ impl EdgeType {
             "similar_to" => EdgeType::SimilarTo,
             "derived_from" => EdgeType::DerivedFrom,
             "annotates" => EdgeType::Annotates,
+            "supersedes" => EdgeType::Supersedes,
+            "recalled_with" => EdgeType::RecalledWith,
             _ => return None,
         })
     }

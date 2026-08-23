@@ -12,6 +12,16 @@ struct Migration {
     version: i64,
     name: &'static str,
     sql: &'static str,
+    /// True when the migration rebuilds a table that others reference.
+    ///
+    /// SQLite cannot alter a CHECK constraint, so widening one means create-copy-drop-rename —
+    /// and `DROP TABLE nodes` with foreign keys enforced runs the cascades on every child
+    /// table on the way out, which would delete the entire derived index. **`PRAGMA
+    /// foreign_keys` is a no-op inside a transaction**, so a migration cannot turn enforcement
+    /// off from its own SQL; it has to be done here, around the transaction. Marked
+    /// migrations get that, plus a `foreign_key_check` before the commit so that a rebuild
+    /// which left a dangling reference fails now rather than at some later read.
+    rebuilds_tables: bool,
 }
 
 const MIGRATIONS: &[Migration] = &[
@@ -19,31 +29,44 @@ const MIGRATIONS: &[Migration] = &[
         version: 1,
         name: "initial",
         sql: include_str!("schema/0001_initial.sql"),
+        rebuilds_tables: false,
     },
     Migration {
         version: 2,
         name: "fts_contentless_delete",
         sql: include_str!("schema/0002_fts_contentless_delete.sql"),
+        rebuilds_tables: false,
     },
     Migration {
         version: 3,
         name: "embeddings_by_hash",
         sql: include_str!("schema/0003_embeddings_by_hash.sql"),
+        rebuilds_tables: false,
     },
     Migration {
         version: 4,
         name: "annotations",
         sql: include_str!("schema/0004_annotations.sql"),
+        rebuilds_tables: false,
     },
     Migration {
         version: 5,
         name: "extract_progress_index",
         sql: include_str!("schema/0005_extract_progress_index.sql"),
+        rebuilds_tables: false,
     },
     Migration {
         version: 6,
         name: "concept_label",
         sql: include_str!("schema/0006_concept_label.sql"),
+        rebuilds_tables: false,
+    },
+    Migration {
+        version: 7,
+        name: "agent_brain",
+        sql: include_str!("schema/0007_agent_brain.sql"),
+        // Rebuilds `nodes`, `edges` and `episodes` to widen three CHECK constraints.
+        rebuilds_tables: true,
     },
 ];
 
@@ -81,13 +104,65 @@ pub fn migrate(conn: &mut Connection) -> Result<()> {
             name = migration.name,
             "applying migration"
         );
-        let tx = conn.transaction()?;
-        tx.execute_batch(migration.sql)?;
-        // `PRAGMA user_version` does not accept a bound parameter.
-        tx.pragma_update(None, "user_version", migration.version)?;
-        tx.commit()?;
+        apply(conn, migration)?;
     }
 
+    Ok(())
+}
+
+/// Apply one migration, with the version bump, in one transaction.
+fn apply(conn: &mut Connection, migration: &Migration) -> Result<()> {
+    if !migration.rebuilds_tables {
+        return apply_in_transaction(conn, migration);
+    }
+
+    // Outside the transaction, because inside one this pragma does nothing at all and would
+    // read as protection that is not there.
+    let enforced: i64 = conn.query_row("PRAGMA foreign_keys", [], |row| row.get(0))?;
+    conn.pragma_update(None, "foreign_keys", "OFF")?;
+
+    let outcome = apply_in_transaction(conn, migration);
+
+    // Restore what was found, whether the migration worked or not. A daemon that carried on
+    // with enforcement silently off would be a worse outcome than the failed migration.
+    let restore = conn.pragma_update(None, "foreign_keys", if enforced != 0 { "ON" } else { "OFF" });
+    outcome?;
+    restore?;
+    Ok(())
+}
+
+fn apply_in_transaction(conn: &mut Connection, migration: &Migration) -> Result<()> {
+    let tx = conn.transaction()?;
+    tx.execute_batch(migration.sql)?;
+
+    if migration.rebuilds_tables {
+        let dangling: i64 =
+            tx.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })?;
+        if dangling > 0 {
+            return Err(StoreError::corrupt(format!(
+                "migration {} ({}) left {dangling} dangling foreign key reference(s); \
+                 rolled back",
+                migration.version, migration.name
+            )));
+        }
+    }
+
+    // `PRAGMA user_version` does not accept a bound parameter.
+    tx.pragma_update(None, "user_version", migration.version)?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Migrate only as far as `version`. Test-only: production always goes to the target.
+#[cfg(test)]
+fn migrate_to(conn: &mut Connection, version: i64) -> Result<()> {
+    for migration in MIGRATIONS.iter().filter(|m| m.version <= version) {
+        if migration.version > current_version(conn)? {
+            apply(conn, migration)?;
+        }
+    }
     Ok(())
 }
 
@@ -350,6 +425,135 @@ mod tests {
             .query_row("SELECT count(*) FROM chunks", [], |r| r.get(0))
             .unwrap();
         assert_eq!(remaining, 0);
+    }
+
+    /// The failure this test exists for destroyed the whole derived index in the first draft of
+    /// migration 7, and every other test still passed.
+    ///
+    /// Widening a CHECK constraint means dropping and recreating the table. `DROP TABLE nodes`
+    /// with foreign keys enforced runs `ON DELETE CASCADE` on `edges`, `chunks`, `annotations`
+    /// and `salience_log` first. The obvious guard — `PRAGMA foreign_keys = OFF` at the top of
+    /// the migration — does **nothing**, because that pragma is a no-op inside a transaction and
+    /// every migration runs in one. It reads exactly like protection and is not.
+    ///
+    /// So the check has to be behavioural: real children, enforcement genuinely on, migrate,
+    /// count.
+    #[test]
+    fn rebuilding_a_referenced_table_does_not_cascade_its_children_away() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrate_to(&mut conn, 6).unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+
+        let enforced: i64 = conn
+            .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(enforced, 1, "the test is worthless with enforcement off");
+
+        conn.execute_batch(
+            "INSERT INTO nodes (id, kind, path, first_seen, last_seen)
+                 VALUES (1, 'dir', '/d', 0, 0), (2, 'file', '/d/f', 0, 0);
+             INSERT INTO edges (src, dst, type, weight, created_at, source)
+                 VALUES (1, 2, 'contains', 1.0, 0, 'observed');
+             INSERT INTO chunks (node_id, ordinal, byte_start, byte_end, hash)
+                 VALUES (2, 0, 0, 10, 'h');
+             INSERT INTO episodes (ts, actor, action, node_id)
+                 VALUES (0, 'human', 'open', 2);",
+        )
+        .unwrap();
+
+        migrate(&mut conn).unwrap();
+
+        let counts = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert_eq!(counts("SELECT count(*) FROM nodes"), 2);
+        assert_eq!(counts("SELECT count(*) FROM edges"), 1, "edges were cascaded away");
+        assert_eq!(counts("SELECT count(*) FROM chunks"), 1, "chunks were cascaded away");
+        assert_eq!(counts("SELECT count(*) FROM episodes"), 1);
+
+        // And enforcement is back on afterwards, or the next cascade silently does not run.
+        let after: i64 = conn
+            .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(after, 1, "foreign key enforcement was left off");
+    }
+
+    /// Dropping a table drops its indexes with it, and one missing after an upgrade is a
+    /// performance regression that nobody can attribute three months later.
+    #[test]
+    fn a_rebuilt_table_keeps_every_index_it_had() {
+        let mut before = Connection::open_in_memory().unwrap();
+        migrate_to(&mut before, 6).unwrap();
+        let names = |conn: &Connection| -> Vec<String> {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT name FROM sqlite_master
+                     WHERE type = 'index' AND sql IS NOT NULL
+                       AND tbl_name IN ('nodes', 'edges', 'episodes')
+                     ORDER BY name",
+                )
+                .unwrap();
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0)).unwrap();
+            rows.map(|r| r.unwrap()).collect()
+        };
+        let was = names(&before);
+        migrate(&mut before).unwrap();
+        let now = names(&before);
+
+        for index in &was {
+            assert!(now.contains(index), "index {index} did not survive the rebuild");
+        }
+    }
+
+    #[test]
+    fn a_memory_is_a_node_kind_and_the_older_constraint_would_have_refused_it() {
+        let mut old = Connection::open_in_memory().unwrap();
+        migrate_to(&mut old, 6).unwrap();
+        assert!(
+            old.execute(
+                "INSERT INTO nodes (kind, path, first_seen, last_seen)
+                 VALUES ('memory', NULL, 0, 0)",
+                [],
+            )
+            .is_err(),
+            "the point of migration 7 is that this was refused before it"
+        );
+
+        let conn = fresh();
+        conn.execute(
+            "INSERT INTO nodes (id, kind, path, first_seen, last_seen)
+             VALUES (1, 'memory', NULL, 0, 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO memories (node_id, scope, kind, text, episode_id, actor, ts)
+             VALUES (1, 'agent:a', 'fact', 'the corpus is generated', 1, 'agent:a', 0)",
+            [],
+        )
+        .unwrap();
+        let scope: String = conn
+            .query_row("SELECT scope FROM memories WHERE node_id = 1", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(scope, "agent:a");
+    }
+
+    #[test]
+    fn a_memory_row_goes_when_its_node_goes() {
+        let conn = fresh();
+        conn.execute("PRAGMA foreign_keys = ON", []).unwrap();
+        conn.execute_batch(
+            "INSERT INTO nodes (id, kind, path, first_seen, last_seen)
+                 VALUES (1, 'memory', NULL, 0, 0);
+             INSERT INTO memories (node_id, scope, kind, text, episode_id, actor, ts)
+                 VALUES (1, 'global', 'fact', 'x', 1, 'human', 0);",
+        )
+        .unwrap();
+        conn.execute("DELETE FROM nodes WHERE id = 1", []).unwrap();
+        let left: i64 = conn
+            .query_row("SELECT count(*) FROM memories", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0);
     }
 
     #[test]

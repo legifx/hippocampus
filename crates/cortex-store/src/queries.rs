@@ -605,6 +605,50 @@ impl Store {
             out.push('\n');
         }
 
+        // Memories have no path, so the loop above cannot see them — and a dump that cannot see
+        // them is a dump that would call a rebuild successful after losing every one. M11's
+        // Definition of Done §2 is exactly this: the identity is (scope, kind, text), because
+        // node ids are renumbered by the rebuild being verified, and the columns that follow
+        // are the ones a replay has to reproduce rather than merely recreate.
+        let mut memories = conn.prepare(
+            "SELECT m.scope, m.kind, m.text, m.confidence, m.usefulness, m.helped_count,
+                    m.noise_count, m.retrieved_count, m.human_confirmed,
+                    coalesce(s.path, '-'),
+                    CASE WHEN m.superseded_by IS NULL THEN '-'
+                         ELSE coalesce((SELECT b.scope || '/' || b.kind || '/' || b.text
+                                        FROM memories b WHERE b.node_id = m.superseded_by), '?')
+                    END,
+                    coalesce(m.expires_at, -1),
+                    (SELECT coalesce(group_concat(c.hash, ','), '-')
+                     FROM chunks c WHERE c.node_id = m.node_id)
+             FROM memories m
+             LEFT JOIN nodes s ON s.id = m.subject_id
+             ORDER BY m.scope, m.kind, m.text",
+        )?;
+        let mut rows = memories.query([])?;
+        while let Some(row) = rows.next()? {
+            let scope: String = row.get(0)?;
+            let kind: String = row.get(1)?;
+            // Newlines in a memory would break one row into several and make two different
+            // dumps compare equal. Escaped rather than rejected: a memory is prose.
+            let text: String = row.get::<_, String>(2)?.replace('\n', "\\n");
+            let confidence: f64 = row.get(3)?;
+            let usefulness: f64 = row.get(4)?;
+            let helped: i64 = row.get(5)?;
+            let noise: i64 = row.get(6)?;
+            let retrieved: i64 = row.get(7)?;
+            let confirmed: i64 = row.get(8)?;
+            let subject: String = row.get(9)?;
+            let superseded: String = row.get::<_, String>(10)?.replace('\n', "\\n");
+            let expires: i64 = row.get(11)?;
+            let hashes: String = row.get(12)?;
+            out.push_str(&format!(
+                "memory\t{scope}\t{kind}\t{text}\t{confidence:.6}\t{usefulness:.6}\t\
+                 {helped}\t{noise}\t{retrieved}\t{confirmed}\t{subject}\t{superseded}\t\
+                 {expires}\t{hashes}\n"
+            ));
+        }
+
         Ok(out)
     }
 

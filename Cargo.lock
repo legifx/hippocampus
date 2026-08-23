@@ -951,6 +951,7 @@ dependencies = [
 name = "cortex-store"
 version = "0.0.1"
 dependencies = [
+ "blake3",
  "cortex-core",
  "cortex-memory",
  "rusqlite",
