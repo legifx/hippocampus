@@ -1914,3 +1914,63 @@ remove**. The empty case is now a separate statement.
 
 **The pattern both share:** a condition that is wrong returns no rows rather than an error, and a
 delete that removes nothing looks identical to a delete that had nothing to remove.
+
+---
+
+### D70 — Two health numbers and one deny-list pattern, taken from a knowledge base in daily use
+**Status:** ACCEPTED
+
+A separate, file-based knowledge base — human-curated, a year old, 1 147 notes of which 415 are
+curated canon, in daily use by several agents — was examined for what a memory actually gets
+wrong over time. Three of its findings changed code here.
+
+**Copies outrank originals.** Its search is `grep -r` over the whole tree, backups included, so a
+query returns the same note from three generations of backup *before* the canonical one, in
+filesystem order. `noise_score` now penalises `backup`, `backups`, `snapshot`, `snapshots`,
+`old` and `archive` as path segments. A copy is not merely redundant: it answers **instead of**
+the original, it is the stale one, and there are several of it.
+
+**Orphans are the most useful number a memory can print about itself.** Its health file counts
+notes with no link in either direction: 75 of 415, under a rule that requires at least one link.
+Manual linking does not survive contact with volume. The consolidation report now counts the
+same thing — restricted to nodes somebody has actually touched, because without that restriction
+a fresh index of a home directory reports a hundred thousand orphans, which is true, useless and
+indistinguishable from a broken graph. On the index here it is 1 468.
+
+**Byte-identical twins are worth counting separately.** 24 408 of 108 342 nodes here share a
+content hash with another node — 22 %. The embedding table is already keyed by hash so they cost
+nothing to store, but they cost something to *read*, which is the point.
+
+**Revisit when:** the deny-list becomes configurable per zone. A directory called `archive` is
+debris in one project and the subject matter in another.
+
+---
+
+### D71 — What a year of that system's use says about this one
+**Status:** ACCEPTED — evidence, not a change
+
+The same knowledge base has a weekly prune report. **Seven consecutive weeks produced identical
+files saying "none"**, while its health file simultaneously listed 75 orphans and 4 stubs. The
+cause is in the criteria:
+
+```python
+status == "draft"  AND  updated < 14 days ago  AND  len(body) < 800  AND  no links
+```
+
+Four conditions with AND — and its own intake gate *requires* at least one link and sets
+`status: stable`. **The forgetting criteria are made unreachable by the intake rules of the same
+system.** Even when it does find something, the report changes nothing: it is explicitly
+report-only, and in seven weeks nobody acted on it.
+
+That is not negligence. It is the correct response to a store that is **authoritative**: throwing
+something away is irreversible, so nobody throws anything away, so it grows monotonically. This
+is the accumulation trap of §1 of the paper, observed rather than argued, in a system that is
+better curated than most.
+
+**Why this matters here:** it is the strongest available evidence that the paper's central claim
+is the load-bearing one. Not the scoring function, not the tiering thresholds — the fact that
+**the index is a cache**. Everything else follows: reconstructible, therefore safe to demote,
+therefore able to rank at all.
+
+**Revisit when:** somebody demonstrates a memory that both is authoritative and forgets. We would
+want to see how they made deletion reversible.

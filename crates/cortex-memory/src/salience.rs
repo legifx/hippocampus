@@ -254,6 +254,16 @@ pub fn noise_score(path: &str) -> f64 {
     ];
     /// Segments that mean "a program put this here for itself".
     const CACHE: [&str; 6] = [".cache", ".npm", ".cargo", ".rustup", "Trash", ".thumbnails"];
+    /// Segments that mean "this is a copy of something else".
+    ///
+    /// Found the expensive way, in somebody else's working system: a knowledge base whose search
+    /// was `grep -r` over the whole tree returned three copies of the same note — from three
+    /// generations of backup — above the canonical one, because nothing ranked and nothing knew
+    /// that a backup is not a document. A copy answering for its original is worse than no
+    /// answer: it is stale, it looks authoritative, and there are several of it.
+    const COPIES: [&str; 8] = [
+        "backup", "backups", ".backup", "snapshot", "snapshots", ".snapshots", "old", "archive",
+    ];
 
     let mut worst: f64 = 0.0;
     for segment in path.split('/') {
@@ -264,6 +274,8 @@ pub fn noise_score(path: &str) -> f64 {
             worst = worst.max(1.0);
         } else if CACHE.contains(&segment) {
             worst = worst.max(0.9);
+        } else if COPIES.contains(&segment.to_lowercase().as_str()) {
+            worst = worst.max(0.85);
         }
     }
 
@@ -415,6 +427,15 @@ mod tests {
         assert_eq!(noise_score("/w/p/docs/decisions.md"), 0.0);
         assert!(noise_score("/w/p/src/main.o") > 0.5);
         assert!(noise_score("/w/p/Cargo.lock") > 0.0 && noise_score("/w/p/Cargo.lock") < 0.8);
+    }
+
+    #[test]
+    fn a_copy_of_something_ranks_below_the_thing_it_copies() {
+        assert!(noise_score("/w/p/scratch/backups/fm-2026-07-07/notes/atommem.md") > 0.8);
+        assert!(noise_score("/w/p/.snapshots/2026-08-01/notes/atommem.md") > 0.8);
+        assert_eq!(noise_score("/w/p/notes/atommem.md"), 0.0);
+        // `oldnotes` is not a backup directory, and a substring match would say it was.
+        assert_eq!(noise_score("/w/p/oldnotes/atommem.md"), 0.0);
     }
 
     #[test]

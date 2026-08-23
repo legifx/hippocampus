@@ -64,6 +64,19 @@ pub struct ConsolidationReport {
     /// Concepts whose cluster no longer exists, removed by this pass.
     #[serde(default)]
     pub concepts_pruned: usize,
+    /// Nodes somebody has touched that no association reaches, in either direction.
+    ///
+    /// Borrowed from a knowledge base that has been in daily use for a year: its health report
+    /// counts exactly this, and the number — 75 of 415 curated notes — is the most informative
+    /// thing in the file. An unlinked node is one nothing will ever lead you to.
+    #[serde(default)]
+    pub orphans: usize,
+    /// Nodes whose content is byte-identical to another node's.
+    ///
+    /// Copies are not merely wasted space: they answer instead of the original, several times
+    /// over, and the copy is the stale one.
+    #[serde(default)]
+    pub duplicates: usize,
     /// True when nothing was written.
     pub dry_run: bool,
     pub duration_ms: u64,
@@ -96,10 +109,14 @@ impl ConsolidationReport {
             self.concepts_total, self.concepts_pruned
         ));
         out.push_str(&format!(
-            "scored     {} nodes, {} moved tier, {} pinned nodes held\n\n",
+            "scored     {} nodes, {} moved tier, {} pinned nodes held\n",
             self.nodes_scored,
             self.moved(),
             self.pinned_held
+        ));
+        out.push_str(&format!(
+            "health     {} touched nodes nothing links to, {} with a byte-identical twin\n\n",
+            self.orphans, self.duplicates
         ));
 
         if !self.tier_totals.is_empty() {
@@ -184,6 +201,8 @@ mod tests {
             concepts: vec![ConceptView { label: "parser · grammar".into(), members: 6 }],
             concepts_total: 1,
             concepts_pruned: 0,
+            orphans: 12,
+            duplicates: 3,
             dry_run: false,
             duration_ms: 42,
             not_done: vec!["semantic abstraction of clusters (needs an embedding model)".into()],
@@ -198,6 +217,7 @@ mod tests {
         assert!(text.contains("stm → ltm"));
         assert!(text.contains("parser · grammar"), "the concepts have to be in the report");
         assert!(text.contains("abstracted 1 concepts"));
+        assert!(text.contains("12 touched nodes nothing links to"));
         assert!(text.contains("not done in this pass"));
         assert!(text.contains("semantic abstraction"));
     }

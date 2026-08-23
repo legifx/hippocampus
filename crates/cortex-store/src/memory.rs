@@ -325,6 +325,8 @@ impl Store {
             updates.push((node.id, components.total, tier, components));
         }
 
+        let (orphans, duplicates) = self.health()?;
+
         // 5 — Write.
         if !p.dry_run {
             self.apply_salience(&updates, &nodes, p.now)?;
@@ -398,6 +400,8 @@ impl Store {
                 .collect(),
             concepts_total: clusters.len(),
             concepts_pruned,
+            orphans,
+            duplicates,
             not_done: vec![
                 "concept labels are lexical, taken from what the members' paths have in common \
                  and nothing else has. A summariser would name them better; it would also make \
@@ -934,6 +938,41 @@ impl Store {
         }
 
         Ok(cluster(&links, &names, &self.uninformative_terms()?, cfg))
+    }
+
+    /// Two numbers a memory should be ashamed of, counted every pass.
+    ///
+    /// **Orphans**: nodes **somebody has actually touched** that no association reaches, in
+    /// either direction. Nothing will ever lead you to one; it can only be found by already
+    /// knowing its name. The restriction to touched nodes is what makes the number mean
+    /// something — without it, a fresh index of a home directory reports a hundred thousand
+    /// orphans, which is true, useless, and indistinguishable from a broken graph.
+    /// **Duplicates**: nodes whose content hash another node also has. A copy does not merely
+    /// waste space — it answers *instead of* the original, and it is the stale one.
+    ///
+    /// Both are borrowed from a knowledge base that has been in daily use for a year and had to
+    /// learn to count them.
+    fn health(&self) -> Result<(usize, usize)> {
+        let conn = self.conn();
+        let orphans: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM nodes n
+             WHERE n.kind IN ('file', 'concept') AND n.tier IN ('working', 'stm')
+               AND EXISTS (SELECT 1 FROM episodes ep WHERE ep.node_id = n.id)
+               AND NOT EXISTS (SELECT 1 FROM edges e WHERE e.src = n.id AND e.type <> 'contains')
+               AND NOT EXISTS (SELECT 1 FROM edges e WHERE e.dst = n.id AND e.type <> 'contains')",
+            [],
+            |r| r.get(0),
+        )?;
+        let duplicates: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(n - 1), 0) FROM (
+                 SELECT COUNT(*) AS n FROM nodes
+                 WHERE kind = 'file' AND content_hash IS NOT NULL
+                 GROUP BY content_hash HAVING COUNT(*) > 1
+             )",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok((orphans as usize, duplicates as usize))
     }
 
     /// Terms that cannot distinguish anything on this index: the tokens of the path every
@@ -1665,6 +1704,80 @@ mod tests {
             snapshot.edges.iter().any(|e| e.edge_type == "derived_from" && e.src == concept.id),
             "and so do the edges that say what it abstracts"
         );
+    }
+
+    #[test]
+    fn the_report_counts_what_nothing_links_to_and_what_exists_twice() {
+        let store = Store::open_in_memory().unwrap();
+        let ids = workspace_with_a_habit(&store);
+
+        // A fourth file somebody opened, but never alongside anything else — so it has a
+        // history and no association. An untouched file is not an orphan, it is simply a file.
+        let lonely = store
+            .upsert_node(
+                &NodeUpsert {
+                    kind: NodeKind::File,
+                    path: PathBuf::from("/w/p/notes/alone.md"),
+                    parent_id: None,
+                    mime: None,
+                    size: 10,
+                    mtime: T0,
+                    ctime: T0,
+                    inode: 0,
+                    dev: 0,
+                    zone_id: None,
+                },
+                T0,
+            )
+            .unwrap();
+
+        touch(&store, lonely.0, T0 - 3 * DAY, "alone-1");
+        touch(&store, lonely.0, T0 - 2 * DAY, "alone-2");
+
+        // And two files with the same content, as a backup directory produces.
+        for path in ["/w/p/notes/a.md", "/w/p/backups/2026-07/a.md"] {
+            let id = store
+                .upsert_node(
+                    &NodeUpsert {
+                        kind: NodeKind::File,
+                        path: PathBuf::from(path),
+                        parent_id: None,
+                        mime: None,
+                        size: 10,
+                        mtime: T0,
+                        ctime: T0,
+                        inode: 0,
+                        dev: 0,
+                        zone_id: None,
+                    },
+                    T0,
+                )
+                .unwrap();
+            store
+                .conn()
+                .execute("UPDATE nodes SET content_hash = 'same' WHERE id = ?1", [id.0])
+                .unwrap();
+        }
+
+        let report = store.consolidate(&params(T0)).unwrap();
+        assert!(report.orphans >= 1, "the unlinked file has to be counted: {report:#?}");
+        assert_eq!(report.duplicates, 1, "two copies is one duplicate, not two");
+        assert!(ids.len() == 3 && lonely.0 > 0);
+    }
+
+    #[test]
+    fn a_backup_copy_ranks_below_the_file_it_copies() {
+        let (store, ids) = store_with(&["/w/p/notes/a.md", "/w/p/backups/2026-07/a.md"]);
+        for round in 0..3 {
+            let base = T0 - (5 - round) * DAY;
+            touch(&store, ids[0], base, &format!("s{round}"));
+            touch(&store, ids[1], base + 5, &format!("s{round}"));
+        }
+        store.consolidate(&params(T0)).unwrap();
+
+        let original = store.node_by_id(NodeId(ids[0])).unwrap().unwrap().salience;
+        let copy = store.node_by_id(NodeId(ids[1])).unwrap().unwrap().salience;
+        assert!(original > copy, "identical histories, but one of them is a backup");
     }
 
     #[test]

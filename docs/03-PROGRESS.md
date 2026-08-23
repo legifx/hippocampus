@@ -10,7 +10,7 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | M8 — Agent View, and the half of M5 it needs (pulled ahead at the owner's request, D62) |
-| **Status** | M4 complete. M6 begun and paused. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **875 Rust tests pass** under `cargo test --workspace` across 40 test binaries — 41 of them in the new `cortex-memory`, 20 in `cortex-store::memory`, 2 guarding the response path — plus 11 vitest in `ui-agent`. **A note on that number:** this file briefly said 399 and accused the previous entry's 812 of being unreproducible. The 399 was wrong: the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Check the measuring tool before disbelieving the measurement — this file already says that about latency, and it applies to counting. |
+| **Status** | M4 complete. M6 begun and paused. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **878 Rust tests pass** under `cargo test --workspace` across 40 test binaries — 42 of them in the new `cortex-memory`, 22 in `cortex-store::memory`, 2 guarding the response path — plus 11 vitest in `ui-agent`. **A note on that number:** this file briefly said 399 and accused the previous entry's 812 of being unreproducible. The 399 was wrong: the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Check the measuring tool before disbelieving the measurement — this file already says that about latency, and it applies to counting. |
 | **Last updated** | 2026-08-23 |
 | **Blocked on** | nothing |
 
@@ -119,6 +119,24 @@ On the real index this produces one concept, `axon`, over 16 files. That is not 
 number: there are 39 co-access edges in an index five days old whose episode log is mostly the
 watcher's own modify events. The simulator, with sixty days of invented human sessions, produces
 eight.
+
+### What a year of somebody else's memory taught this one
+
+A separate, human-curated knowledge base — a year old, 1 147 notes, in daily use — was read for
+what a memory gets wrong in practice. Three of its findings are now code here, and one of them is
+the best evidence this project has for its own central claim. D70 and D71; §9a of the paper.
+
+- **Copies outrank originals.** Its search is `grep -r` including backup directories, so a query
+  returns the same note from three backup generations before the canonical one. `noise_score`
+  now penalises `backup`, `snapshot`, `archive`, `old` as path segments.
+- **Orphans and byte-identical twins** are now counted in every consolidation report. The orphan
+  count is restricted to nodes somebody has *touched* — without that it reports 102 584 on this
+  machine, which is true and useless; with it, 1 468. Duplicates: 24 408 of 108 342, 22 %.
+- **Its forgetting mechanism has never fired.** Seven identical weekly reports saying "none",
+  beside a health file listing 75 orphans, because the prune criteria are four conditions with
+  AND and its own intake gate makes two of them unreachable. And it is report-only anyway, so
+  nothing happens even when it does fire. That is the correct response to a store that is
+  authoritative — which is exactly why this index is a cache.
 
 ### What M5 does now
 

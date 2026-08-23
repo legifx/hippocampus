@@ -606,7 +606,7 @@ The tier distribution is the result that matters: **41 % of the index has been d
 hot tier after sixty simulated days, and the pinned node survived all of it.** That is the
 behaviour §1 argued for, produced by the engine rather than asserted.
 
-**Tests.** 857 Rust tests pass under `cargo test --workspace` — 29 of them covering the scoring,
+**Tests.** 878 Rust tests pass under `cargo test --workspace` — 29 of them covering the scoring,
 decay, tiering and association mathematics in isolation with no database, 14 covering consolidation
 against a real SQLite index, and 2 guarding the response path against the hang in §10.3. Nine
 further tests cover the visualisation's layout and snapshot validation.
@@ -629,6 +629,54 @@ frame used under two thirds of its budget. Two draw calls, whatever the node cou
 gold set. Whether salience-boosted ranking beats unboosted ranking for a real user. Whether any of
 this helps somebody find things. Each is a real gap and none is hidden behind a plausible-sounding
 proxy.
+
+---
+
+## 9a. Field evidence: a curated knowledge base, one year in
+
+The measurements above are of this system. This section is about a different one — a file-based,
+human-curated knowledge base, roughly a year old, in daily use by several agents, with 1 147
+notes of which 415 are curated canon. It has mandatory frontmatter, a six-criterion intake gate,
+layers by curation stage, an append-only journal, a weekly prune report and a 3D graph viewer
+built from its own links. It is better kept than most such systems. It was examined to find out
+what a memory gets wrong when it is actually used, rather than what one predicts it will.
+
+Three findings, and the third is the important one.
+
+**Copies outrank originals.** Its search is `grep -r` over the whole tree, backup directories
+included, with no ranking at all. A query for a term returns the same note from three generations
+of backup *before* the canonical copy, in filesystem order. An agent following its own
+read-before-you-work rule therefore starts from a six-week-old version. This is what "no
+ranking" costs in practice, and it is not a subtle cost.
+
+**The link graph decays under a rule that forbids it.** Its health file counts notes with no link
+in either direction: **75 of 415**, under an intake rule that requires at least one. Manual
+linking does not survive contact with volume.
+
+**And its forgetting mechanism has never once fired.** Seven consecutive weekly prune reports are
+byte-identical and say "none", while the health file in the same directory lists those 75 orphans
+and 4 stubs. The criteria explain it:
+
+```
+status == "draft"  AND  stale for 14 days  AND  body < 800 chars  AND  no links
+```
+
+Four conditions with AND — and the system's own intake gate *requires* at least one link and sets
+status to stable. **The forgetting criteria were made unreachable by the intake rules of the same
+system**, and nobody noticed for seven weeks, because a report that says "none" looks exactly
+like a system with nothing to forget. Even when it does find something, it changes nothing: it is
+explicitly report-only, and no human acted on it in those seven weeks.
+
+That last part is not negligence, and reading it as negligence misses the finding. It is the
+correct response to a store that is **authoritative**. Throwing something away is irreversible;
+so nobody throws anything away; so it grows monotonically. §1 of this paper argued that
+accumulation is where these systems end up. Here it is, in a well-run system, with a paper trail.
+
+**What this says about the architecture.** The load-bearing claim is not the scoring function and
+not the tiering thresholds. It is that **the index is a cache**: reconstructible, therefore safe
+to demote, therefore able to rank at all. A system that cannot cheaply rebuild itself cannot
+afford to forget, and a system that cannot forget cannot stay precise. Three of that system's
+observations changed code here — see §10.5.
 
 ---
 
@@ -687,6 +735,26 @@ It looked exactly like a slow compile.
 **A hang is a worse failure than a crash** because it does not localise itself, and a resource
 pool with fewer resources in tests than in production converts a latent bug into a total stop. We
 consider the latter a feature: the test configuration found it on the first run.
+
+---
+
+### 10.5 Three things another system's year of use found for us
+
+Not defects in this code, but blind spots in it, found by looking at §9a's system rather than at
+this one.
+
+**A copy answers instead of its original.** `backup`, `snapshot`, `archive` and `old` are now
+noise-penalised path segments. Identical histories, and the copy ranks below the file it copies —
+tested.
+
+**Orphans are the most useful number a memory prints about itself**, and the useful version is
+restricted: nodes **somebody has touched** that no association reaches. Without that restriction
+a fresh index of a home directory reports a hundred thousand orphans, which is true, useless, and
+indistinguishable from a broken graph. With it, 1 468 here.
+
+**Byte-identical twins deserve their own counter.** 24 408 of 108 342 nodes here share a content
+hash — 22 %. They cost nothing to store, because embeddings are keyed by hash. They cost
+something to read, which is the number that matters.
 
 ---
 
