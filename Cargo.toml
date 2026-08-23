@@ -26,7 +26,7 @@ version = "0.0.1"
 edition = "2021"
 rust-version = "1.85"
 license = "Apache-2.0"
-repository = "https://github.com/hippocampus-fm/hippocampus"
+repository = "https://github.com/legifx/hippocampus"
 description = "A memory daemon for your filesystem, and the file manager that grew out of it."
 
 [workspace.dependencies]

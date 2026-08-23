@@ -442,12 +442,15 @@ impl Store {
     }
 
     /// Create a concept node — a node with no path, named only by what it means.
+    /// Find or create the concept called `name`.
+    ///
+    /// The name is the concept's identity, which is what lets a cluster that gains a file update
+    /// the concept it already had instead of growing a rival beside it.
     pub fn upsert_concept(&self, name: &str, now: i64) -> Result<NodeId> {
         let conn = self.conn();
         if let Some(id) = conn
             .query_row(
-                "SELECT id FROM nodes WHERE kind = 'concept'
-                   AND json_extract(mime, '$') IS NULL AND mime = ?1",
+                "SELECT id FROM nodes WHERE kind = 'concept' AND label = ?1",
                 params![name],
                 |r| r.get::<_, i64>(0),
             )
@@ -456,7 +459,7 @@ impl Store {
             return Ok(NodeId(id));
         }
         conn.execute(
-            "INSERT INTO nodes (kind, path, mime, size, mtime, ctime, inode, dev,
+            "INSERT INTO nodes (kind, path, label, size, mtime, ctime, inode, dev,
                                 first_seen, last_seen)
              VALUES ('concept', NULL, ?1, 0, ?2, ?2, 0, 0, ?2, ?2)",
             params![name, now],

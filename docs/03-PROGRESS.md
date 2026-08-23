@@ -10,7 +10,7 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | M8 — Agent View, and the half of M5 it needs (pulled ahead at the owner's request, D62) |
-| **Status** | M4 complete. M6 begun and paused. **M5 half-built and M8 built on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. What M5 still lacks — the semantic abstraction step — is printed by every report it produces. **857 Rust tests pass** under `cargo test --workspace` across 40 test binaries — 29 of them in the new `cortex-memory`, 14 in `cortex-store::memory`, 2 guarding the response path — plus 9 vitest in `ui-agent`. **A note on that number:** this file briefly said 399 and accused the previous entry's 812 of being unreproducible. The 399 was wrong: the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Check the measuring tool before disbelieving the measurement — this file already says that about latency, and it applies to counting. |
+| **Status** | M4 complete. M6 begun and paused. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **875 Rust tests pass** under `cargo test --workspace` across 40 test binaries — 41 of them in the new `cortex-memory`, 20 in `cortex-store::memory`, 2 guarding the response path — plus 11 vitest in `ui-agent`. **A note on that number:** this file briefly said 399 and accused the previous entry's 812 of being unreproducible. The 399 was wrong: the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Check the measuring tool before disbelieving the measurement — this file already says that about latency, and it applies to counting. |
 | **Last updated** | 2026-08-23 |
 | **Blocked on** | nothing |
 
@@ -95,6 +95,31 @@ and every node in `stm`**, because M5 had not been built. A three-dimensional vi
 directory tree with extra steps, so M5 came first — see D62 for what was built and what was
 deliberately left.
 
+### Abstraction: the half that was missing
+
+D62 recorded that M5 shipped without step 2 of the consolidation loop, and every report printed
+the omission. It is built now. Label propagation over the `co_access` edges gives communities;
+a community of three to sixty files becomes a **concept node**, named after the terms its
+members' paths share and the rest of the index does not, with `derived_from` edges to its
+members and a salience taken from its three best ones. D68 has the reasoning, including why
+there is no language model in it.
+
+**Three things this step taught, all of them by failing:**
+
+- **A name is an identity, so it has to be unique** — `upsert_concept` keys on it. Two attempts
+  at disambiguation produced `kettle (5)` three times and then `kettle #1230`, which is unique,
+  stable and meaningless. A cluster with no term the others lack is now **not named at all**.
+- **The index root is not vocabulary.** The first concept the real index produced was called
+  `axon · legi · projects`. The tokens of the longest common prefix of every indexed path are
+  excluded now, and it is called `axon`.
+- **Two SQL shapes fail without an error** — `json_extract` on a column that is not JSON, and
+  `NOT IN` over an empty list. D69.
+
+On the real index this produces one concept, `axon`, over 16 files. That is not a disappointing
+number: there are 39 co-access edges in an index five days old whose episode log is mostly the
+watcher's own modify events. The simulator, with sixty days of invented human sessions, produces
+eight.
+
 ### What M5 does now
 
 `cortex consolidate [--dry-run]`, `cortex report`, `cortex graph`. One pass, in the order the
@@ -107,10 +132,12 @@ components depend on each other:
    the graph into a hairball in which everything relates to everything.
 3. **Score.** Seven bounded components, weighted, summing to a number that can explain itself.
    Stored breakdowns sum to the score actually used, and there is a test that says so.
-4. **Tier.** Promotion is immediate, demotion is one tier per pass, pins are exempt rather than
+4. **Abstract.** Communities become concept nodes, before scoring, because a file that belongs
+   to a named concept is more connected than one that does not and centrality is a component.
+5. **Tier.** Promotion is immediate, demotion is one tier per pass, pins are exempt rather than
    heavily weighted.
-5. **Report.** Including a `not done in this pass` section, which is where the missing half of
-   M5 is named every single time.
+6. **Report.** Including a `not done in this pass` section, which now names the one honest
+   remaining limit — the labels are lexical, not written by a summariser.
 
 Measured on the real index — 108 139 nodes, 9 500 episodes: **dry run 109 ms, full pass 1 516 ms.**
 On the simulator — 3 069 nodes, 31 120 episodes: **200–240 ms.**

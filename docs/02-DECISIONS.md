@@ -1854,3 +1854,63 @@ tier and edge was nonetheless computed by the same engine the daemon runs (R9).
 
 **Revisit when:** a sharing feature is wanted, at which point the snapshot needs a redaction
 mode and this entry is superseded.
+
+---
+
+### D68 — Concepts are clustered from co-access and named lexically, not by a model
+**Status:** ACCEPTED — completes the half of M5 that D62 recorded as missing
+
+M5 step 2 asks for "one semantic node per cluster" and says an LLM is appropriate. This
+implements the step and does not use one.
+
+**How it works.** Label propagation over the `co_access` edges, run to a fixed point in a
+deterministic node order, gives the communities. A community of at least three and at most sixty
+files becomes a concept. Its name is the terms its members' paths have in common **and nothing
+else does**: frequent inside the cluster, rare outside it. The concept is a real node with
+`derived_from` edges to its members, its salience is the mean of its three most salient members,
+and its membership is rewritten on every pass rather than merged.
+
+**Why not a model.** A summariser would produce better names. It would also make the abstraction
+step non-deterministic, unrunnable offline, untestable, and impossible to reproduce from a seed —
+four properties this system does not trade for nicer strings. `Cluster` carries the members and
+the ranked terms, so adding a summariser later is a function from a cluster to a better label and
+nothing else changes.
+
+**The label is the identity**, which is what lets a cluster that gains a file update its concept
+instead of growing a rival beside it — and which forced the rule that matters most here: **a
+cluster with no term the others lack is not named at all.** Two earlier attempts appended a
+disambiguator, first the member count (`kettle (5)`, three times over) and then the smallest
+member id (`kettle #1230`, unique, stable, and meaningless). A node that looks like knowledge and
+is not is worse than an absent node.
+
+**Terms from the index root are excluded.** The longest common prefix of every indexed path is,
+on a personal machine, that person's home directory — so the first concept the real index
+produced was called `axon · legi · projects`. It is now called `axon`. The prefix is found from
+`MIN(path)` and `MAX(path)`, which is two rows rather than a scan.
+
+**Revisit when:** an embedding model is resident anyway and `similar_to` edges exist. Clustering
+over both edge types would find subjects that co-access alone cannot, and the same labelling
+would still apply.
+
+---
+
+### D69 — Two SQL shapes that are wrong quietly
+**Status:** ACCEPTED — recorded because both produced no error
+
+Neither of these is a design decision so much as a pair of traps that cost a debugging session
+each, and both fail *silently*, which is why they are in the log rather than only in a commit.
+
+**`json_extract` on a column that is not JSON.** `upsert_concept` looked its concept up with
+`WHERE kind = 'concept' AND json_extract(mime, '$') IS NULL AND mime = ?1`. The clause was meant
+to say "concepts have no path". What it does is ask SQLite to parse the concept's name as JSON,
+which fails with `malformed JSON` for every name that is not a JSON document — that is, for
+every name. It had never been called with a real label before the abstraction step existed.
+Migration 6 gives concepts a `label` column of their own; a MIME type is a MIME type.
+
+**`NOT IN` over an empty list.** Pruning concepts whose cluster had dissolved rendered the empty
+case as `id NOT IN (SELECT NULL)`. In SQL's three-valued logic that predicate is NULL for every
+row and therefore true for none, so the delete removed nothing **exactly when there was most to
+remove**. The empty case is now a separate statement.
+
+**The pattern both share:** a condition that is wrong returns no rows rather than an error, and a
+delete that removes nothing looks identical to a delete that had nothing to remove.

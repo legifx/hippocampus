@@ -19,6 +19,13 @@ pub struct TierMovement {
     pub count: usize,
 }
 
+/// A concept the pass formed or refreshed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConceptView {
+    pub label: String,
+    pub members: usize,
+}
+
 /// A node worth naming in the report.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Highlight {
@@ -48,6 +55,15 @@ pub struct ConsolidationReport {
     pub pinned_held: usize,
     pub top: Vec<Highlight>,
     pub demoted: Vec<Highlight>,
+    /// The largest concepts this pass formed or refreshed, for the report.
+    #[serde(default)]
+    pub concepts: Vec<ConceptView>,
+    /// How many concepts exist after this pass.
+    #[serde(default)]
+    pub concepts_total: usize,
+    /// Concepts whose cluster no longer exists, removed by this pass.
+    #[serde(default)]
+    pub concepts_pruned: usize,
     /// True when nothing was written.
     pub dry_run: bool,
     pub duration_ms: u64,
@@ -74,6 +90,10 @@ impl ConsolidationReport {
         out.push_str(&format!(
             "associated {} co-access edges written, {} already known\n",
             self.edges_written, self.edges_unchanged
+        ));
+        out.push_str(&format!(
+            "abstracted {} concepts from those associations, {} no longer had one\n",
+            self.concepts_total, self.concepts_pruned
         ));
         out.push_str(&format!(
             "scored     {} nodes, {} moved tier, {} pinned nodes held\n\n",
@@ -105,6 +125,14 @@ impl ConsolidationReport {
             out.push_str("most salient\n");
             for h in &self.top {
                 out.push_str(&format!("  {:>6.2}  {}  ({})\n", h.salience, h.path, h.reason));
+            }
+            out.push('\n');
+        }
+
+        if !self.concepts.is_empty() {
+            out.push_str("concepts\n");
+            for concept in &self.concepts {
+                out.push_str(&format!("  {:>4} files  {}\n", concept.members, concept.label));
             }
             out.push('\n');
         }
@@ -153,6 +181,9 @@ mod tests {
                 reason: "recent, edited often".into(),
             }],
             demoted: vec![],
+            concepts: vec![ConceptView { label: "parser · grammar".into(), members: 6 }],
+            concepts_total: 1,
+            concepts_pruned: 0,
             dry_run: false,
             duration_ms: 42,
             not_done: vec!["semantic abstraction of clusters (needs an embedding model)".into()],
@@ -165,6 +196,8 @@ mod tests {
         assert!(text.contains("900 episodes"));
         assert!(text.contains("12 discarded as machine activity"));
         assert!(text.contains("stm → ltm"));
+        assert!(text.contains("parser · grammar"), "the concepts have to be in the report");
+        assert!(text.contains("abstracted 1 concepts"));
         assert!(text.contains("not done in this pass"));
         assert!(text.contains("semantic abstraction"));
     }

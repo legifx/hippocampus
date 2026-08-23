@@ -16,7 +16,8 @@ use crate::Store;
 use cortex_core::ids::NodeId;
 use cortex_core::model::{EdgeSource, EdgeType, NodeKind, Tier};
 use cortex_memory::coaccess::{CoAccessConfig, Touch, derive_co_access};
-use cortex_memory::consolidate::{ConsolidationReport, Highlight, TierMovement};
+use cortex_memory::concepts::{Cluster, ClusterConfig, Link, Named, cluster};
+use cortex_memory::consolidate::{ConceptView, ConsolidationReport, Highlight, TierMovement};
 use cortex_memory::salience::{Components, Inputs, Weights, effective_count, noise_score, score};
 use cortex_memory::tier::{TierPolicy, assign_tier};
 use rusqlite::{params, OptionalExtension};
@@ -50,6 +51,7 @@ pub struct ConsolidateParams {
     pub weights: Weights,
     pub tiers: TierPolicy,
     pub co_access: CoAccessConfig,
+    pub clusters: ClusterConfig,
     /// How many nodes to name in the report, per section.
     pub highlights: usize,
 }
@@ -62,6 +64,7 @@ impl ConsolidateParams {
             weights: Weights::default(),
             tiers: TierPolicy::default(),
             co_access: CoAccessConfig::default(),
+            clusters: ClusterConfig::default(),
             highlights: 8,
         }
     }
@@ -259,7 +262,17 @@ impl Store {
             }
         }
 
-        // 3 — Score and tier.
+        // 3 — Abstraction. Before scoring, because a file that belongs to a named concept is
+        // more connected than one that does not, and centrality is a scoring component.
+        let proposed = self.propose_concepts(&derived, &p.clusters)?;
+        let concepts_pruned = if p.dry_run {
+            0
+        } else {
+            self.write_concepts(&proposed, p.now)?
+        };
+        let clusters = proposed;
+
+        // 4 — Score and tier.
         let degrees = self.degrees()?;
         let degree_reference = percentile_degree(&degrees, 0.95);
         let active_zones = self.active_zones(p.now)?;
@@ -312,14 +325,15 @@ impl Store {
             updates.push((node.id, components.total, tier, components));
         }
 
-        // 4 — Write.
+        // 5 — Write.
         if !p.dry_run {
             self.apply_salience(&updates, &nodes, p.now)?;
+            self.score_concepts(&p.tiers)?;
             self.prune_salience_log()?;
             self.meta_set("consolidated_through", &p.now.to_string())?;
         }
 
-        // 5 — Report.
+        // 6 — Report.
         ranked.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
         let top: Vec<Highlight> = ranked
             .iter()
@@ -374,9 +388,20 @@ impl Store {
             demoted,
             dry_run: p.dry_run,
             duration_ms: started.elapsed().as_millis() as u64,
+            concepts: clusters
+                .iter()
+                .take(p.highlights)
+                .map(|c| ConceptView {
+                    label: c.label.clone(),
+                    members: c.members.len(),
+                })
+                .collect(),
+            concepts_total: clusters.len(),
+            concepts_pruned,
             not_done: vec![
-                "semantic abstraction: one concept node per cluster needs an embedding model \
-                 and is M5 step 2"
+                "concept labels are lexical, taken from what the members' paths have in common \
+                 and nothing else has. A summariser would name them better; it would also make \
+                 this step non-deterministic and unrunnable offline (D68)"
                     .to_string(),
                 "promotion into the sync outbox is M7".to_string(),
             ],
@@ -447,11 +472,18 @@ impl Store {
         // Selection is by salience, and by recency for the nodes an unconsolidated index has
         // no salience for. Without the second key a fresh install would show an arbitrary
         // three thousand nodes out of a hundred thousand.
+        // Concepts have no path — their name lives in `label`, which is where `upsert_concept`
+        // puts it — so the label stands in for the path and the view never has to know that.
+        // They are also never excluded by a zone filter: a concept spans whatever its members
+        // span, and dropping it from a zone's view would hide the one node that says what the
+        // zone is about.
         let mut stmt = conn.prepare(
-            "SELECT id, path, kind, parent_id, tier, salience, pinned, zone_id, size, mtime
+            "SELECT id, COALESCE(path, label, '?'), kind, parent_id, tier, salience, pinned,
+                    zone_id, size, mtime
              FROM nodes
-             WHERE path IS NOT NULL AND kind IN ('file', 'dir') AND salience >= ?1
-               AND (?2 IS NULL OR zone_id = ?2)
+             WHERE kind IN ('file', 'dir', 'concept') AND salience >= ?1
+               AND (path IS NOT NULL OR kind = 'concept')
+               AND (?2 IS NULL OR zone_id = ?2 OR kind = 'concept')
              ORDER BY salience DESC, mtime DESC
              LIMIT ?3",
         )?;
@@ -483,7 +515,7 @@ impl Store {
             let (id, path, kind, parent, tier, salience, pinned, zone, size, mtime) = row?;
             selected.insert(id, nodes.len());
             nodes.push(GraphNode {
-                name: leaf(&path).to_string(),
+                name: if kind == "concept" { path.clone() } else { leaf(&path).to_string() },
                 id,
                 path,
                 kind,
@@ -517,7 +549,8 @@ impl Store {
                 }
                 let found = conn
                     .query_row(
-                        "SELECT id, path, kind, parent_id, tier, salience, pinned, zone_id, size, mtime
+                        "SELECT id, COALESCE(path, label, '?'), kind, parent_id, tier, salience,
+                                pinned, zone_id, size, mtime
                          FROM nodes WHERE id = ?1",
                         [id],
                         |row| {
@@ -540,7 +573,7 @@ impl Store {
                 {
                     selected.insert(id, nodes.len());
                     nodes.push(GraphNode {
-                        name: leaf(&path).to_string(),
+                        name: if kind == "concept" { path.clone() } else { leaf(&path).to_string() },
                         id,
                         path,
                         kind,
@@ -854,6 +887,187 @@ impl Store {
             });
         }
         Ok(out)
+    }
+
+    // -----------------------------------------------------------------------
+    // Abstraction
+    // -----------------------------------------------------------------------
+
+    /// The clusters this pass's associations contain, named.
+    ///
+    /// **Clustered from the edges the replay just derived, not from the edge table.** The two
+    /// are the same thing after a real pass — co-access is a pure function of the episode log —
+    /// but a dry run has not written anything, and reading the table would make it propose
+    /// concepts from the *previous* pass's associations, or from none at all on a fresh index.
+    /// A dry run that cannot answer "what would this do" is not worth having.
+    fn propose_concepts(
+        &self,
+        derived: &[cortex_memory::coaccess::DerivedEdge],
+        cfg: &ClusterConfig,
+    ) -> Result<Vec<Cluster>> {
+        if derived.is_empty() {
+            return Ok(Vec::new());
+        }
+        let links: Vec<Link> = derived
+            .iter()
+            .map(|e| Link { src: e.src, dst: e.dst, weight: e.weight })
+            .collect();
+
+        // Only the nodes the edges actually touch: naming a cluster needs their paths, and
+        // loading a hundred thousand of them to use a few hundred would be the expensive way to
+        // get the same answer.
+        let wanted: std::collections::HashSet<i64> =
+            links.iter().flat_map(|l| [l.src, l.dst]).collect();
+        let mut names = Vec::with_capacity(wanted.len());
+        {
+            let conn = self.conn();
+            let mut stmt =
+                conn.prepare("SELECT path FROM nodes WHERE id = ?1 AND path IS NOT NULL")?;
+            let mut ids: Vec<i64> = wanted.into_iter().collect();
+            ids.sort_unstable();
+            for id in ids {
+                let path: Option<String> = stmt.query_row([id], |r| r.get(0)).optional()?;
+                if let Some(path) = path {
+                    names.push(Named { id, path });
+                }
+            }
+        }
+
+        Ok(cluster(&links, &names, &self.uninformative_terms()?, cfg))
+    }
+
+    /// Terms that cannot distinguish anything on this index: the tokens of the path every
+    /// indexed file shares.
+    ///
+    /// The longest common prefix of a sorted set is the longest common prefix of its first and
+    /// last element, so this is two rows rather than a scan of a hundred thousand paths.
+    fn uninformative_terms(&self) -> Result<std::collections::BTreeSet<String>> {
+        let conn = self.conn();
+        let bounds: Option<(String, String)> = conn
+            .query_row(
+                "SELECT MIN(path), MAX(path) FROM nodes WHERE path IS NOT NULL",
+                [],
+                |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?)),
+            )
+            .optional()?
+            .and_then(|(lo, hi)| Some((lo?, hi?)));
+        let Some((low, high)) = bounds else {
+            return Ok(Default::default());
+        };
+
+        let shared: String = low
+            .char_indices()
+            .take_while(|&(i, c)| high[i..].starts_with(c))
+            .map(|(_, c)| c)
+            .collect();
+        // Only whole path segments count: a prefix ending mid-name would make half a word
+        // uninformative and leave the other half looking distinctive.
+        let shared = shared.rsplit_once('/').map_or("", |(head, _)| head);
+        Ok(cortex_memory::concepts::tokens(shared).into_iter().collect())
+    }
+
+    /// Write the clusters as concept nodes, and remove the concepts that no longer have one.
+    ///
+    /// A concept's identity is its label, so a cluster that gains a file updates the concept it
+    /// already had rather than growing a rival beside it. Its membership is rewritten rather
+    /// than merged: a file that left the cluster must stop being part of the concept, and an
+    /// edge set that only ever grew would make abstraction another way of accumulating.
+    fn write_concepts(&self, clusters: &[Cluster], now: i64) -> Result<usize> {
+        let mut live: Vec<i64> = Vec::with_capacity(clusters.len());
+        for cluster in clusters {
+            let concept = self.upsert_concept(&cluster.label, now)?;
+            live.push(concept.0);
+            self.batch(|b| {
+                b.tx().execute(
+                    "DELETE FROM edges WHERE src = ?1 AND type = 'derived_from'",
+                    params![concept.0],
+                )?;
+                for member in &cluster.members {
+                    b.tx().execute(
+                        "INSERT INTO edges (src, dst, type, weight, created_at, source)
+                         VALUES (?1, ?2, 'derived_from', 1.0, ?3, 'inferred')
+                         ON CONFLICT(src, dst, type) DO NOTHING",
+                        params![concept.0, member, now],
+                    )?;
+                }
+                Ok(())
+            })?;
+        }
+
+        // Concepts whose cluster has dissolved. Deleting the node cascades its edges.
+        //
+        // The empty case is written out rather than folded into the same statement: an empty
+        // list rendered as `NOT IN (SELECT NULL)` is a predicate that is NULL for every row and
+        // therefore true for none, so the delete silently did nothing exactly when there was
+        // most to delete. SQL's three-valued logic makes that the *quiet* wrong answer.
+        let conn = self.conn();
+        let removed = if live.is_empty() {
+            conn.execute("DELETE FROM nodes WHERE kind = 'concept'", [])?
+        } else {
+            let ids = live.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(",");
+            conn.execute(
+                &format!("DELETE FROM nodes WHERE kind = 'concept' AND id NOT IN ({ids})"),
+                [],
+            )?
+        };
+        Ok(removed)
+    }
+
+    /// A concept is worth what its best material is worth.
+    ///
+    /// The mean of its three most salient members, not the maximum and not the mean of all: the
+    /// maximum makes every concept containing one hot file look hot, and the mean over all
+    /// members lets a large cluster of cold files bury a live subject.
+    fn score_concepts(&self, policy: &TierPolicy) -> Result<()> {
+        let mut by_concept: HashMap<i64, Vec<f64>> = HashMap::new();
+        {
+            let conn = self.conn();
+            // The grouping is done here rather than in SQL. The first attempt used a correlated
+            // subquery with a LIMIT inside a WHERE ... IN, which is the kind of statement that
+            // parses, runs, and quietly means something else.
+            let mut stmt = conn.prepare(
+                "SELECT e.src, m.salience FROM edges e
+                 JOIN nodes c ON c.id = e.src AND c.kind = 'concept'
+                 JOIN nodes m ON m.id = e.dst
+                 WHERE e.type = 'derived_from'",
+            )?;
+            let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?)))?;
+            for row in rows {
+                let (concept, salience) = row?;
+                by_concept.entry(concept).or_default().push(salience);
+            }
+        }
+
+        let mut scored: Vec<(i64, f64)> = by_concept
+            .into_iter()
+            .map(|(concept, mut members)| {
+                members.sort_by(|a, b| b.total_cmp(a));
+                let top = &members[..members.len().min(3)];
+                (concept, top.iter().sum::<f64>() / top.len() as f64)
+            })
+            .collect();
+        scored.sort_by_key(|(id, _)| *id);
+
+        self.batch(|b| {
+            for (id, salience) in &scored {
+                // No grace window and no one-step demotion: a concept is rebuilt from its
+                // members every pass, so there is no history for it to fall through.
+                let tier = if *salience >= policy.working {
+                    Tier::Working
+                } else if *salience >= policy.stm {
+                    Tier::Stm
+                } else if *salience >= policy.ltm {
+                    Tier::Ltm
+                } else {
+                    Tier::Cold
+                };
+                b.tx().execute(
+                    "UPDATE nodes SET salience = ?2, tier = ?3 WHERE id = ?1",
+                    params![id, salience, tier.as_str()],
+                )?;
+            }
+            Ok(())
+        })
     }
 
     fn apply_salience(
@@ -1300,6 +1514,157 @@ mod tests {
         assert_eq!(report.nodes_scored, 1);
         // No edge may have been derived to the node that is gone: `edges` has a foreign key.
         assert_eq!(store.edge_count().unwrap(), 0);
+    }
+
+    /// Three files worked on together, twice, become a concept with a name from their paths.
+    fn workspace_with_a_habit(store: &Store) -> Vec<i64> {
+        let ids: Vec<i64> = ["/w/p/parser/tokens.rs", "/w/p/parser/grammar.rs", "/w/p/t/parser_spec.rs"]
+            .iter()
+            .map(|path| {
+                store
+                    .upsert_node(
+                        &NodeUpsert {
+                            kind: NodeKind::File,
+                            path: PathBuf::from(path),
+                            parent_id: None,
+                            mime: None,
+                            size: 100,
+                            mtime: T0 - 400 * DAY,
+                            ctime: T0 - 400 * DAY,
+                            inode: 0,
+                            dev: 0,
+                            zone_id: None,
+                        },
+                        T0 - 400 * DAY,
+                    )
+                    .unwrap()
+                    .0
+            })
+            .collect();
+        for round in 0..4 {
+            let base = T0 - (10 - round) * DAY;
+            for (i, id) in ids.iter().enumerate() {
+                touch(store, *id, base + i as i64 * 30, &format!("s{round}"));
+            }
+        }
+        ids
+    }
+
+    #[test]
+    fn files_used_together_become_a_concept_named_after_them() {
+        let store = Store::open_in_memory().unwrap();
+        let ids = workspace_with_a_habit(&store);
+        let report = store.consolidate(&params(T0)).unwrap();
+
+        assert_eq!(report.concepts_total, 1, "{:#?}", report.concepts);
+        let concept = &report.concepts[0];
+        assert_eq!(concept.members, 3);
+        assert!(concept.label.contains("parser"), "{}", concept.label);
+
+        // The concept exists as a node, and it points at its members.
+        let neighbours = store
+            .neighbors(NodeId(ids[0]), &[EdgeType::DerivedFrom], 1, 10)
+            .unwrap();
+        assert_eq!(neighbours.len(), 1, "the file must be reachable from its concept");
+        assert_eq!(neighbours[0].kind, NodeKind::Concept.as_str());
+    }
+
+    #[test]
+    fn consolidating_twice_does_not_grow_a_second_concept() {
+        let store = Store::open_in_memory().unwrap();
+        workspace_with_a_habit(&store);
+        let first = store.consolidate(&params(T0)).unwrap();
+        let second = store.consolidate(&params(T0)).unwrap();
+
+        assert_eq!(first.concepts_total, second.concepts_total);
+        let concepts: i64 = store
+            .conn()
+            .query_row("SELECT COUNT(*) FROM nodes WHERE kind = 'concept'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(concepts, 1, "abstraction has to be idempotent too");
+    }
+
+    #[test]
+    fn a_concept_is_worth_what_its_members_are_worth() {
+        let store = Store::open_in_memory().unwrap();
+        let ids = workspace_with_a_habit(&store);
+        store.consolidate(&params(T0)).unwrap();
+
+        let concept: f64 = store
+            .conn()
+            .query_row("SELECT salience FROM nodes WHERE kind = 'concept'", [], |r| r.get(0))
+            .unwrap();
+        let member = store.node_by_id(NodeId(ids[0])).unwrap().unwrap().salience;
+        assert!(concept > 0.0, "a concept with no salience would never be drawn");
+        assert!(
+            concept <= member * 1.001,
+            "a concept must not outrank the material it abstracts: {concept} vs {member}"
+        );
+    }
+
+    #[test]
+    fn a_concept_whose_cluster_dissolves_is_removed() {
+        let store = Store::open_in_memory().unwrap();
+        workspace_with_a_habit(&store);
+        store.consolidate(&params(T0)).unwrap();
+        assert_eq!(store.consolidate(&params(T0)).unwrap().concepts_total, 1);
+
+        // Deleting the edges would not do it — they are a pure function of the episode log and
+        // the next pass derives them again, which is the property D65 is about. What dissolves
+        // a cluster is the cluster no longer qualifying.
+        let stricter = ConsolidateParams {
+            clusters: cortex_memory::concepts::ClusterConfig {
+                min_members: 99,
+                ..cortex_memory::concepts::ClusterConfig::default()
+            },
+            ..params(T0)
+        };
+        let report = store.consolidate(&stricter).unwrap();
+        assert_eq!(report.concepts_total, 0);
+        assert!(report.concepts_pruned >= 1, "{report:#?}");
+        let left: i64 = store
+            .conn()
+            .query_row("SELECT COUNT(*) FROM nodes WHERE kind = 'concept'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0);
+    }
+
+    #[test]
+    fn a_dry_run_names_the_concepts_it_would_form_without_forming_them() {
+        let store = Store::open_in_memory().unwrap();
+        workspace_with_a_habit(&store);
+        let report = store
+            .consolidate(&ConsolidateParams { dry_run: true, ..params(T0) })
+            .unwrap();
+
+        assert_eq!(report.concepts_total, 1);
+        let concepts: i64 = store
+            .conn()
+            .query_row("SELECT COUNT(*) FROM nodes WHERE kind = 'concept'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(concepts, 0, "a dry run must still write nothing");
+    }
+
+    #[test]
+    fn the_snapshot_carries_concepts_and_calls_them_by_their_name() {
+        let store = Store::open_in_memory().unwrap();
+        workspace_with_a_habit(&store);
+        store.consolidate(&params(T0)).unwrap();
+
+        let snapshot = store
+            .graph_snapshot(&GraphParams { now: T0, ..GraphParams::default() })
+            .unwrap();
+        let concept = snapshot
+            .nodes
+            .iter()
+            .find(|n| n.kind == "concept")
+            .expect("the concept has to be in the picture");
+        assert!(concept.name.contains("parser"), "{}", concept.name);
+        assert!(concept.parent.is_none());
+        assert!(
+            snapshot.edges.iter().any(|e| e.edge_type == "derived_from" && e.src == concept.id),
+            "and so do the edges that say what it abstracts"
+        );
     }
 
     #[test]

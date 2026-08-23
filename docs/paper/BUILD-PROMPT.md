@@ -211,6 +211,9 @@ CREATE TABLE nodes (
     inode        INTEGER NOT NULL DEFAULT 0,
     dev          INTEGER NOT NULL DEFAULT 0,
     content_hash TEXT,
+    -- A concept's name, and its identity. Not `mime`: a MIME type is a MIME type, and a name
+    -- kept in one goes on being wrong quietly. Unique among concepts.
+    label        TEXT,
     tier         TEXT    NOT NULL DEFAULT 'stm'
                  CHECK (tier IN ('working','stm','ltm','cold')),
     salience     REAL    NOT NULL DEFAULT 0.0,
@@ -386,16 +389,62 @@ graph would be a single hairball in which everything relates to everything. Disc
 Expect to discard a lot: on real developer machines roughly two thirds of bursts are machine
 activity.
 
-### 6.6 The consolidation pass
+### 6.6 Abstraction: naming a cluster
 
-Five steps, in this order, because each depends on the last:
+Association answers questions about pairs. The step that makes memory *semantic* turns a
+recurring cluster into one thing with a name.
+
+```
+communities  = label propagation over the co_access edges
+               deterministic node order; ties to the smaller label; run to a fixed point
+keep         = communities with MIN_MEMBERS (3) <= size <= MAX_MEMBERS (60)
+name         = the terms the members' paths share and the rest of the index does not:
+                 inside  = fraction of the cluster's files whose path contains the term
+                 outside = fraction of every *other* clustered file that contains it
+                 keep terms with inside >= 0.5, outside <= 0.4, outside < inside
+                 score   = inside * ln((inside + eps) / (outside + eps)); take the top 3
+concept      = a node of kind `concept`, identified by that name, with `derived_from`
+               edges to its members and a salience equal to the mean of its top three
+```
+
+Five rules, each of which a first implementation got wrong:
+
+- **Compare inside against outside, not against the global frequency.** With two clusters, a term
+  covering one of them entirely is 50 % of all documents — so a global-share filter throws away
+  the perfect label first.
+- **The label is the identity.** That is what lets a cluster which gains a file update its concept
+  rather than grow a rival beside it. Key the upsert on the name.
+- **A cluster with no term the others lack is not named at all.** Do not append a disambiguator.
+  A member count gives you `kettle (5)` three times; the smallest member id gives you
+  `kettle #1230`, which is unique, stable and meaningless. A node that looks like knowledge and is
+  not is worse than an absent node.
+- **Exclude the tokens of the index's own root.** The longest common prefix of every indexed path
+  is, on a personal machine, the user's home directory, and it will otherwise appear in every
+  concept's name. Find it from `MIN(path)` and `MAX(path)` — two rows, not a scan.
+- **Rewrite membership each pass, never merge it.** A file that left the cluster must leave the
+  concept, or abstraction becomes another way of accumulating.
+
+**Do not use a language model for the name**, however tempting. It makes this step
+non-deterministic, unrunnable offline, untestable and unreproducible from a seed. Keep the ranked
+terms on the cluster so a summariser can be added later as a pure function from cluster to string.
+
+### 6.7 The consolidation pass
+
+Six steps, in this order, because each depends on the last:
 
 1. **Replay** the episode log.
 2. **Associate** — derive and upsert `co_access` edges.
-3. **Score** — because centrality is a component, and a pass that scored before writing edges
+3. **Abstract** — §6.6. Before scoring, because a file belonging to a named concept is more
+   connected than one that does not.
+4. **Score** — because centrality is a component, and a pass that scored before writing edges
    would rank against the previous pass's graph, permanently one step behind itself.
-4. **Tier.**
-5. **Report.**
+5. **Tier.**
+6. **Report.**
+
+**A dry run must cluster from the edges the replay just derived, not from the edge table.** The
+two agree after a real pass — co-access is a pure function of the log — but a dry run has written
+nothing, so reading the table makes it propose concepts from the previous pass, or from none at
+all on a fresh index. A dry run that cannot answer "what would this do" is not worth having.
 
 **Replay the whole log every pass**, capped at a fixed number of most recent episodes. Deriving
 only from new episodes makes the graph depend on how often consolidation happened to run — an
@@ -403,14 +452,14 @@ index consolidated hourly and one consolidated weekly would disagree, from ident
 Replaying everything and upserting makes the edge set a pure function of the log.
 
 **The report is a deliverable, not a log line.** It must state: episodes replayed, bursts found,
-**bursts discarded**, edges written, nodes scored, what moved between which tiers, how many pinned
+**bursts discarded**, edges written, concepts formed and pruned, nodes scored, what moved between which tiers, how many pinned
 nodes were held, the most salient nodes with a one-phrase reason each, and — always — a section
 naming what this pass deliberately did not do. That last section is three lines of output and it
 is the difference between a project that knows where it is and one that believes its own summary.
 
 ---
 
-## 7. Four traps
+## 7. Five traps
 
 These are defects found in a real implementation of this specification, after the code had passed
 its unit tests. Write the regression test **before** the code that would contain the bug.
@@ -448,7 +497,19 @@ and any method that can produce a large answer caps its own request at a size yo
 **Test:** hand the responder an oversized result and assert an error comes back on the wire, with
 the request's id, small enough to send.
 
-### 7.4 A connection pool deadlocks against itself
+### 7.4 Two SQL shapes that are wrong without an error
+
+**`json_extract` on a column that is not JSON** fails the statement with `malformed JSON` — for
+every value that is not a JSON document, which is most values. A `WHERE` clause written to mean
+"this column is empty" that reaches for `json_extract` will work in tests full of empty columns
+and fail on the first real one.
+
+**`NOT IN` over an empty list**, rendered as `id NOT IN (SELECT NULL)`, is NULL for every row in
+SQL's three-valued logic and therefore true for none. A delete written that way removes nothing
+**exactly when there is most to remove**, and a delete that removed nothing is indistinguishable
+from one that had nothing to remove. Write the empty case as its own statement.
+
+### 7.5 A connection pool deadlocks against itself
 
 If your store hands out pooled connections, a function that holds one while calling a helper that
 asks for another will wait for itself. On a pool of four this is latent and load-dependent. On an
@@ -521,9 +582,11 @@ of day one, and index growth sub-linear in episode count. ② a node touched onc
 Cold by day ninety; a pinned node beside it is still in STM. **Assert both.** ③ consolidation is
 idempotent: two passes over the same log produce identical edges and, once settled, identical
 tiers. ④ the report is generated and a human can tell from it what the system did without reading
-logs — including what it discarded and what it did not do. ⑤ the stored component breakdown sums to
-the score actually used, for every node, asserted. ⑥ a full rebuild after aggressive demotion
-restores every node from episodes plus the filesystem (R10). ⑦ the four traps in §7 each have a
+logs — including what it discarded and what it did not do. ⑤ files worked on together become a
+named concept; two passes do not produce two concepts; a cluster with nothing distinctive to say
+is not named at all. ⑥ the stored component breakdown sums to
+the score actually used, for every node, asserted. ⑦ a full rebuild after aggressive demotion
+restores every node from episodes plus the filesystem (R10). ⑧ the five traps in §7 each have a
 named regression test.
 
 ### M6 — Human View

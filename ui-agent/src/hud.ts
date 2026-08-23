@@ -231,7 +231,7 @@ export class Hud {
     const node = this.selected;
     const zone = this.snapshot.zones.find((z) => z.id === node.zone);
     const title = element("p", "path", node.path);
-    title.style.color = css(nodeColor(zone?.hue, node.tier), 1);
+    title.style.color = css(nodeColor(zone?.hue, node.tier, node.kind), 1);
     this.inspectorBody.appendChild(title);
 
     const list = element("dl", "stats");

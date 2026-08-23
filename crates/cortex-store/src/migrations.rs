@@ -40,6 +40,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "extract_progress_index",
         sql: include_str!("schema/0005_extract_progress_index.sql"),
     },
+    Migration {
+        version: 6,
+        name: "concept_label",
+        sql: include_str!("schema/0006_concept_label.sql"),
+    },
 ];
 
 /// The schema version this build expects.

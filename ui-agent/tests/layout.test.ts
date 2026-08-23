@@ -80,6 +80,35 @@ describe("layout", () => {
   });
 });
 
+describe("concepts", () => {
+  const withConcept: GraphNode[] = [
+    node(1, "/w/a.md", null),
+    node(2, "/w/b.md", null),
+    node(9, "parser · grammar", null, { kind: "concept", zone: null }),
+  ];
+  const edges = [
+    { src: 9, dst: 1, type: "derived_from", weight: 1, source: "inferred" },
+    { src: 9, dst: 2, type: "derived_from", weight: 1, source: "inferred" },
+  ];
+
+  it("places a concept among the files it abstracts", () => {
+    const { tree } = layout(withConcept, edges);
+    const mid = [0, 1, 2].map((axis) => (tree[axis] + tree[3 + axis]) / 2);
+    // Same place as its members in x and z, lifted clear of them in y.
+    // The concept is the third node, so its offset is 6 — not 18, which is what a first pass
+    // at this test used and which reads NaN off the end of the buffer rather than failing.
+    expect(Math.abs(tree[6] - mid[0])).toBeLessThan(0.001);
+    expect(Math.abs(tree[8] - mid[2])).toBeLessThan(0.001);
+    expect(tree[7]).toBeGreaterThan(mid[1]);
+  });
+
+  it("leaves a concept whose members were not sent where it was", () => {
+    const orphan = [node(9, "lonely", null, { kind: "concept" })];
+    expect(() => layout(orphan, [{ src: 9, dst: 404, type: "derived_from", weight: 1, source: "inferred" }]))
+      .not.toThrow();
+  });
+});
+
 describe("snapshot validation", () => {
   const valid: GraphSnapshot = {
     generated_at: 1,

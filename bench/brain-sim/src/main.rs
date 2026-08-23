@@ -94,11 +94,25 @@ const SOURCE_DIRS: &[&str] = &["src", "tests", "docs", "assets"];
 const GENERATED_DIRS: &[&str] = &["target", "node_modules", ".cache"];
 const EXTENSIONS: &[&str] = &["rs", "ts", "md", "toml", "css", "py", "json"];
 /// How many distinct working sets each project has. Small clusters, revisited.
-const CLUSTERS: usize = 9;
+/// One per subject vocabulary, so each has something of its own to be named after.
+const CLUSTERS: usize = SUBJECTS.len();
 
-const STEMS: &[&str] = &[
-    "index", "parser", "layout", "server", "client", "model", "render", "config", "store",
-    "search", "cache", "worker", "schema", "router", "session", "report", "queue", "reader",
+/// One vocabulary per working set, so a cluster has something to be named after.
+///
+/// The first version drew every file name from one global list, which meant the only word a
+/// cluster's files reliably shared was the project's own name — and the abstraction step
+/// correctly refused to name nine clusters `kettle`. Real work is not like that: the files
+/// somebody keeps open together are about the same thing and are named accordingly.
+const SUBJECTS: &[&[&str]] = &[
+    &["parser", "token", "grammar", "lexer"],
+    &["render", "canvas", "shader", "sprite"],
+    &["invoice", "ledger", "tax", "payment"],
+    &["session", "login", "token", "cookie"],
+    &["queue", "worker", "retry", "backoff"],
+    &["schema", "migration", "column", "index"],
+    &["router", "route", "redirect", "path"],
+    &["cache", "evict", "warm", "hit"],
+    &["report", "chart", "export", "summary"],
 ];
 
 /// A file in the synthetic workspace, and what it is for.
@@ -226,7 +240,8 @@ fn build_workspace(store: &Store, rng: &mut Rng, target: usize) -> Result<Vec<Fi
             // makes forgetting worth having.
             let count = if generated { share / 2 } else { share / 6 };
             for i in 0..count.max(1) {
-                let stem = STEMS[rng.below(STEMS.len())];
+                let subject = SUBJECTS[(i / 5) % SUBJECTS.len()];
+                let stem = subject[rng.below(subject.len())];
                 let ext = EXTENSIONS[rng.below(EXTENSIONS.len())];
                 let path = format!("/w/{}/{directory}/{stem}_{i}.{ext}", project.name);
                 let id = upsert(

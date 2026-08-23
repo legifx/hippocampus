@@ -150,7 +150,7 @@ export class BrainScene {
     const nodeList = this.snapshot.nodes;
     nodeList.forEach((node, i) => this.indexById.set(node.id, i));
 
-    this.positions = layout(nodeList);
+    this.positions = layout(nodeList, this.snapshot.edges);
     this.current = Float32Array.from(this.positions.tree);
     this.from = Float32Array.from(this.positions.tree);
     this.to = Float32Array.from(this.positions.tree);
@@ -193,8 +193,8 @@ export class BrainScene {
     const color = new THREE.Color();
     for (let i = 0; i < nodeList.length; i++) {
       const node = nodeList[i];
-      this.baseRadius[i] = nodeRadius(node.salience, node.kind === "dir");
-      const rgb = nodeColor(node.zone === null ? undefined : zoneHue.get(node.zone), node.tier);
+      this.baseRadius[i] = nodeRadius(node.salience, node.kind);
+      const rgb = nodeColor(node.zone === null ? undefined : zoneHue.get(node.zone), node.tier, node.kind);
       color.setHex(toHex(rgb));
       this.nodes.setColorAt(i, color);
     }
@@ -210,7 +210,7 @@ export class BrainScene {
     const working = new Set(this.snapshot.working_set);
     for (let i = 0; i < nodeList.length; i++) {
       const node = nodeList[i];
-      const rgb = nodeColor(node.zone === null ? undefined : zoneHue.get(node.zone), node.tier);
+      const rgb = nodeColor(node.zone === null ? undefined : zoneHue.get(node.zone), node.tier, node.kind);
       haloColor[i * 3] = rgb.r;
       haloColor[i * 3 + 1] = rgb.g;
       haloColor[i * 3 + 2] = rgb.b;

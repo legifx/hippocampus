@@ -466,17 +466,50 @@ log — run it twice, get the same graph — which is the idempotence property t
 The cost is bounded by a cap on replayed episodes, and measured in §9 at 240 ms for 31 000
 episodes.
 
-### 6.7 What is deliberately missing, and why the report says so
+### 6.7 Abstraction: from "these are related" to "this is the parser work"
 
-Step 2 of the specified consolidation loop — abstracting each cluster into a semantic concept node
-— is not implemented. It needs an embedding model and a summariser, and the daemon has not been
-asked to load one.
+Association alone can only answer questions about pairs. The step that makes a memory *semantic*
+turns a recurring cluster into one thing with a name.
 
-Every report the system prints ends with a `not done in this pass` section naming it. Three lines
-of output. The reason is a claim about how projects fail: a system that quietly omits half of what
-its own specification promised is how a team ends up believing it is further along than it is, and
-the omission then survives as folklore instead of documentation. **Printing the gap in the same
-paragraph as the achievement is the cheapest honesty mechanism we know of.**
+Label propagation over the `co_access` edges gives the communities — run to a fixed point in a
+deterministic node order, ties broken by the smaller label, so the fixed point is unique rather
+than merely reachable. A community of between three and sixty files becomes a **concept node**
+with `derived_from` edges to its members and a salience equal to the mean of its three most
+salient ones. Its membership is rewritten every pass, never merged: a file that left the cluster
+must stop being part of the concept, or abstraction becomes another way of accumulating.
+
+**The name is chosen lexically, and that is a decision rather than a shortcut.** A concept is
+called after the terms its members' paths share and the rest of the index does not — frequent
+inside, rare outside. A summariser would produce better names, and would also make this step
+non-deterministic, unrunnable offline, untestable and unreproducible from a seed. Four properties
+traded for nicer strings is a bad trade. The cluster type carries its members and its ranked
+terms, so adding a summariser later is a function from a cluster to a better label and nothing
+else changes.
+
+Two rules fell out of building it, and both are about honesty rather than quality.
+
+**The label is the identity**, because that is what lets a cluster which gains a file update its
+concept instead of growing a rival beside it. Which forces the second rule: **a cluster with no
+term the others lack is not named at all.** Two earlier attempts appended a disambiguator — the
+member count, which produced `kettle (5)` three times over, and then the smallest member id,
+which produced `kettle #1230`: unique, stable, and meaningless. **A node that looks like knowledge
+and is not is worse than an absent node**, because the graph is read as evidence.
+
+**And the machine's own shape is not vocabulary.** The longest common prefix of every indexed path
+is, on a personal computer, that person's home directory. The first concept the real index
+produced was called `axon · legi · projects` — one word that meant something and two that were the
+shape of somebody's filesystem. Those tokens are excluded now, and it is called `axon`.
+
+### 6.8 What is still missing, and why the report says so
+
+Promotion of consolidated material into a federation outbox is not implemented; it belongs to the
+sync milestone. And the labels above are lexical, not written by a summariser.
+
+Every report the system prints ends with a `not done in this pass` section naming both. Three
+lines of output. The reason is a claim about how projects fail: a system that quietly omits part
+of what its own specification promised is how a team ends up believing it is further along than
+it is, and the omission then survives as folklore instead of documentation. **Printing the gap in
+the same paragraph as the achievement is the cheapest honesty mechanism we know of.**
 
 ---
 
@@ -707,6 +740,7 @@ Against published descriptions, not against re-implementations. §13 states what
 | forgets | no | eviction policies | **decay → demotion, four tiers** |
 | ranking explains itself | no | rarely | **component breakdown, tested to sum** |
 | associations from | embedding similarity | LLM-extracted relations | **co-occurrence in time**, plus similarity |
+| abstraction | none | LLM summaries | **communities of co-access, named from shared vocabulary** |
 | knows what you are doing now | no | no | **Working Set from episodes** |
 | human intent | none | none | **pins, exempt from inference** |
 | model on the retrieval path | yes (embedding) | usually | **no** — hybrid lexical + vector |
@@ -737,8 +771,9 @@ section is advertising.
 4. **The weights are chosen, not learned.** Seven weights, set by argument, validated only by
    whether the resulting tier distribution looks sane. They should be fitted against observed
    re-access — the data to do it is in the episode log.
-5. **Half the specified consolidation is not implemented** (§6.7). No semantic abstraction, no
-   concept nodes. The system therefore has associative memory but not yet semantic memory.
+5. **Concept names are lexical** (§6.7). The clustering is sound and the names are honest, but
+   they are the vocabulary of a filesystem, not a summary of a subject. On an index with little
+   history there are very few of them — one, on the machine measured here.
 6. **Single-machine, single-user, one operating system.** Everything measured here ran on one
    Linux desktop. Multi-device federation is designed and not built.
 8. **The simulator's history is invented.** Its *response* to that history is the real engine, but

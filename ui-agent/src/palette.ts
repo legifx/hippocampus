@@ -13,6 +13,7 @@
  * | halo        | in the Working Set          |
  * | ring        | pinned                      |
  * | edge colour | edge type                   |
+ * | white core  | a concept rather than a file |
  *
  * Nothing encodes file type, and that is deliberate: this view is about what the brain thinks,
  * not about what the filesystem holds.
@@ -42,11 +43,21 @@ export const EDGE_STYLE: Record<string, { color: Rgb; alpha: number }> = {
   co_access: { color: { r: 1.0, g: 0.62, b: 0.28 }, alpha: 0.85 },
   similar_to: { color: { r: 0.66, g: 0.5, b: 1.0 }, alpha: 0.7 },
   annotates: { color: { r: 0.4, g: 0.92, b: 0.66 }, alpha: 0.8 },
-  derived_from: { color: { r: 0.9, g: 0.45, b: 0.6 }, alpha: 0.7 },
+  // A concept reaches across the whole tree to its members, so its edges are the longest ones
+  // in the scene and would otherwise be the loudest thing in it. They are structure, not
+  // emphasis.
+  derived_from: { color: { r: 0.95, g: 0.78, b: 0.45 }, alpha: 0.28 },
   imports: { color: { r: 0.45, g: 0.8, b: 0.95 }, alpha: 0.6 },
 };
 
 export const EDGE_FALLBACK = { color: { r: 0.6, g: 0.6, b: 0.6 }, alpha: 0.4 };
+
+/**
+ * A concept has no zone, because it spans whatever its members span. Giving it one of their
+ * hues would claim it belonged to one project; giving it the neutral steel of an unsorted file
+ * would hide it. It gets a light of its own.
+ */
+const CONCEPT_HUE = 45;
 
 /** The hue a node with no zone gets: a neutral steel, so "unsorted" is visibly not a project. */
 const NO_ZONE_HUE = 215;
@@ -70,8 +81,11 @@ export function hslToRgb(h: number, s: number, l: number): Rgb {
 }
 
 /** The colour of one node: zone for hue, tier for everything else. */
-export function nodeColor(hue: number | undefined, tier: Tier): Rgb {
+export function nodeColor(hue: number | undefined, tier: Tier, kind?: string): Rgb {
   const style = TIER_STYLE[tier] ?? TIER_STYLE.cold;
+  if (kind === "concept") {
+    return hslToRgb(CONCEPT_HUE, 0.25, Math.min(0.95, style.lightness + 0.3));
+  }
   if (hue === undefined) {
     return hslToRgb(NO_ZONE_HUE, NO_ZONE_SATURATION * style.saturation, style.lightness * 0.9);
   }
@@ -85,8 +99,11 @@ export function nodeColor(hue: number | undefined, tier: Tier): Rgb {
  * make a node twice as salient look four times as important. Bounded at both ends — a node
  * with no salience must still be visible, or an unconsolidated index looks empty.
  */
-export function nodeRadius(salience: number, isDir: boolean): number {
-  const base = isDir ? 0.85 : 0.5;
+export function nodeRadius(salience: number, kind: string): number {
+  // A concept stands for a whole cluster, so it is drawn as one thing rather than as another
+  // file that happens to score well.
+  if (kind === "concept") return 2.2 + Math.sqrt(Math.max(0, salience)) * 1.4;
+  const base = kind === "dir" ? 0.85 : 0.5;
   return base + Math.sqrt(Math.max(0, salience)) * 1.05;
 }
 

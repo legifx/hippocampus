@@ -16,7 +16,7 @@
  * alive and would be a different picture on every reload.
  */
 
-import type { GraphNode, Tier } from "./snapshot";
+import type { GraphEdge, GraphNode, Tier } from "./snapshot";
 
 /** Radius of each tier's shell, in scene units. */
 export const SHELL_RADIUS: Record<Tier, number> = {
@@ -74,7 +74,48 @@ function perpendicular(v: [number, number, number]): [number, number, number] {
   return [c[0] / len, c[1] / len, c[2] / len];
 }
 
-export function layout(nodes: GraphNode[]): Positions {
+/**
+ * Concepts have no parent and no path, so the tree has nowhere to put them. Placing them at the
+ * centre of the files they abstract is the only position that means anything: the concept sits
+ * among its material, and the edges to its members are short instead of crossing the scene.
+ */
+function placeConcepts(
+  edges: GraphEdge[],
+  index: Map<number, number>,
+  positions: Float32Array,
+  lift: number,
+): void {
+  const members = new Map<number, number[]>();
+  for (const edge of edges) {
+    if (edge.type !== "derived_from") continue;
+    const list = members.get(edge.src);
+    if (list) list.push(edge.dst);
+    else members.set(edge.src, [edge.dst]);
+  }
+  for (const [concept, ids] of members) {
+    const at = index.get(concept);
+    if (at === undefined) continue;
+    let x = 0;
+    let y = 0;
+    let z = 0;
+    let counted = 0;
+    for (const id of ids) {
+      const member = index.get(id);
+      if (member === undefined) continue;
+      x += positions[member * 3];
+      y += positions[member * 3 + 1];
+      z += positions[member * 3 + 2];
+      counted++;
+    }
+    if (counted === 0) continue;
+    // Lifted out of the plane of its members so it is not buried inside the cluster it names.
+    positions[at * 3] = x / counted;
+    positions[at * 3 + 1] = y / counted + lift;
+    positions[at * 3 + 2] = z / counted;
+  }
+}
+
+export function layout(nodes: GraphNode[], edges: GraphEdge[] = []): Positions {
   const count = nodes.length;
   const tree = new Float32Array(count * 3);
   const shells = new Float32Array(count * 3);
@@ -206,6 +247,10 @@ export function layout(nodes: GraphNode[]): Positions {
     shells[i * 3 + 1] = dy * radius;
     shells[i * 3 + 2] = dz * radius;
   }
+
+  // After both layouts exist, so a concept lands among its members in each of them.
+  placeConcepts(edges, index, tree, 26);
+  placeConcepts(edges, index, shells, 12);
 
   return { tree, shells, extent: Math.max(extent, SHELL_RADIUS.cold), depth };
 }
