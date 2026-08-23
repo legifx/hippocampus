@@ -10,7 +10,7 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | M8 — Agent View, and the half of M5 it needs (pulled ahead at the owner's request, D62) |
-| **Status** | M4 complete. M6 begun and paused. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **878 Rust tests pass** under `cargo test --workspace` across 40 test binaries — 42 of them in the new `cortex-memory`, 22 in `cortex-store::memory`, 2 guarding the response path — plus 11 vitest in `ui-agent`. **A note on that number:** this file briefly said 399 and accused the previous entry's 812 of being unreproducible. The 399 was wrong: the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Check the measuring tool before disbelieving the measurement — this file already says that about latency, and it applies to counting. |
+| **Status** | M4 complete. M6 begun and paused. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **881 Rust tests pass** under `cargo test --workspace` across 40 test binaries — 44 of them in the new `cortex-memory`, 23 in `cortex-store::memory`, 2 guarding the response path — plus 11 vitest in `ui-agent`. **A note on that number:** this file briefly said 399 and accused the previous entry's 812 of being unreproducible. The 399 was wrong: the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Check the measuring tool before disbelieving the measurement — this file already says that about latency, and it applies to counting. |
 | **Last updated** | 2026-08-23 |
 | **Blocked on** | nothing |
 
@@ -120,11 +120,14 @@ number: there are 39 co-access edges in an index five days old whose episode log
 watcher's own modify events. The simulator, with sixty days of invented human sessions, produces
 eight.
 
-### What a year of somebody else's memory taught this one
+### What two generations of somebody else's memory taught this one
 
-A separate, human-curated knowledge base — a year old, 1 147 notes, in daily use — was read for
-what a memory gets wrong in practice. Three of its findings are now code here, and one of them is
-the best evidence this project has for its own central claim. D70 and D71; §9a of the paper.
+Two systems by the same owner, one the successor of the other, were read for what a memory gets
+wrong in practice. **The first — file-based, curated, a year old, 1 147 notes — is the abandoned
+generation.** The second is a running daemon with two tiers, a vector store and an LLM curator,
+and its opening design sentence is this paper's central claim arrived at independently: *Markdown
+is the single source of truth, everything else is reconstructible derived state.* Five findings
+are now code here. D70–D73; §9a and §10.5 of the paper.
 
 - **Copies outrank originals.** Its search is `grep -r` including backup directories, so a query
   returns the same note from three backup generations before the canonical one. `noise_score`
@@ -132,11 +135,20 @@ the best evidence this project has for its own central claim. D70 and D71; §9a 
 - **Orphans and byte-identical twins** are now counted in every consolidation report. The orphan
   count is restricted to nodes somebody has *touched* — without that it reports 102 584 on this
   machine, which is true and useless; with it, 1 468. Duplicates: 24 408 of 108 342, 22 %.
-- **Its forgetting mechanism has never fired.** Seven identical weekly reports saying "none",
-  beside a health file listing 75 orphans, because the prune criteria are four conditions with
-  AND and its own intake gate makes two of them unreachable. And it is report-only anyway, so
-  nothing happens even when it does fire. That is the correct response to a store that is
-  authoritative — which is exactly why this index is a cache.
+- **The older one's forgetting mechanism has never fired.** Seven identical weekly reports saying
+  "none", beside a health file listing 75 orphans, because the prune criteria are four conditions
+  with AND and its own intake gate makes two of them unreachable. Report-only anyway. That is the
+  correct response to a store that is authoritative — which is exactly why this index is a cache.
+- **A threshold sitting on a reachable maximum, and the same bug latent here.** The successor's
+  demotion threshold equalled its recency weight, so every unused note sat on the edge by
+  construction and its short memory ran at one note of eighty. Here, a file merely *opened* once
+  reached 1.676 against a Working threshold of **1.60** — four per cent of clearance, and no test
+  would have caught the day somebody lowered the recency weight. Threshold now 1.15, and
+  `single_touch_ceiling()` plus two invariant tests hold the numbers up against each other rather
+  than against cases. **D72, and it is the most valuable thing in this whole section.**
+- **A collapse must not be committed.** The successor lost 939 of ~4 900 derived edges twice in
+  one day. `write_concepts` here had the same shape — it deleted every concept a pass did not
+  propose. It now refuses when a pass proposes under half of what exists. D73.
 
 ### What M5 does now
 

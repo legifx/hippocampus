@@ -202,6 +202,24 @@ pub fn score(input: &Inputs, w: &Weights) -> Components {
     }
 }
 
+/// The most an ordinary node can score from a single fresh touch and nothing else.
+///
+/// One access, this instant, no edit, no edges, no active project. **This is the number every
+/// tier threshold has to be compared against**, and comparing thresholds against reachable
+/// maxima — rather than only testing individual cases — is the only way to find a class of bug
+/// that a formula's own unit tests cannot: the formula is correct, and the system is
+/// nevertheless dead.
+///
+/// The lesson is not ours. A second-brain daemon in daily use set its demotion threshold to
+/// exactly the weight of its recency term, which is precisely the score an untouched note
+/// reaches — so every unused note sat on the edge by construction and its short memory ran
+/// empty at one note out of eighty. Nothing was miscalculated. The two numbers had simply never
+/// been held up against each other.
+pub fn single_touch_ceiling(w: &Weights) -> f64 {
+    let access = 1.0_f64.ln_1p() / ACCESS_REFERENCE.ln_1p();
+    w.access * access + w.recency
+}
+
 /// `salience(t) = base · e^(−λ·Δt) + Σ(reinforcements)` — the specification's decay law.
 ///
 /// Applied once per gap between reinforcements by [`effective_count`], which is where the law

@@ -606,7 +606,7 @@ The tier distribution is the result that matters: **41 % of the index has been d
 hot tier after sixty simulated days, and the pinned node survived all of it.** That is the
 behaviour §1 argued for, produced by the engine rather than asserted.
 
-**Tests.** 878 Rust tests pass under `cargo test --workspace` — 29 of them covering the scoring,
+**Tests.** 881 Rust tests pass under `cargo test --workspace` — 29 of them covering the scoring,
 decay, tiering and association mathematics in isolation with no database, 14 covering consolidation
 against a real SQLite index, and 2 guarding the response path against the hang in §10.3. Nine
 further tests cover the visualisation's layout and snapshot validation.
@@ -632,54 +632,95 @@ proxy.
 
 ---
 
-## 9a. Field evidence: a curated knowledge base, one year in
+## 9a. Field evidence: two generations of one owner's second brain
 
-The measurements above are of this system. This section is about a different one — a file-based,
-human-curated knowledge base, roughly a year old, in daily use by several agents, with 1 147
-notes of which 415 are curated canon. It has mandatory frontmatter, a six-criterion intake gate,
-layers by curation stage, an append-only journal, a weekly prune report and a 3D graph viewer
-built from its own links. It is better kept than most such systems. It was examined to find out
-what a memory gets wrong when it is actually used, rather than what one predicts it will.
+The measurements above are of this system. This section is about two others, built by the same
+person, one after the other, and the pair is more informative than either alone: the first was
+abandoned, and what the second changed is the argument.
 
-Three findings, and the third is the important one.
+### The first generation: a curated file system that never forgot
 
-**Copies outrank originals.** Its search is `grep -r` over the whole tree, backup directories
-included, with no ranking at all. A query for a term returns the same note from three generations
-of backup *before* the canonical copy, in filesystem order. An agent following its own
-read-before-you-work rule therefore starts from a six-week-old version. This is what "no
-ranking" costs in practice, and it is not a subtle cost.
+File-based, human-curated, about a year of use by several agents. 1 147 notes, 415 of them
+curated canon. Mandatory frontmatter, a six-criterion intake gate, layers by curation stage, an
+append-only journal, a weekly prune report, a 3D graph viewer built from its own links. Better
+kept than most such systems.
 
-**The link graph decays under a rule that forbids it.** Its health file counts notes with no link
-in either direction: **75 of 415**, under an intake rule that requires at least one. Manual
-linking does not survive contact with volume.
+**Its search is `grep -r` over the whole tree, backups included, with no ranking.** A query
+returns the same note from three generations of backup *before* the canonical copy, in filesystem
+order. An agent obeying that system's own read-before-you-work rule starts from a six-week-old
+version.
+
+**Its link graph decays under a rule that forbids it:** 75 of 415 canon notes have no link in
+either direction, though the intake gate requires at least one. Manual linking does not survive
+volume.
 
 **And its forgetting mechanism has never once fired.** Seven consecutive weekly prune reports are
-byte-identical and say "none", while the health file in the same directory lists those 75 orphans
-and 4 stubs. The criteria explain it:
+byte-identical and say "none", beside a health file in the same directory listing those 75
+orphans. The criteria explain it:
 
 ```
-status == "draft"  AND  stale for 14 days  AND  body < 800 chars  AND  no links
+status == "draft"  AND  stale 14 days  AND  body < 800 chars  AND  no links
 ```
 
-Four conditions with AND — and the system's own intake gate *requires* at least one link and sets
-status to stable. **The forgetting criteria were made unreachable by the intake rules of the same
-system**, and nobody noticed for seven weeks, because a report that says "none" looks exactly
-like a system with nothing to forget. Even when it does find something, it changes nothing: it is
-explicitly report-only, and no human acted on it in those seven weeks.
+Four conditions with AND — and the same system's intake gate *requires* a link and sets status to
+stable. **The forgetting criteria were made unreachable by the intake rules of the same system**,
+and nobody noticed for seven weeks, because a report saying "none" is indistinguishable from a
+system with nothing to forget. Even when it fires it changes nothing: it is explicitly
+report-only, and no human acted in those seven weeks.
 
-That last part is not negligence, and reading it as negligence misses the finding. It is the
-correct response to a store that is **authoritative**. Throwing something away is irreversible;
-so nobody throws anything away; so it grows monotonically. §1 of this paper argued that
-accumulation is where these systems end up. Here it is, in a well-run system, with a paper trail.
+That is not negligence. It is the correct response to a store that is **authoritative**. Throwing
+something away is irreversible; so nobody does; so it grows monotonically. §1 argued that this is
+where such systems end up. Here it is with a paper trail.
 
-**What this says about the architecture.** The load-bearing claim is not the scoring function and
-not the tiering thresholds. It is that **the index is a cache**: reconstructible, therefore safe
-to demote, therefore able to rank at all. A system that cannot cheaply rebuild itself cannot
-afford to forget, and a system that cannot forget cannot stay precise. Three of that system's
-observations changed code here — see §10.5.
+### The second generation: what its author changed
+
+The successor is a running daemon — two memory tiers, a vector store, an LLM curator
+consolidating in a nightly cycle, an MCP surface, a live 3D view. It replaced the first system;
+the first was kept as the raw layer and is synced into it.
+
+**Its first design sentence is the one this paper argues for, arrived at independently:**
+*Markdown is the single source of truth; everything else — the relational store, the vector index
+— is derived state, reconstructible at any time.* Its tiers are short / long / archive, and
+unlike its predecessor **it actually demotes**: 9 notes in short memory, 1 295 in long, 1 193 in
+archive. Forgetting works there because the same property is true there — the derived layer may
+be thrown away.
+
+Two of its recorded failures are worth more than its successes.
+
+**A threshold sitting on a reachable maximum.** Its demotion threshold was 0.40, and the highest
+score a note without access, focus or pin can reach is exactly its recency weight, also 0.40. So
+every unused note sat on the demotion edge by construction, and its short memory ran at one note
+of eighty. Their own account is the best sentence in either system's documentation: *a scoring
+system can compute flawlessly and still be functionally dead — no unit test of the formula fails,
+because the formula is right.* Their fix was not the number but an invariant: the clearance
+between threshold and reachable maximum is now asserted by a test. **The same coupling was latent
+in this system**, four per cent from the same failure; §10.5.
+
+**Derived data collapsing silently.** It lost 939 of ~4 900 semantic edges twice in one day. Once
+because a rebuild that produced nothing was allowed to replace everything with nothing; once
+because `sqlite3.OperationalError` inherits from `DatabaseError`, so a handler treating
+`DatabaseError` as corruption deleted the database whenever a write lock timed out — which, on a
+5 400-rpm disk under load, it regularly did. Their conclusions — *stale is better than empty*, *a
+lock is not damage*, *set aside, never delete* — are now rules here.
+
+### What the pair says
+
+The first system proves the accumulation trap empirically, in a well-run instance. The second
+proves that the escape is exactly the property this paper puts first — that the authoritative
+copy and the queryable index must be different things — because that is the change its author
+made, unprompted by us, when the first one stopped being trustworthy.
+
+And the second one supplies the more uncomfortable finding. Its short memory currently holds nine
+notes, **eight of which have an access count of zero** and were placed there by a synchronisation
+job rather than by anybody using them. With recency the largest term and access zero everywhere,
+its working set is in practice a list of *what was written most recently*. That is what a
+recency-dominant score degenerates into once the other signals are empty, and it is the argument
+for bounding every component and for deriving association from co-occurrence rather than from
+arrival time.
 
 ---
 
+## 10. Four defects that reasoning did not find
 ## 10. Four defects that reasoning did not find
 
 We report these because the failure modes are general and the mechanisms that caught them are
@@ -738,10 +779,10 @@ consider the latter a feature: the test configuration found it on the first run.
 
 ---
 
-### 10.5 Three things another system's year of use found for us
+### 10.5 Five things two other systems found for us
 
-Not defects in this code, but blind spots in it, found by looking at §9a's system rather than at
-this one.
+Not defects in this code, but blind spots in it, found by reading the two systems in §9a rather
+than this one. The last two are the ones that mattered.
 
 **A copy answers instead of its original.** `backup`, `snapshot`, `archive` and `old` are now
 noise-penalised path segments. Identical histories, and the copy ranks below the file it copies —
@@ -755,6 +796,19 @@ indistinguishable from a broken graph. With it, 1 468 here.
 **Byte-identical twins deserve their own counter.** 24 408 of 108 342 nodes here share a content
 hash — 22 %. They cost nothing to store, because embeddings are keyed by hash. They cost
 something to read, which is the number that matters.
+
+**A threshold has to clear the maximum that must cross it.** A file merely opened once, this
+instant, with no edit, no edges and no active project, reaches `0.176 + 1.500 = 1.676`. The
+Working threshold was **1.60** — a clearance of four per cent. Lowering the recency weight to 1.4
+for any reason would have made the Working Set permanently unreachable, and every test here would
+still have passed, because every test used a node with several signals at once. The threshold is
+1.15 now; more to the point, `single_touch_ceiling()` exists and two tests hold the thresholds up
+against it. **Compare limits against limits, not only behaviour against cases.**
+
+**A collapse must not be committed.** `write_concepts` deleted every concept the current pass did
+not propose — so one bad pass, a truncated replay or an empty edge set, would have removed the
+entire semantic layer without an error. It now refuses to replace the concept set when a pass
+proposes fewer than half of what exists, and says so. Stale concepts are better than none.
 
 ---
 

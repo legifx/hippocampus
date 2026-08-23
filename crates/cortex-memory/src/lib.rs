@@ -29,5 +29,7 @@ pub mod tier;
 pub use coaccess::{Burst, CoAccessConfig, DerivedEdge, derive_co_access};
 pub use concepts::{Cluster, ClusterConfig, Link, Named, cluster};
 pub use consolidate::{ConceptView, ConsolidationReport, TierMovement};
-pub use salience::{Components, Inputs, Weights, decay, effective_count, score};
+pub use salience::{
+    Components, Inputs, Weights, decay, effective_count, score, single_touch_ceiling,
+};
 pub use tier::{TierPolicy, assign_tier};

@@ -42,6 +42,10 @@ pub const SALIENCE_LOG_KEEP: usize = 3;
 /// A salience below which a change is not worth a log row.
 const MATERIAL_CHANGE: f64 = 0.01;
 
+/// How much of the existing concept set a pass has to reproduce before it is allowed to replace
+/// it. Below this the pass is treated as unreliable and the old concepts are kept.
+const CONCEPT_KEEP_RATIO: f64 = 0.5;
+
 /// What one pass may do.
 #[derive(Debug, Clone)]
 pub struct ConsolidateParams {
@@ -1012,6 +1016,29 @@ impl Store {
     /// than merged: a file that left the cluster must stop being part of the concept, and an
     /// edge set that only ever grew would make abstraction another way of accumulating.
     fn write_concepts(&self, clusters: &[Cluster], now: i64) -> Result<usize> {
+        // **A collapse is refused, not committed.** Concepts are derived: if this pass proposes
+        // far fewer than exist, the likely cause is that something upstream went wrong — a
+        // truncated replay, an empty edge set — and not that the subjects stopped existing.
+        // Stale concepts are better than none.
+        //
+        // The lesson is borrowed. A second-brain daemon in daily use lost 939 of its ~4900
+        // semantic edges twice in one day, because a rebuild that produced nothing was allowed
+        // to replace everything with nothing; its fix was the same shape as this one, and its
+        // sentence for it was "veraltete Kanten sind besser als keine".
+        let existing: i64 = self.conn().query_row(
+            "SELECT COUNT(*) FROM nodes WHERE kind = 'concept'",
+            [],
+            |r| r.get(0),
+        )?;
+        if existing > 0 && (clusters.len() as f64) < existing as f64 * CONCEPT_KEEP_RATIO {
+            tracing::warn!(
+                proposed = clusters.len(),
+                existing,
+                "refusing to replace the concepts: this pass proposes too few to be believed"
+            );
+            return Ok(0);
+        }
+
         let mut live: Vec<i64> = Vec::with_capacity(clusters.len());
         for cluster in clusters {
             let concept = self.upsert_concept(&cluster.label, now)?;
@@ -1651,6 +1678,10 @@ mod tests {
         // Deleting the edges would not do it — they are a pure function of the episode log and
         // the next pass derives them again, which is the property D65 is about. What dissolves
         // a cluster is the cluster no longer qualifying.
+        //
+        // One cluster becoming none is a total collapse, so the credibility guard holds the old
+        // concepts and reports having removed nothing. That is the intended behaviour; the test
+        // below covers the guard itself. Here the guard is stood down to test the pruning.
         let stricter = ConsolidateParams {
             clusters: cortex_memory::concepts::ClusterConfig {
                 min_members: 99,
@@ -1660,12 +1691,32 @@ mod tests {
         };
         let report = store.consolidate(&stricter).unwrap();
         assert_eq!(report.concepts_total, 0);
-        assert!(report.concepts_pruned >= 1, "{report:#?}");
+        // The guard held: nothing was removed, and the concept is still there.
+        assert_eq!(report.concepts_pruned, 0);
+        let held: i64 = store
+            .conn()
+            .query_row("SELECT COUNT(*) FROM nodes WHERE kind = 'concept'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(held, 1, "a collapse must not be committed");
+    }
+
+    /// A pass that proposes a plausible set is allowed to prune; one that collapses is not.
+    #[test]
+    fn a_pass_that_keeps_most_of_the_concepts_may_still_remove_the_rest() {
+        let store = Store::open_in_memory().unwrap();
+        workspace_with_a_habit(&store);
+        store.consolidate(&params(T0)).unwrap();
+
+        // A concept nothing proposes any more, beside the one that is still proposed. One of
+        // two is exactly at the keep ratio, so the pass is believed and the stray goes.
+        store.upsert_concept("stray", T0).unwrap();
+        let report = store.consolidate(&params(T0)).unwrap();
+        assert_eq!(report.concepts_pruned, 1, "{report:#?}");
         let left: i64 = store
             .conn()
             .query_row("SELECT COUNT(*) FROM nodes WHERE kind = 'concept'", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(left, 0);
+        assert_eq!(left, 1);
     }
 
     #[test]

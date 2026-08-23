@@ -1974,3 +1974,77 @@ therefore able to rank at all.
 
 **Revisit when:** somebody demonstrates a memory that both is authoritative and forgets. We would
 want to see how they made deletion reversible.
+
+---
+
+### D72 — Thresholds are checked against reachable maxima, not only against cases
+**Status:** ACCEPTED — a latent bug, found by reading somebody else's decision log
+
+A second-brain daemon in daily use records this failure: its demotion threshold was 0.40 and the
+maximum score a note without access, focus or pin can reach is exactly its recency weight, also
+0.40. **Every unused note sat on the demotion edge by construction.** Its short memory ran at one
+note out of eighty and 150 of 30 000 tokens. Nothing miscalculated; the formula was right; no
+unit test of the formula could fail. Their sentence for it: *a scoring system can compute
+flawlessly and still be functionally dead.*
+
+The same coupling was latent here, in the other direction. A file merely **opened** once, this
+instant, with no edit, no edges and no active project, reaches
+
+```
+access  ln(2)/ln(51) · 1.0 = 0.176
+recency          1.0  · 1.5 = 1.500
+                             ------
+                              1.676
+```
+
+against a Working threshold of **1.60**. A clearance of 0.076, four per cent. Lower `w_recency`
+to 1.4 for any reason and **nothing could ever enter the Working Set again** — and every test
+here would still pass, because every test used a node with several signals at once.
+
+**Decision:** `TierPolicy::working` 1.60 → **1.15**, and — the part that matters —
+`single_touch_ceiling()` is now a function, and two tests hold the thresholds up against it:
+
+- `every_threshold_clears_the_score_that_has_to_cross_it`: `working ≤ ceiling · 0.75`, the tiers
+  are ordered, the ordinary ceiling is well past Working, and a pin beats everything else summed.
+- `one_fresh_touch_is_enough_to_enter_the_working_set`: the behavioural half.
+
+Fixing the number would have fixed the bug. The invariant stops it coming back, whoever next
+edits the weights.
+
+**Revisit when:** the weights become user-configurable. Then the invariant has to run at config
+load and refuse the configuration, not only in the test suite.
+
+---
+
+### D73 — Derived data may collapse only when the collapse is believable
+**Status:** ACCEPTED
+
+The same daemon lost 939 of its ~4 900 semantic edges twice in one day. Both times the notes
+were fine — the edge cache is derived, and a rebuild that produced nothing was allowed to replace
+everything with nothing. Three causes stacked: a vector store not yet ready returned `None` for
+every note without raising, so the rebuild produced an empty list and committed it; a concurrent
+delete raised `FileNotFoundError` in the middle of an iteration and tore down the whole cycle;
+and one `try/except` wrapped every phase, so one broken phase cost all the later ones. The second
+loss had a different cause and a worse one: `sqlite3.OperationalError` **inherits from**
+`DatabaseError`, so a handler that treated `DatabaseError` as corruption deleted the database
+file whenever a lock timed out — on a 5 400-rpm disk under load, regularly.
+
+Their rules, adopted here:
+
+- **Stale is better than empty.** A rebuild may replace the old set only if it is credible.
+- **A lock is not damage.** Only what the database explicitly reports as corrupt counts as
+  corrupt; anything else is propagated.
+- **Set aside, never delete.** From a file moved aside, derived data can still be salvaged.
+
+The same shape was live in this code: `write_concepts` deletes every concept the current pass did
+not propose, so one bad pass — a truncated replay, an empty edge set — would have removed the
+whole semantic layer. It now refuses to replace the concept set when a pass proposes fewer than
+`CONCEPT_KEEP_RATIO` (0.5) of what exists, logs the refusal, and reports having pruned nothing.
+Tests cover both directions: a collapse is held, and a pass that keeps most of them may still
+remove the stray.
+
+Hippocampus has no delete-on-error path to fix — `rebuild` is an explicit command — but the rule
+is written down here so that nobody adds one.
+
+**Revisit when:** a legitimate mass-deletion case appears, e.g. a zone being removed. Then the
+guard needs an explicit `allow_collapse` rather than a lower ratio.

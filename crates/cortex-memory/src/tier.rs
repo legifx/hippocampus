@@ -38,7 +38,11 @@ pub struct TierPolicy {
 impl Default for TierPolicy {
     fn default() -> Self {
         Self {
-            working: 1.6,
+            // Comfortably under what a single fresh touch reaches (1.68) — see the invariant
+            // test below. It was 1.6, which cleared that ceiling by 0.076: a system that looked
+            // calibrated and was one weight change away from a Working Set that could never be
+            // entered.
+            working: 1.15,
             stm: 0.55,
             ltm: 0.15,
             working_window_secs: 4 * 60 * 60,
@@ -110,12 +114,63 @@ fn is_working(salience: f64, last_access: i64, now: i64, policy: &TierPolicy) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::salience::{DAY, Weights, single_touch_ceiling};
 
     const NOW: i64 = 1_700_000_000;
     const OLD_ENOUGH: i64 = NOW - 400 * 86_400;
 
     fn policy() -> TierPolicy {
         TierPolicy::default()
+    }
+
+    /// **The thresholds are checked against what the score can actually reach**, not only
+    /// against hand-made cases. A formula can be flawless and the system dead: if the maximum
+    /// an ordinary node can reach sits on a threshold, the tiering is not calibrated, it is a
+    /// coincidence — and no test of the formula fails, because the formula is right.
+    #[test]
+    fn every_threshold_clears_the_score_that_has_to_cross_it() {
+        let w = Weights::default();
+        let p = policy();
+        let one_touch = single_touch_ceiling(&w);
+
+        assert!(
+            p.working <= one_touch * 0.75,
+            "Working needs real clearance: threshold {:.3} against a reachable {:.3}. \
+             At {:.0}% of the ceiling one change to w_recency empties the Working Set and \
+             nothing here fails.",
+            p.working,
+            one_touch,
+            p.working / one_touch * 100.0
+        );
+        assert!(p.stm < p.working && p.ltm < p.stm, "the tiers have to be ordered");
+        assert!(
+            w.ordinary_ceiling() > p.working * 1.5,
+            "an unpinned node must be able to reach well past Working"
+        );
+        assert!(
+            w.pin > w.ordinary_ceiling(),
+            "a pin has to beat everything else added together"
+        );
+    }
+
+    /// The behavioural half of the invariant above: opening one file must be enough.
+    #[test]
+    fn one_fresh_touch_is_enough_to_enter_the_working_set() {
+        let w = Weights::default();
+        let now = 9_000_000_000;
+        let input = crate::salience::Inputs {
+            access_count: 1.0,
+            last_access: now,
+            first_seen: now - 400 * DAY as i64,
+            now,
+            ..crate::salience::Inputs::unseen(now)
+        };
+        let scored = crate::salience::score(&input, &w).total;
+        assert_eq!(
+            assign_tier(Tier::Cold, scored, false, now, now - 400 * DAY as i64, now, &policy()),
+            Tier::Working,
+            "a file opened a moment ago scored {scored:.3}, which did not reach Working"
+        );
     }
 
     #[test]

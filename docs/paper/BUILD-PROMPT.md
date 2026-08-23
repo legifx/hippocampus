@@ -334,6 +334,33 @@ before you write the scorer.
 
 ### 6.3 Tiering
 
+**Before the numbers: check them against each other.** This is the single cheapest bug-class
+prevention in the whole specification, and it is here rather than in §11 because it belongs to
+the thresholds themselves.
+
+Compute the maximum an *ordinary* node can reach with one fresh touch and nothing else — no
+edit, no edges, no active project:
+
+```
+one_touch_ceiling = w_access · ln(2)/ln(1 + ACCESS_REFERENCE)  +  w_recency
+```
+
+Every tier threshold must clear it with room. Assert it:
+
+```
+working_threshold <= one_touch_ceiling * 0.75
+```
+
+**Why this and not another unit test.** A running second-brain daemon set its demotion threshold
+to exactly its recency weight — which is precisely the score an untouched note reaches — so every
+unused note sat on the demotion edge by construction and its short memory ran at one note out of
+eighty. Nothing miscalculated. No test of the formula could fail, because the formula was right.
+A system whose numbers were checked against *cases* and never against *each other* looked
+calibrated and was dead. The same coupling was latent in the reference implementation of this
+document, four per cent from the same failure.
+
+
+
 Thresholds on the bounded scale, against the default weights above:
 
 ```
@@ -459,7 +486,7 @@ is the difference between a project that knows where it is and one that believes
 
 ---
 
-## 7. Five traps
+## 7. Six traps
 
 These are defects found in a real implementation of this specification, after the code had passed
 its unit tests. Write the regression test **before** the code that would contain the bug.
@@ -509,7 +536,31 @@ SQL's three-valued logic and therefore true for none. A delete written that way 
 **exactly when there is most to remove**, and a delete that removed nothing is indistinguishable
 from one that had nothing to remove. Write the empty case as its own statement.
 
-### 7.5 A connection pool deadlocks against itself
+### 7.5 A rebuild that produced nothing replaces everything with nothing
+
+Anything derived — an edge cache, a concept layer, an embedding table — is rebuilt from something
+else, and a rebuild can fail by producing an empty result instead of an error. If the writer then
+commits it, the whole derived layer is gone, silently, and the next read looks like data loss.
+
+Observed in a running system twice in one day: 939 of ~4 900 semantic edges vanished because a
+vector store that was not ready yet returned "no vector" for every note without raising, and the
+empty edge list was committed. The second time had a worse cause: `OperationalError` inherits
+from `DatabaseError`, so a handler that treated `DatabaseError` as corruption **deleted the
+database file** whenever a write lock timed out.
+
+**Three rules, all of them cheap:**
+
+- **Stale is better than empty.** A replacement is committed only if it is credible — refuse when
+  the new set is below a configured fraction of the old one, and log the refusal.
+- **A lock is not damage.** Only what the store explicitly reports as corrupt counts as corrupt.
+  Everything else — busy, locked, I/O, permissions — is propagated, not "recovered" from.
+- **Set aside, never delete.** From a file moved to `*.corrupt-<timestamp>` something can still
+  be salvaged. From a deleted one, nothing.
+
+**Test:** hand the writer an empty result while a populated one exists, and assert the old one
+survives and the refusal is reported.
+
+### 7.6 A connection pool deadlocks against itself
 
 If your store hands out pooled connections, a function that holds one while calling a helper that
 asks for another will wait for itself. On a pool of four this is latent and load-dependent. On an
@@ -586,7 +637,7 @@ logs — including what it discarded and what it did not do. ⑤ files worked on
 named concept; two passes do not produce two concepts; a cluster with nothing distinctive to say
 is not named at all. ⑥ the stored component breakdown sums to
 the score actually used, for every node, asserted. ⑦ a full rebuild after aggressive demotion
-restores every node from episodes plus the filesystem (R10). ⑧ the five traps in §7 each have a
+restores every node from episodes plus the filesystem (R10). ⑧ the six traps in §7 each have a
 named regression test.
 
 ### M6 — Human View
