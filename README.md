@@ -2,6 +2,169 @@
 
 **A memory daemon for your filesystem — and the file manager that grew out of it.**
 
+---
+
+## Start here — what this is, in five minutes
+
+**No background needed.** If you know what a folder is, you can read this part.
+
+### The problem
+
+Your computer stores your files perfectly and remembers **nothing about them**. It does not know
+which three files you had open all last week, that a bug report and the config line that caused it
+belong together, or that four thousand files in a build folder are not worth showing you. So you
+end up *searching* for things you already know you have.
+
+Hippocampus is a small background program that watches a folder and remembers those things.
+
+### The one idea everything else follows from
+
+> **Your files are the truth. The index is just notes about them, and you can throw the notes
+> away whenever you like.**
+
+```mermaid
+flowchart LR
+    FS["Your files<br/>never copied, never moved,<br/>nothing written next to them"]
+    D["cortexd<br/>watches, and remembers<br/>what happens"]
+    IX["The index<br/>scores, links, timestamps<br/>nothing you cannot rebuild"]
+    FS --> D --> IX
+    IX -->|"throw it away, it rebuilds"| FS
+```
+
+That sounds like a technical detail. It is the whole design. Because the notes are disposable,
+the program is allowed to **forget** — and forgetting is what keeps a memory useful instead of
+turning it into a junk drawer. A system that holds the only copy can never dare throw anything
+away, so it grows for ever and slowly stops being trustworthy.
+
+### Forgetting means moving outward, not deleting
+
+Every file sits in one of four rings. Use it and it moves toward the middle. Ignore it and it
+drifts out, **one ring per pass** — never straight to the edge, so a quiet fortnight cannot bury
+a document you were about to come back to. Even the outermost ring still knows the file exists.
+Nothing is ever deleted.
+
+<img src="docs/img/tiers.svg" alt="Four rings: Working, Short-term, Long-term, Cold. A file that stops being used drifts outward one ring at a time. A pinned file stays in the middle." width="760">
+
+**Pinned files are exempt.** Not "weighted heavily" — exempt. If you say a file matters, no amount
+of guessing by the program can override you.
+
+### How it decides what matters
+
+Each file gets a score. The score is a plain sum of seven signals, and **each signal has a
+ceiling**, so none of them can run away with the ranking. The score always comes with its
+breakdown, so you can ask *why* something ranked where it did and get an answer instead of a
+number.
+
+<img src="docs/img/salience.svg" alt="Seven bars: how recently used +1.5, how often used +1.0, how often edited +1.0, how connected +0.8, in an active project +0.5, looks like build output minus 2.0, and you pinned it +10.0." width="760">
+
+All of it decays. Fifty uses two years ago count for less than three uses this week — which is
+what "how much is this being used" has to mean in something that forgets.
+
+### It connects files by *use*, not only by similarity
+
+This is the part other tools do not have. A test and the code it tests may share no words at all.
+A design note and the bug it predicted may be in different languages. Nothing about their
+*content* links them. What links them is that you had them open together.
+
+<img src="docs/img/edges.svg" alt="Left: a folder tree, showing where files sit. Right: three files connected because they were opened in the same working session, although they share no words." width="760">
+
+When the same handful of files keeps coming up together, Hippocampus gives the group a name —
+a **concept** — taken from what those files have in common and the rest of your disk does not.
+That is how "these three files are related" becomes "this is the parser work".
+
+> One deliberate rule: a burst that touches more than twelve files at once is thrown away
+> entirely. That is a build running, not a person working, and letting builds create connections
+> would tangle everything to everything.
+
+### What happens while you are not looking
+
+Once a night — or whenever you ask — it does one pass:
+
+```mermaid
+flowchart LR
+    R["1 - Replay<br/>re-read what happened"]
+    A["2 - Associate<br/>what was used together"]
+    B["3 - Abstract<br/>name the clusters"]
+    S["4 - Score<br/>what matters now"]
+    T["5 - Tier<br/>move things outward"]
+    P["6 - Report<br/>say what it did"]
+    R --> A --> B --> S --> T --> P
+```
+
+The report is written for a person, not for a log file. It says how much it replayed, what it
+connected, what changed ring, how many pinned files it left alone — and, every single time, a
+section naming **what it deliberately did not do**. A tool that only lists its successes is how
+you end up believing it is further along than it is.
+
+### Who talks to it
+
+The memory is the program. Everything else is a window onto it, and no window can know something
+the others cannot.
+
+```mermaid
+flowchart TD
+    D["cortexd - the memory"]
+    D --> CLI["cortex<br/>a terminal command"]
+    D --> GUI["a search overlay<br/>and file manager"]
+    D --> V["the Agent View<br/>a 3D picture of the memory"]
+    D --> M["AI agents<br/>through MCP"]
+```
+
+The 3D view is the one worth seeing, because it is where the memory becomes checkable by looking.
+Colour is the project, brightness is the ring, size is the score, and the pale nodes are the
+concepts it named by itself. Switch to shell layout and the four rings from the first picture
+appear — with the forgotten files visibly on the outside.
+
+<img src="docs/img/agent-view.png" alt="The Agent View: a three-dimensional graph of a memory. Coloured clusters are projects, node size is salience, pale nodes are concepts the daemon named itself. Panels on the left show node counts, tiers and a legend." width="900">
+
+<sub>A generated example, so it can be published — but every score, tier and connection in it was
+computed by the same engine the daemon runs. `cargo run -p brain-sim` makes it from a seed.</sub>
+
+**Agents get read access to your files and write access to the memory** — they can annotate, pin
+and link, but every change to an actual file needs an allow-list, a dry run you confirm first, and
+lands in an undo journal. Everything an agent does is logged, and one switch turns the whole
+agent surface off.
+
+### What you actually type
+
+```sh
+cortex index ~/Documents     # look at a folder
+cortex search "that thing"   # find something - paths, words, and meaning
+cortex explain "that thing"  # ask why a result ranked where it did
+cortex pin <file>            # this one matters, never forget it
+cortex consolidate           # do a pass now, and print the report
+```
+
+Search answers in well under a tenth of a second, and **no AI model sits in that path**. The
+benchmark is `fzf`, not a chat window. Models only reorder results *after* they are already on
+screen, and if there is no model at all, everything still works.
+
+### What it never does
+
+- **Never copies your files** and never writes anything next to them.
+- **Never imposes a folder structure.** Your filesystem stays exactly as you left it.
+- **Never goes online by itself.** A fresh install makes zero outbound connections. Nothing is
+  downloaded until you ask for it.
+- **Never opens what it should not.** Keys, credentials, browser profiles, password stores and
+  the like are on a deny-list checked *before* anything is read — not after.
+
+### The five words you will keep seeing
+
+| Word | Means |
+|---|---|
+| **node** | one thing in the memory: a file, a folder, or a concept |
+| **episode** | one recorded event: a file was created, opened, changed, searched for |
+| **salience** | the score above — how much something is worth remembering right now |
+| **tier** | which of the four rings something is in |
+| **consolidation** | the pass in the diagram above |
+
+**Where to go next:** the rest of this README is the practical detail. For the argument behind the
+design, read [`docs/paper/FORGETTING-IS-THE-FEATURE.md`](docs/paper/FORGETTING-IS-THE-FEATURE.md).
+To build something like it yourself, [`docs/paper/BUILD-PROMPT.md`](docs/paper/BUILD-PROMPT.md) is
+a complete specification with acceptance criteria.
+
+---
+
 > Status: early, and the search works. The daemon watches a filesystem, keeps a rebuildable index
 > of it, and searches paths, words and **meaning** — a query finds documents that share no word
 > with it, in German or English. A fuzzy path match takes about a millisecond over a hundred

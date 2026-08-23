@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 400" width="760" height="400"
+     font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+  <title>How a file's score is made: seven signals, each with a ceiling</title>
+  <desc>Seven horizontal bars showing the most each signal can contribute to a file's salience:
+  recency 1.5, how often used 1.0, how often edited 1.0, how connected 0.8, in an active project
+  0.5, noise minus 2.0, and an explicit pin 10.0 which is larger than all the others together.</desc>
+
+  <rect width="100%" height="100%" rx="12" fill="#0b0e14"/>
+
+  <text x="24" y="30" font-size="15" font-weight="600" fill="#e8eef8"
+       >How a file earns its place</text>
+  <text x="24" y="52" font-size="12.5" fill="#8b98ab">
+    Each bar is the most that signal can ever contribute. Add them up and you have the score.
+  </text>
+
+  <!-- Zero line. Everything left of it is the one signal that subtracts. -->
+  <line x1="300" y1="70" x2="300" y2="322" stroke="#6b7684" stroke-opacity="0.5"/>
+  <text x="300" y="340" font-size="10.5" fill="#7d8895" text-anchor="middle">0</text>
+
+  <g font-size="12.5" fill="#8b98ab" text-anchor="end">
+    <text x="288" y="93">how recently used</text>
+    <text x="288" y="125">how often used</text>
+    <text x="288" y="157">how often edited</text>
+    <text x="288" y="189">how connected</text>
+    <text x="288" y="221">in a project you are in</text>
+    <text x="288" y="299">you pinned it</text>
+  </g>
+
+  <!-- 1.0 of score = 66 px. -->
+  <g>
+    <rect x="300" y="80" width="99" height="16" rx="3" fill="#7fc4ff"/>
+    <rect x="300" y="112" width="66" height="16" rx="3" fill="#6aa9e0"/>
+    <rect x="300" y="144" width="66" height="16" rx="3" fill="#6aa9e0"/>
+    <rect x="300" y="176" width="53" height="16" rx="3" fill="#5a86ad"/>
+    <rect x="300" y="208" width="33" height="16" rx="3" fill="#5a86ad"/>
+    <rect x="168" y="248" width="132" height="16" rx="3" fill="#c0605e"/>
+  </g>
+
+  <!-- The one signal that subtracts gets its label above the bar: right-aligned with the others
+       it would have run straight through it. -->
+  <text x="168" y="242" font-size="12.5" fill="#c0605e">looks like build output</text>
+
+  <g font-size="12" fill="#8b98ab">
+    <text x="409" y="93">+1.5</text>
+    <text x="376" y="125">+1.0</text>
+    <text x="376" y="157">+1.0</text>
+    <text x="363" y="189">+0.8</text>
+    <text x="343" y="221">+0.5</text>
+    <text x="126" y="261" fill="#c0605e">−2.0</text>
+  </g>
+
+  <!-- The pin, on a broken axis: it is meant to be off the scale. -->
+  <rect x="300" y="286" width="330" height="16" rx="3" fill="#6ee7a8"/>
+  <g stroke="#0b0e14" stroke-width="6">
+    <line x1="628" y1="282" x2="620" y2="306"/>
+  </g>
+  <g stroke="#6b7684" stroke-width="1.4">
+    <line x1="632" y1="282" x2="624" y2="306"/>
+    <line x1="640" y1="282" x2="632" y2="306"/>
+  </g>
+  <text x="652" y="299" font-size="12" fill="#6ee7a8">+10.0</text>
+
+  <text x="300" y="368" font-size="12.5" fill="#6ee7a8" font-weight="600">A pin beats everything else added together.</text>
+  <text x="300" y="386" font-size="12.5" fill="#8b98ab">That is deliberate: what you say outranks what the daemon infers.</text>
+
+  <text x="24" y="368" font-size="12" fill="#7d8895" font-style="italic">Every signal</text>
+  <text x="24" y="386" font-size="12" fill="#7d8895" font-style="italic">also decays.</text>
+</svg>

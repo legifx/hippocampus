@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 356" width="760" height="356"
+     font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+  <title>Two kinds of connection: where a file sits, and what it is used with</title>
+  <desc>On the left, a folder tree showing containment. On the right, three files connected
+  because they were opened together in the same working session, although they share no words.</desc>
+
+  <rect width="100%" height="100%" rx="12" fill="#0b0e14"/>
+
+  <text x="24" y="30" font-size="15" font-weight="600" fill="#e8eef8"
+       >Two kinds of connection</text>
+
+  <!-- LEFT: the tree everybody already has. -->
+  <text x="24" y="62" font-size="13" font-weight="600" fill="#8b98ab">Where a file sits</text>
+  <text x="24" y="80" font-size="11.5" fill="#7d8895">Your folders. Every system knows this.</text>
+
+  <g stroke="#5a86ad" stroke-opacity="0.7" stroke-width="1.4" fill="none">
+    <path d="M60 108 L60 148 L96 148"/>
+    <path d="M60 148 L60 188 L96 188"/>
+    <path d="M60 188 L60 228 L96 228"/>
+  </g>
+  <g fill="#5a86ad">
+    <circle cx="60" cy="102" r="6"/>
+    <circle cx="102" cy="148" r="5"/>
+    <circle cx="102" cy="188" r="5"/>
+    <circle cx="102" cy="228" r="5"/>
+  </g>
+  <g font-size="12" fill="#8b98ab" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">
+    <text x="74" y="106">project/</text>
+    <text x="116" y="152">parser.rs</text>
+    <text x="116" y="192">notes.md</text>
+    <text x="116" y="232">parser_test.rs</text>
+  </g>
+
+  <line x1="360" y1="60" x2="360" y2="320" stroke="#6b7684" stroke-opacity="0.35"/>
+
+  <!-- RIGHT: the connection nothing else finds. -->
+  <text x="396" y="62" font-size="13" font-weight="600" fill="#e0913c">What it is used with</text>
+  <text x="396" y="80" font-size="11.5" fill="#7d8895">Files you had open together. This is the new part.</text>
+
+  <g stroke="#e0913c" stroke-width="1.8" stroke-opacity="0.85">
+    <line x1="452" y1="148" x2="452" y2="228"/>
+    <line x1="452" y1="148" x2="560" y2="188"/>
+    <line x1="452" y1="228" x2="560" y2="188"/>
+  </g>
+  <g fill="#e0913c">
+    <circle cx="452" cy="148" r="6"/>
+    <circle cx="452" cy="228" r="6"/>
+    <circle cx="560" cy="188" r="6"/>
+  </g>
+  <g font-size="12" fill="#8b98ab" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">
+    <text x="396" y="136" text-anchor="start">parser.rs</text>
+    <text x="396" y="252" text-anchor="start">parser_test.rs</text>
+    <text x="576" y="192">notes.md</text>
+  </g>
+
+  <text x="396" y="290" font-size="12.5" fill="#8b98ab">
+    They share no words. No similarity search finds this trio.
+  </text>
+  <text x="396" y="310" font-size="12.5" fill="#e0913c">You had them open together on</text>
+  <text x="396" y="330" font-size="12.5" fill="#e0913c">Tuesday. And again on Friday.</text>
+
+  <text x="24" y="290" font-size="12.5" fill="#7d8895" font-style="italic">A folder says where</text>
+  <text x="24" y="310" font-size="12.5" fill="#7d8895" font-style="italic">you put something.</text>
+</svg>
