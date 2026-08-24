@@ -165,6 +165,24 @@ async fn brain_graph(
         .await
 }
 
+/// What has happened since a cursor. The Agent Inspector's live tracking asks this rather than
+/// re-fetching the whole graph — `brain.diff` exists so that a client does not poll for a large
+/// answer to a small question.
+#[tauri::command]
+async fn brain_diff(
+    state: tauri::State<'_, AppState>,
+    since: Option<i64>,
+    limit: Option<usize>,
+) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(
+            cortex_rpc::protocol::method::BRAIN_DIFF,
+            json!({ "since": since, "limit": limit }),
+        )
+        .await
+}
+
 /// The last consolidation report, without running a pass.
 #[tauri::command]
 async fn brain_report(state: tauri::State<'_, AppState>) -> Result<Value, BridgeError> {
@@ -1098,6 +1116,7 @@ pub fn run() {
             agent_set_enabled,
             audit_recent,
             brain_graph,
+            brain_diff,
             brain_report,
         ])
         .run(tauri::generate_context!())

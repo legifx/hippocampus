@@ -133,6 +133,21 @@ export type AuditEntry = {
 
 export type AuditRecentResult = { entries: AuditEntry[] };
 
+export type BrainEpisode = {
+  id: number;
+  ts: number;
+  actor: string;
+  action: string;
+  node_id: number | null;
+  session_id: string | null;
+};
+
+export type BrainDiff = {
+  changes: BrainEpisode[];
+  cursor: number;
+  more: boolean;
+};
+
 export type AgentStatusResult = {
   enabled: boolean;
   indexing_paused: boolean;
@@ -707,6 +722,16 @@ export const ipc = {
 
   /** The whole brain, for the three-dimensional view. Large; asked for only when it is shown. */
   brainGraph: (limit = 4000) => transport.invoke<unknown>("brain_graph", { limit }),
+
+  /**
+   * What has happened since `since`, and a new cursor.
+   *
+   * The live tracking in the Inspector's three-dimensional tab asks this instead of fetching
+   * the graph again: `brain.diff` exists precisely so that a client does not poll for a large
+   * answer to a small question, and the graph is the one call the protocol documents as large.
+   */
+  brainDiff: (since: number | null, limit = 200) =>
+    transport.invoke<BrainDiff>("brain_diff", { since, limit }),
 
   brainReport: () => transport.invoke<unknown>("brain_report"),
 

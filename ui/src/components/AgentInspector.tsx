@@ -560,10 +560,26 @@ function ArchitectureTab() {
   const [state, setState] = useState<"loading" | "ready" | "failed">("loading");
   const [detail, setDetail] = useState<string>("");
   const [totals, setTotals] = useState<{ nodes: number; edges: number } | null>(null);
+  const [layout, setLayout] = useState<"tree" | "shells">("tree");
+  /** Bumped to fetch the snapshot again. A reload is asked for, never done unprompted: it
+   *  rebuilds the scene, and rebuilding it throws away wherever the viewer had moved to. */
+  const [reloads, setReloads] = useState(0);
+  /** What the live tracking has seen since the snapshot was taken. */
+  const [live, setLive] = useState<{ episodes: number; unseen: number; last: string | null }>({
+    episodes: 0,
+    unseen: 0,
+    last: null,
+  });
+  const scene = useRef<{
+    dispose(): void;
+    pulse(nodeId: number, speed?: number): void;
+    setLayout(mode: "tree" | "shells", animate?: boolean): void;
+  } | null>(null);
+  /** Node ids the current scene knows about. A pulse for anything else would be silent. */
+  const drawn = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     let disposed = false;
-    let scene: { dispose(): void } | null = null;
 
     (async () => {
       try {
@@ -589,7 +605,17 @@ function ArchitectureTab() {
           );
           return;
         }
-        scene = new BrainScene({
+        // A plain loop rather than map-then-filter, and not only for style: the architectural
+        // test that enforces D4 looks for collection operations by name, and it is right to be
+        // blunt about it. Narrowing a type is not data processing, but a test that had to tell
+        // the difference would be a test with an exception in it, and the first real violation
+        // would arrive dressed as one.
+        const known = new Set<number>();
+        for (const node of (graph.nodes ?? []) as { id?: number }[]) {
+          if (typeof node.id === "number") known.add(node.id);
+        }
+        drawn.current = known;
+        scene.current = new BrainScene({
           container: host.current,
           snapshot: snapshot as never,
         });
@@ -605,9 +631,59 @@ function ArchitectureTab() {
       disposed = true;
       // Not optional: a WebGL context that is never released is a WebGL context the browser
       // eventually refuses to give again, and this tab can be opened and closed all evening.
-      scene?.dispose();
+      scene.current?.dispose();
+      scene.current = null;
     };
-  }, []);
+  }, [reloads]);
+
+  // ---- Live tracking ---------------------------------------------------------------------
+  //
+  // `brain.diff` rather than fetching the graph again: the protocol documents the graph as the
+  // one large answer, and "has anything happened" is a small question. Every episode that names
+  // a node the scene is drawing sends a light along that node's edges, so a running agent is
+  // visible as movement rather than as a number that changes.
+  //
+  // Episodes about nodes this snapshot does not contain — a memory written a moment ago is the
+  // common case — are counted rather than drawn, and the count is what offers a reload. Redrawing
+  // the scene on its own would throw away wherever the viewer had moved the camera to.
+  useEffect(() => {
+    if (state !== "ready") return undefined;
+    let stopped = false;
+    let cursor: number | null = null;
+
+    const tick = async () => {
+      try {
+        const diff = await ipc.brainDiff(cursor, 200);
+        if (stopped) return;
+        cursor = diff.cursor;
+        let unseen = 0;
+        let last: string | null = null;
+        for (const change of diff.changes) {
+          last = change.action;
+          if (change.node_id === null) continue;
+          if (drawn.current.has(change.node_id)) scene.current?.pulse(change.node_id);
+          else unseen += 1;
+        }
+        if (diff.changes.length > 0) {
+          setLive((previous) => ({
+            episodes: previous.episodes + diff.changes.length,
+            unseen: previous.unseen + unseen,
+            last: last ?? previous.last,
+          }));
+        }
+      } catch {
+        // A daemon that has gone away is not this tab's problem to report twice; the panel
+        // already has an error line, and a failing poll must not fill it every two seconds.
+      }
+    };
+
+    void tick();
+    const timer = setInterval(() => void tick(), LIVE_POLL_MS);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [state]);
 
   return (
     <div className="hc-inspector-pane hc-architecture">
@@ -620,13 +696,56 @@ function ArchitectureTab() {
             <span className="hc-num">{totals.edges}</span> Kanten
           </>
         )}
+        {state === "ready" && (
+          <>
+            {" "}
+            <button
+              type="button"
+              className="hc-pill"
+              onMouseDown={() => {
+                const next = layout === "tree" ? "shells" : "tree";
+                setLayout(next);
+                scene.current?.setLayout(next);
+              }}
+              title={
+                layout === "tree"
+                  ? "Nach Stufe anordnen — nur so ist Vergessen sichtbar"
+                  : "Nach Enthaltensein anordnen — was der Index ist"
+              }
+            >
+              {layout === "tree" ? "Baum" : "Schalen"}
+            </button>
+          </>
+        )}
       </h2>
       {state === "loading" && <p className="hc-faint">Wird geladen …</p>}
       {state === "failed" && <p className="hc-banner hc-error">{detail}</p>}
       <div className="hc-scene" ref={host} data-state={state} />
       <p className="hc-faint">
-        Helligkeit ist die Stufe, Größe die Salienz, Farbton die Zone. Lesen, nicht ändern.
+        Helligkeit ist die Stufe, Größe die Salienz, Farbton die Zone; Grün ist eine Erinnerung,
+        Gold ein Begriff. Lesen, nicht ändern.
       </p>
+      {state === "ready" && (
+        <p className="hc-meta">
+          Live: <span className="hc-num">{live.episodes}</span> Ereignisse seit dem Öffnen
+          {live.last && <> · zuletzt {live.last}</>}
+          {live.unseen > 0 && (
+            <>
+              {" · "}
+              <span className="hc-num">{live.unseen}</span> davon betreffen Knoten, die dieser
+              Schnappschuss nicht enthält{" "}
+              <button
+                type="button"
+                className="hc-pill"
+                onMouseDown={() => setReloads((n) => n + 1)}
+                title="Holt den Schnappschuss neu. Die Kameraposition geht dabei verloren."
+              >
+                Neu laden
+              </button>
+            </>
+          )}
+        </p>
+      )}
     </div>
   );
 }

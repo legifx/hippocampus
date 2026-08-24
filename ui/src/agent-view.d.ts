@@ -31,6 +31,9 @@ declare module "@agent-view/scene" {
   export class BrainScene {
     constructor(options: { container: HTMLElement; snapshot: unknown });
     setLayout(mode: "tree" | "shells", animate?: boolean): void;
+    /** Send a travelling light along a node's edges. Ignored for a node not in the scene. */
+    pulse(nodeId: number, speed?: number): void;
+    select(nodeId: number | null): void;
     dispose(): void;
   }
 }
