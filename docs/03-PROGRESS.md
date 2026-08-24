@@ -827,9 +827,12 @@ under. Both build prompts are amended.
 - **Consolidation over memories.** They are nodes, so salience and tiering reach them for free,
   but nothing has been *run* over a corpus of them and no number says whether the decay curve
   that suits files suits a memory. D76's revisit trigger is the honest place to start.
-- **`decay_unreported` is not called by anything.** The function exists and is tested; the
-  consolidation pass does not yet invoke it, so the counter-intuitive half of the learning
-  signal is implemented and inert.
+- ~~**`decay_unreported` is not called by anything.**~~ Done in the same session: the
+  consolidation pass now expires session scratch and penalises memories that keep arriving in
+  packs and that nobody has ever reported on. It is in the pass rather than on a timer of its
+  own because it is the same question the rest of the pass asks — what still deserves to be in
+  the hot part of the index — and a second scheduler is a second thing to be wrong about when
+  it last ran. The dry run reports both numbers and changes neither, which is asserted.
 
 ### 2026-08-23 — M11 specified: the agent brain, and the vector question answered
 

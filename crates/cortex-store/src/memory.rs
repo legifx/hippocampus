@@ -56,8 +56,33 @@ pub struct ConsolidateParams {
     pub tiers: TierPolicy,
     pub co_access: CoAccessConfig,
     pub clusters: ClusterConfig,
+    /// What to do about memories nobody reports on (M11, D76).
+    pub decay: UnreportedDecay,
     /// How many nodes to name in the report, per section.
     pub highlights: usize,
+}
+
+/// How hard a memory is penalised for arriving in packs and never being mentioned.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UnreportedDecay {
+    /// How many retrievals with no report at all before the penalty applies.
+    ///
+    /// Five, so that a memory is not punished for one unlucky pack. It is a threshold rather
+    /// than a rate because the signal being measured is a *pattern* — retrieved repeatedly,
+    /// mentioned never — and one retrieval is not a pattern.
+    pub min_retrievals: i64,
+    /// How much usefulness one pass removes. Small: this is a slow verdict, and a memory that
+    /// starts being useful escapes it with a single report.
+    pub step: f64,
+}
+
+impl Default for UnreportedDecay {
+    fn default() -> Self {
+        Self {
+            min_retrievals: 5,
+            step: 0.05,
+        }
+    }
 }
 
 impl ConsolidateParams {
@@ -69,6 +94,7 @@ impl ConsolidateParams {
             tiers: TierPolicy::default(),
             co_access: CoAccessConfig::default(),
             clusters: ClusterConfig::default(),
+            decay: UnreportedDecay::default(),
             highlights: 8,
         }
     }
@@ -329,6 +355,21 @@ impl Store {
             updates.push((node.id, components.total, tier, components));
         }
 
+        // 4b — The memory layer's own housekeeping (M11).
+        //
+        // Here rather than on a timer of its own because it is the same question the rest of
+        // this pass asks — what still deserves to be in the hot part of the index — and because
+        // a second scheduler is a second thing to be wrong about when it last ran.
+        let memories_total = self.count_memories()?;
+        let (memories_expired, memories_unreported) = if p.dry_run {
+            (self.expiring_memory_count(p.now)?, self.unreported_memory_count(p.decay.min_retrievals)?)
+        } else {
+            (
+                self.expire_memories(p.now)?,
+                self.decay_unreported(p.decay.min_retrievals, p.decay.step)?,
+            )
+        };
+
         let (orphans, duplicates) = self.health()?;
 
         // 5 — Write.
@@ -406,6 +447,9 @@ impl Store {
             concepts_pruned,
             orphans,
             duplicates,
+            memories_expired,
+            memories_unreported,
+            memories_total,
             not_done: vec![
                 "concept labels are lexical, taken from what the members' paths have in common \
                  and nothing else has. A summariser would name them better; it would also make \
@@ -1250,6 +1294,93 @@ pub fn source_label(source: EdgeSource) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_consolidation_pass_expires_scratch_and_penalises_what_nobody_reports() {
+        use crate::memories::{MemoryFilter, NewMemory, PackItemRecord};
+        use cortex_core::memory::{MemoryKind, MemoryScope, PackArm};
+        use cortex_core::model::Actor;
+
+        let store = Store::open_in_memory().unwrap();
+        let actor = Actor::Agent("a".into());
+
+        // One durable memory that keeps arriving in packs and that nobody ever mentions…
+        let ignored = store
+            .remember(
+                &NewMemory::new(MemoryScope::Global, MemoryKind::Fact, "nobody ever uses this"),
+                &actor,
+                100,
+            )
+            .unwrap()
+            .node_id;
+        // …and one piece of scratch whose time is up.
+        store
+            .remember(
+                &NewMemory {
+                    expires_at: Some(150),
+                    ..NewMemory::new(
+                        MemoryScope::Session("s-1".into()),
+                        MemoryKind::Observation,
+                        "the editor has this open",
+                    )
+                },
+                &actor,
+                100,
+            )
+            .unwrap();
+
+        for round in 0..6 {
+            store
+                .record_pack(
+                    &format!("p{round}"),
+                    None,
+                    "a task",
+                    2048,
+                    50,
+                    &[PackItemRecord {
+                        node_id: ignored,
+                        rank: 0,
+                        arm: PackArm::Lexical,
+                        score: 1.0,
+                    }],
+                    100,
+                )
+                .unwrap();
+            store.note_retrieved(&[ignored]).unwrap();
+        }
+
+        // A dry run reports and changes nothing — the property that makes the number
+        // trustworthy before somebody agrees to it.
+        let params = ConsolidateParams {
+            dry_run: true,
+            ..ConsolidateParams::new(200)
+        };
+        let dry = store.consolidate(&params).unwrap();
+        assert_eq!(dry.memories_expired, 1);
+        assert_eq!(dry.memories_unreported, 1);
+        assert_eq!(dry.memories_total, 2);
+        assert_eq!(store.memory(ignored).unwrap().unwrap().usefulness, 0.0);
+        assert_eq!(
+            store.list_memories(&MemoryFilter::everything(200)).unwrap().len(),
+            2,
+            "a dry run removed something"
+        );
+
+        let real = store.consolidate(&ConsolidateParams::new(200)).unwrap();
+        assert_eq!(real.memories_expired, 1);
+        assert_eq!(real.memories_unreported, 1);
+        assert!(
+            store.memory(ignored).unwrap().unwrap().usefulness < 0.0,
+            "the half of the learning signal that has to be driven by the pass is still inert"
+        );
+        assert_eq!(
+            store.list_memories(&MemoryFilter::everything(200)).unwrap().len(),
+            1,
+            "the expired scratch is still there"
+        );
+        assert!(real.render().contains("memories"));
+    }
+
+
     use super::*;
     use crate::queries::NodeUpsert;
     use cortex_core::ids::SessionId;

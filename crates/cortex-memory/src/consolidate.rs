@@ -77,6 +77,20 @@ pub struct ConsolidationReport {
     /// over, and the copy is the stale one.
     #[serde(default)]
     pub duplicates: usize,
+    /// Session memories whose time was up, removed by this pass (M11).
+    #[serde(default)]
+    pub memories_expired: usize,
+    /// Memories that keep arriving in context packs and that nobody has ever reported as
+    /// useful, penalised by this pass.
+    ///
+    /// The counter-intuitive half of D76, and the half that makes the learning signal a signal:
+    /// a memory retrieved fifty times and never mentioned is costing tokens for nothing, and no
+    /// recency-or-frequency component will ever say so.
+    #[serde(default)]
+    pub memories_unreported: usize,
+    /// How many memories the index holds after this pass.
+    #[serde(default)]
+    pub memories_total: usize,
     /// True when nothing was written.
     pub dry_run: bool,
     pub duration_ms: u64,
@@ -115,9 +129,17 @@ impl ConsolidationReport {
             self.pinned_held
         ));
         out.push_str(&format!(
-            "health     {} touched nodes nothing links to, {} with a byte-identical twin\n\n",
+            "health     {} touched nodes nothing links to, {} with a byte-identical twin\n",
             self.orphans, self.duplicates
         ));
+        if self.memories_total > 0 {
+            out.push_str(&format!(
+                "memories   {} held, {} session memories expired, {} retrieved often and \
+                 never reported useful\n",
+                self.memories_total, self.memories_expired, self.memories_unreported
+            ));
+        }
+        out.push('\n');
 
         if !self.tier_totals.is_empty() {
             out.push_str("tiers      ");
@@ -182,6 +204,9 @@ mod tests {
             window_from: 1_699_000_000,
             window_to: 1_700_000_000,
             episodes_replayed: 900,
+            memories_expired: 2,
+            memories_unreported: 1,
+            memories_total: 37,
             bursts: 40,
             bursts_discarded: 12,
             edges_written: 31,

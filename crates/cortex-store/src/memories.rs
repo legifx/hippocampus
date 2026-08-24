@@ -626,6 +626,37 @@ impl Store {
         Ok(count)
     }
 
+    /// How many memories the index holds, live and superseded alike.
+    pub fn count_memories(&self) -> Result<usize> {
+        let conn = self.conn();
+        let count: i64 = conn.query_row("SELECT count(*) FROM memories", [], |r| r.get(0))?;
+        Ok(count as usize)
+    }
+
+    /// What [`Store::expire_memories`] would remove, without removing it. For a dry run.
+    pub fn expiring_memory_count(&self, now: i64) -> Result<usize> {
+        let conn = self.conn();
+        let count: i64 = conn.query_row(
+            "SELECT count(*) FROM memories WHERE expires_at IS NOT NULL AND expires_at <= ?1",
+            params![now],
+            |r| r.get(0),
+        )?;
+        Ok(count as usize)
+    }
+
+    /// What [`Store::decay_unreported`] would penalise, without penalising it.
+    pub fn unreported_memory_count(&self, min_retrievals: i64) -> Result<usize> {
+        let conn = self.conn();
+        let count: i64 = conn.query_row(
+            "SELECT count(*) FROM memories
+             WHERE retrieved_count >= ?1 AND helped_count = 0 AND noise_count = 0
+               AND superseded_by IS NULL",
+            params![min_retrievals],
+            |r| r.get(0),
+        )?;
+        Ok(count as usize)
+    }
+
     /// Note that these memories were placed into a pack. Not an outcome — a retrieval.
     pub fn note_retrieved(&self, nodes: &[NodeId]) -> Result<()> {
         if nodes.is_empty() {
