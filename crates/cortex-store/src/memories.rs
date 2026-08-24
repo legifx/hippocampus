@@ -1162,10 +1162,18 @@ impl Store {
     ) -> Result<()> {
         let mut conn = self.conn();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        // Idempotent on the id, because the id is derived from the second, the actor and the
+        // task — so two identical requests inside one second collide by construction. That is a
+        // retry, and a retry is the same pack: the alternative is a UNIQUE violation that fails
+        // the call for a client doing nothing wrong, or a warning in the journal that means
+        // nothing.
         tx.execute(
             "INSERT INTO context_packs (id, session_id, task, budget_tokens, used_tokens,
                                         created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(id) DO UPDATE SET
+                 used_tokens = excluded.used_tokens,
+                 created_at  = excluded.created_at",
             params![
                 pack_id,
                 session_id,

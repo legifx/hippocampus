@@ -268,8 +268,22 @@ pub mod method {
     /// Methods that may be answered out of order, concurrently with each other.
     ///
     /// **An allow-list, so that a new method is serialised until somebody has thought about
-    /// it.** Everything here reads: it does not write a file, does not write the index beyond
-    /// an audit row, and does not depend on having happened before or after its neighbours.
+    /// it.** The condition is not "reads nothing" — it is **the answer does not depend on
+    /// having happened before or after its neighbours.** Nothing here writes a file, and what
+    /// it may write to the index is bounded by that condition rather than by a table name.
+    ///
+    /// Most of them write only an audit row. `brain.context` (M11) writes three things — the
+    /// pack, its items, and a retrieval count on each memory it contained — and is on the list
+    /// anyway, deliberately, because every one of those is append-only against an identifier
+    /// this call has just minted, or a counter whose increments commute. Two packs built at the
+    /// same instant cannot disagree about anything. **This was worth stating rather than
+    /// assuming:** the rule as first written said "beyond an audit row", M11 broke it, and
+    /// nothing failed — a condition that is silently violated is a condition that has stopped
+    /// meaning anything, and the fix is to say what it actually is.
+    ///
+    /// The cost of *not* having it here is real: a pack is about nine milliseconds, and
+    /// serialising it behind a preview would put it in exactly the queue this list exists to
+    /// break up.
     ///
     /// The reason this exists: a connection used to answer one request at a time, so a single
     /// slow call held up everything queued behind it. The journal shows the signature clearly —
@@ -890,6 +904,63 @@ pub struct RecalledAssociation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Nothing that changes a file, moves one, or has an order that means something is on the
+    /// concurrent list.
+    ///
+    /// The list is an allow-list precisely so that adding a method to it is a decision. This
+    /// asserts the half of the decision that is mechanical, and it is the half somebody adding
+    /// a method in a hurry gets wrong: the mutations are named here, so a new one has to be
+    /// added to this test before it can be added to the list.
+    #[test]
+    fn nothing_that_mutates_the_filesystem_is_answered_out_of_order() {
+        for method in [
+            method::FS_WRITE,
+            method::FS_MOVE,
+            method::FS_TRASH,
+            method::FS_MKDIR,
+            method::FS_RENAME,
+            method::FS_TRANSFER,
+            method::UNDO,
+            method::REBUILD_INDEX,
+            method::RECONCILE,
+            // Not a filesystem mutation, and ordered for the same kind of reason: a memory
+            // and the report about it have to land in the order they were sent, or a
+            // correction can arrive before the thing it corrects.
+            method::BRAIN_REMEMBER,
+            method::BRAIN_OUTCOME,
+            method::BRAIN_SUPERSEDE,
+            method::BRAIN_FORGET_MEMORY,
+            method::AGENT_SESSION_BEGIN,
+            method::AGENT_SESSION_END,
+        ] {
+            assert!(
+                !method::is_concurrent(method),
+                "{method} may be answered out of order, and its order means something"
+            );
+        }
+    }
+
+    /// And the reads that are on it are on it, or the queue this list exists to break up comes
+    /// back the next time somebody adds a call to the row rendering path.
+    #[test]
+    fn the_calls_a_scrolling_list_makes_are_concurrent() {
+        for method in [
+            method::SEARCH,
+            method::FS_LIST,
+            method::FS_READ,
+            method::FS_STAT,
+            method::BRAIN_NEIGHBORS,
+            method::BRAIN_MEMORIES,
+            method::BRAIN_CONTEXT,
+            method::AGENT_SESSIONS,
+        ] {
+            assert!(
+                method::is_concurrent(method),
+                "{method} is answered in order, and a slow one holds up everything behind it"
+            );
+        }
+    }
 
     #[test]
     fn a_request_round_trips() {

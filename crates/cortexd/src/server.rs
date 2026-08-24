@@ -1475,19 +1475,26 @@ async fn dispatch_inner(
             // The record is what makes an outcome attributable later. A pack that could not be
             // recorded is still a usable pack — it just cannot be reported on — so this warns
             // rather than failing the call.
-            if let Err(e) = daemon.store.record_pack(
-                &pack.pack_id,
-                params.session_id.as_deref(),
-                &params.task,
-                pack.budget_tokens,
-                pack.used_tokens,
-                &cortex_query::context::records(&pack),
-                now,
-            ) {
-                tracing::warn!(error = %e, "could not record the context pack");
-            }
-            if let Err(e) = daemon.store.note_retrieved(&pack.memory_ids()) {
-                tracing::warn!(error = %e, "could not count a retrieval");
+            //
+            // An empty pack is not recorded at all. There is nothing to report an outcome
+            // against, and a store that kept one row per question nobody could answer would
+            // fill up fastest on the fresh install where the memory is empty and every call
+            // returns nothing.
+            if !pack.items.is_empty() {
+                if let Err(e) = daemon.store.record_pack(
+                    &pack.pack_id,
+                    params.session_id.as_deref(),
+                    &params.task,
+                    pack.budget_tokens,
+                    pack.used_tokens,
+                    &cortex_query::context::records(&pack),
+                    now,
+                ) {
+                    tracing::warn!(error = %e, "could not record the context pack");
+                }
+                if let Err(e) = daemon.store.note_retrieved(&pack.memory_ids()) {
+                    tracing::warn!(error = %e, "could not count a retrieval");
+                }
             }
 
             auditor.allowed(
