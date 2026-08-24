@@ -60,6 +60,9 @@ pub enum Order {
     Name,
     Size,
     Modified,
+    /// What the brain thinks matters, most first. Arithmetic on stored numbers — nothing in a
+    /// listing path may wait on a model (§7 of the paper).
+    Salience,
     /// The order the source produced, kept. For a query that is relevance, and re-sorting it
     /// would throw away the ranking that is the answer.
     None,
@@ -92,6 +95,24 @@ pub struct ViewRow {
     pub snippet: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub score: Option<ScoreBreakdown>,
+
+    // The memory columns (M10 step 2). On every row from every source, from one query per view
+    // rather than one per row — §5 of the paper, and the measurement in
+    // `cortex-store/tests/listing_cost.rs`.
+    /// What the brain thinks this is worth keeping. Absent for a path the index has never seen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub salience: Option<f64>,
+    /// How many edges touch it, in either direction: what "well connected" means before salience
+    /// turns it into a number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub degree: Option<u32>,
+    /// When something last happened to it. `None` means nothing ever has, which is a different
+    /// thing from "long ago" and is shown as different.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_episode: Option<i64>,
+    /// Held by a person against forgetting.
+    #[serde(default)]
+    pub pinned: bool,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<u32>,
@@ -166,6 +187,10 @@ impl ViewRow {
             tier: None,
             snippet: None,
             score: None,
+            salience: None,
+            degree: None,
+            last_episode: None,
+            pinned: false,
             mode: entry.mode,
             owner: entry.owner,
             group: entry.group,
@@ -195,6 +220,10 @@ impl ViewRow {
             tier: Some(hit.tier),
             snippet: hit.snippet,
             score: Some(hit.score),
+            salience: None,
+            degree: None,
+            last_episode: None,
+            pinned: false,
             mode: None,
             owner: None,
             group: None,
@@ -205,12 +234,60 @@ impl ViewRow {
     }
 }
 
+/// Attach what the index knows to a row, in place.
+///
+/// A free function rather than a method on the store's type, because `cortex-core` must not
+/// depend on the store: the caller reads the columns and hands them over. The row keeps whatever
+/// the source already filled — a search hit arrives with a tier and a zone — and gains what only
+/// the index has.
+pub fn attach_memory(
+    row: &mut ViewRow,
+    node_id: NodeId,
+    tier: Tier,
+    salience: f64,
+    pinned: bool,
+    zone_id: Option<ZoneId>,
+    degree: u32,
+    last_episode: Option<i64>,
+) {
+    row.node_id = Some(node_id);
+    row.tier = Some(tier);
+    row.salience = Some(salience);
+    row.pinned = pinned;
+    row.zone_id = row.zone_id.or(zone_id);
+    row.degree = Some(degree);
+    row.last_episode = last_episode;
+    // A path the index knows is indexed, whatever the listing believed a moment ago.
+    row.indexed = true;
+}
+
 /// The sentence a directory view says about itself.
-pub fn basis_for_dir(shown: usize, total: u64, hidden: u64, truncated: bool) -> String {
+pub fn basis_for_dir(
+    shown: usize,
+    total: u64,
+    hidden: u64,
+    truncated: bool,
+    order: Order,
+    known: u64,
+) -> String {
+    let ordering = match order {
+        Order::Name => "nach Namen geordnet",
+        Order::Size => "nach Größe geordnet",
+        Order::Modified => "nach Änderungsdatum geordnet",
+        Order::Salience => "nach Salienz geordnet — was das Gedächtnis für wichtig hält",
+        Order::None => "in der Reihenfolge des Dateisystems",
+    };
     let mut text = format!(
-        "{total} {}, nach Namen geordnet — der Ordner selbst, nichts anderes",
+        "{total} {}, {ordering} — der Ordner selbst, nichts anderes",
         if total == 1 { "Eintrag" } else { "Einträge" }
     );
+    // What the memory columns are worth here, stated rather than implied: a directory the index
+    // has never seen shows no salience, and a view ordered by it would be ordering nothing.
+    if known < total {
+        text.push_str(&format!(
+            "; {known} davon kennt der Index, der Rest ist nur auf der Platte"
+        ));
+    }
     if truncated {
         text.push_str(&format!("; {shown} davon geladen"));
     }
@@ -335,13 +412,23 @@ mod tests {
 
     #[test]
     fn a_view_says_what_it_is_and_what_it_is_not() {
-        let plain = basis_for_dir(3, 3, 0, false);
+        let plain = basis_for_dir(3, 3, 0, false, Order::Name, 3);
         assert!(plain.contains("3 Einträge"), "{plain}");
         assert!(plain.contains("nach Namen"), "{plain}");
 
+        // The order is named, because "why is this first" starts with what it was sorted by —
+        // and salience is the one a person has not seen a file manager do before.
+        let ranked = basis_for_dir(3, 3, 0, false, Order::Salience, 3);
+        assert!(ranked.contains("Salienz"), "{ranked}");
+
+        // And what the index does not know is said rather than implied: a salience column over
+        // files it has never seen would be a column of zeroes pretending to be a judgement.
+        let partly = basis_for_dir(10, 10, 0, false, Order::Name, 4);
+        assert!(partly.contains("4 davon kennt der Index"), "{partly}");
+
         // The two things a listing must admit to: what a limit cut off, and what the deny-list
         // covered. Counted, never named.
-        let cut = basis_for_dir(100, 5000, 2, true);
+        let cut = basis_for_dir(100, 5000, 2, true, Order::Name, 5000);
         assert!(cut.contains("100 davon geladen"), "{cut}");
         assert!(cut.contains("2 durch die Sperrliste"), "{cut}");
 

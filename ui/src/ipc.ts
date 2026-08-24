@@ -359,7 +359,7 @@ export type Source =
   | { kind: "query"; text: string };
 
 /** What the daemon sorted by. The frontend never sorts (D4). */
-export type Order = "name" | "size" | "modified" | "none";
+export type Order = "name" | "size" | "modified" | "salience" | "none";
 
 /**
  * One row, from any source.
@@ -378,6 +378,14 @@ export type ViewRow = {
   tier?: string | null;
   snippet?: string | null;
   score?: ScoreBreakdown | null;
+  /** What the brain thinks it is worth keeping. Absent for a path the index has never seen. */
+  salience?: number | null;
+  /** How many edges touch it, in either direction. */
+  degree?: number | null;
+  /** When something last happened to it. Absent means nothing ever has. */
+  last_episode?: number | null;
+  /** Held by a person against forgetting. */
+  pinned?: boolean;
   mode?: number | null;
   owner?: Owner | null;
   group?: Owner | null;

@@ -9,9 +9,9 @@ If you finish work without editing this file, the next agent starts from nothing
 
 | | |
 |---|---|
-| **Active milestone** | **M10 — the explorer restructure**, step 1 of four done (2026-08-24, D85). M11, M8 and M5 as below. |
-| **Status** | **M10 step 1 landed on 2026-08-24: `view.open`, one row shape from every source (D85). M6's mandatory list is complete as of the same day: archives (`fs.extract`, D81/D82), thumbnails in the list (D83) and network locations (D84, staged — what is mounted is offered, mounting is not built). What is left of M6 is its own §3, a week of exclusive use by the owner. 998 Rust tests, 60 vitest, 155 browser tests.** **M11 is ten of its twelve criteria in — see its own scorecard below before anything else, and every benchmark gate is green including the new one.** M4 complete. M6's mandatory list is done; its acceptance now needs a week of use rather than more code. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **A note on counting, kept because it cost a session:** this file once said 399 tests and accused the previous entry's 812 of being unreproducible. The 399 was wrong — the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Count by summing every `test result:` line. Check the measuring tool before disbelieving the measurement; this file already says that about latency, and it applies to counting. |
-| **Last updated** | 2026-08-24 (M10 step 1: `view.open`, one row shape — D85) |
+| **Active milestone** | **M10 — the explorer restructure**, steps 1 and 2 of four done (2026-08-24, D85/D86). M11, M8 and M5 as below. |
+| **Status** | **M10 steps 1 and 2 landed on 2026-08-24: `view.open` with one row shape from every source (D85), and the memory columns on every row — measured before they were built, and cheaper than the per-row queries they sit beside (D86). Step 2's last criterion needs the owner: salience ordering verified by hand against a real index, once. M6's mandatory list is complete as of the same day: archives (`fs.extract`, D81/D82), thumbnails in the list (D83) and network locations (D84, staged — what is mounted is offered, mounting is not built). What is left of M6 is its own §3, a week of exclusive use by the owner. 1001 Rust tests, 60 vitest, 159 browser tests.** **M11 is ten of its twelve criteria in — see its own scorecard below before anything else, and every benchmark gate is green including the new one.** M4 complete. M6's mandatory list is done; its acceptance now needs a week of use rather than more code. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **A note on counting, kept because it cost a session:** this file once said 399 tests and accused the previous entry's 812 of being unreproducible. The 399 was wrong — the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Count by summing every `test result:` line. Check the measuring tool before disbelieving the measurement; this file already says that about latency, and it applies to counting. |
+| **Last updated** | 2026-08-24 (M10 step 2: the memory columns, measured first — D86) |
 | **Blocked on** | nothing |
 
 ## Start here
@@ -792,6 +792,54 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
 
+### 2026-08-24 — M10 step 2: the memory on every row, measured first
+
+Step 2 of four. Salience, tier, degree, last episode, pinned and zone on every row from every
+source; tier renders as brightness; `Order::Salience` exists and a directory can be opened by it.
+
+**1001 Rust tests** against 998 — the measurement plus two against a live daemon — **60 vitest**,
+**159 browser tests** (4 new). Green.
+
+**The measurement §5 demanded, before the design.** Ten thousand rows, debug build, warm cache, a
+tenth of them carrying edges and episodes:
+
+| | |
+|---|---|
+| one `node_by_path` per row — what the listing already does | **286 ms** |
+| one statement per 900 paths, with degree and last-episode joined in | **55 ms** |
+
+The threshold was 15 ms of *added* cost. The columns add none: they cost a fifth of the shape
+they sit beside. `cortex-store/tests/listing_cost.rs` asserts the difference rather than the
+absolute number, and D86 has the reasoning, including the two things it decided against the
+paper's suggestion — degree is counted rather than stored, and the lookup is keyed by path rather
+than by `parent_id`.
+
+**The `parent_id` version was written first and came back empty.** A freshly reconciled directory
+has paths before it has parent links — the link pass runs separately — so every memory column was
+absent on exactly the directories somebody would look at first. Keyed by path it is correct
+whenever the pass last ran.
+
+**What the window shows.** Tier is brightness in four steps, and the "cold" badge is gone: it
+said something about one row in fifty and nothing about the other forty-nine. A pinned row does
+not fade. The palette offers "Sortieren: Salienz", and choosing it asks the daemon for that order
+— the frontend still never sorts.
+
+**What is deliberately not shown.** Salience, degree and the last-episode timestamp are on the
+row and nothing draws them. Numbers in a column would be a visual design decision, and the owner
+has deferred the appearance until the thing is stable; step 4 gives them a home in the sidebar,
+where "why is this here" is a question somebody is actually asking.
+
+**The one thing still open in step 2, and it needs the owner.** Its Definition of Done ends with
+*"a directory of files you have worked with this week, ordered by salience, puts them at the top
+— verified by hand, once, and written down."* That is a claim about a real index and cannot be
+asserted against a fixture. Open the window in a directory you have been working in, press Ctrl+K
+and choose **Sortieren: Salienz**, and write down here whether the top of the list is what you
+would have picked. If it is not, the salience weights are wrong, not the view.
+
+**Two more lost keystrokes.** The `context.spec.ts` fix from the previous session covered one
+helper; two other tests in the same file pressed Ctrl+Shift+A immediately after `goto` and failed
+the same way under load. All four wait for the application now.
+
 ### 2026-08-24 — M10 step 1: one row stream, and a flaky test that was a lost keystroke
 
 M6's mandatory list finished earlier in the day, so this session started the restructure the
@@ -826,11 +874,9 @@ and was simply lost. It waits for a row and then for the panel now. Six repeats 
 pass, and so does a full run under a parallel `cargo test`. **A test that races the thing it is
 testing fails as a mystery rather than as a message.**
 
-**What step 2 needs, for whoever picks this up.** The memory columns: salience, degree, last
-episode, pinned and concepts on every row from every source, tier as brightness rather than a
-badge, and `Order::Salience` as the default for query views. `ViewRow` is where they go, and the
-gate to watch is the 10 000-entry one — §5 of the paper says to drop the columns rather than the
-budget if they collide.
+**What step 2 needed** is done the same day; see the entry above. Step 3 is the new places —
+`concept`, `working_set`, `neighbours`, `tier(cold)`, `timeline` — each as a `Source` variant,
+each with a basis line, each reachable from the places screen.
 
 ### 2026-08-24 — M6: network locations, and the calls that do not come back
 

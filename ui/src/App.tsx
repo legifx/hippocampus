@@ -39,7 +39,7 @@ import {
   type AppsForPath,
   type Place,
   type SearchHit,
-  type SortBy,
+  type Order,
 } from "./ipc";
 import { isArchive, type Row } from "./row";
 import { codeOf, messageOf } from "./format";
@@ -69,10 +69,11 @@ function splitPathName(path: string): string {
 /** The daemon needs to know somebody is here, not how fast they type. */
 const pingSometimes = throttled(5000);
 
-const SORT_LABELS: Record<SortBy, string> = {
+const SORT_LABELS: Record<Order, string> = {
   name: "Name",
   size: "Größe",
   modified: "Datum",
+  salience: "Salienz",
   none: "unsortiert",
 };
 
@@ -451,11 +452,16 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
       },
       ...(searching
         ? []
-        : (["name", "size", "modified"] as SortBy[]).map((order) => ({
+        : (["name", "size", "modified", "salience"] as Order[]).map((order) => ({
             id: `sort-${order}`,
             label: `Sortieren: ${SORT_LABELS[order]}`,
             binding: "—",
-            detail: browse.state.order === order ? "nochmal wählen kehrt um" : undefined,
+            detail:
+              browse.state.order === order
+                ? "nochmal wählen kehrt um"
+                : order === "salience"
+                  ? "was das Gedächtnis für wichtig hält"
+                  : undefined,
             run: () => browse.orderBy(order),
           }))),
       ...(current && isArchive(current.name)

@@ -30,6 +30,10 @@ function hits(count: number): ViewRow[] {
     mtime: 1_700_000_000 - i * 3600,
     zone_id: i % 4 === 0 ? 1 : null,
     tier: i % 50 === 0 ? "cold" : "stm",
+    salience: 1 / (i + 1),
+    degree: i % 7,
+    last_episode: 1_700_000_000 - i * 900,
+    pinned: i === 3,
     score: { path_rank: 1, lexical_rank: 3, vector_rank: null, fused: 0.42, salience_boost: 1.1, rerank: null, final_score: 0.46 },
     snippet: `…a snippet with enough text in it to threaten the layout of a narrow column, ${i}…`,
   }));
@@ -67,6 +71,14 @@ function listOf(at: string): { entries: ViewRow[]; error?: string } {
       mode: kind === "dir" ? 0o040755 : 0o100644,
       owner: { id: 1000, name: "someone" },
       group: { id: 1000, name: "someone" },
+      // The memory columns, as the daemon attaches them (M10 step 2). `kurz.txt` is cold and
+      // `bild.png` is pinned, so a test can see brightness and see the exception to it.
+      node_id: 100 + i,
+      tier: name === "kurz.txt" ? "cold" : name === "bild.png" ? "working" : "stm",
+      salience: name === "kurz.txt" ? 0.02 : 1 / (i + 2),
+      degree: i,
+      last_episode: 1_700_000_000 - i * 3600,
+      pinned: name === "bild.png",
     }) as ViewRow;
 
   // Links live one level down, so the root listing keeps the five entries the layout tests are

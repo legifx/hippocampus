@@ -556,6 +556,33 @@
   border-color: var(--hc-stroke);
 }
 
+/* Tier is brightness, everywhere except the one view that is *about* tiers (M10 §4.4).
+ *
+ * Four steps of one dimension: the working set at full strength, short-term memory as the
+ * ordinary case, long-term dimmer, cold dimmest. Nothing is hidden — a cold row is still a row
+ * with a name, a size and a date — and nothing is added: no badge, no icon, no column. The same
+ * encoding as the 3D view, so somebody who has looked at one can read the other.
+ *
+ * Applied to the row's text rather than to the row, so the selection background and the zone
+ * border stay at full contrast: a dim row must still be visibly selected. */
+.hc-row[data-tier="working"] .hc-row-text {
+  color: var(--hc-text);
+}
+
+.hc-row[data-tier="ltm"] .hc-row-text {
+  opacity: 0.78;
+}
+
+.hc-row[data-tier="cold"] .hc-row-text {
+  opacity: 0.6;
+}
+
+/* Pinned is the exception to the dimming: somebody said "keep this", and a held file that faded
+   with age would be the interface disagreeing with them. */
+.hc-row[data-pinned="yes"] .hc-row-text {
+  opacity: 1;
+}
+
 /* A directory reads as a place rather than a thing: slightly brighter, and marked. Colour is
    never the only signal (D15), so there is a shape as well as a weight. */
 .hc-row-directory .hc-row-name {

@@ -43,6 +43,10 @@ function row(name: string, kind: "file" | "dir" = "file"): Row {
     broken: false,
     nodeId: null,
     score: null,
+    salience: null,
+    degree: null,
+    lastEpisode: null,
+    pinned: false,
   };
 }
 

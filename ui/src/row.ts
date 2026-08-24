@@ -42,6 +42,14 @@ export type Row = {
   nodeId: number | null;
   /** Why this row is where it is, when something ranked it. */
   score: ScoreBreakdown | null;
+  /** What the brain thinks this is worth keeping. Null for a path it has never seen. */
+  salience: number | null;
+  /** How many edges touch it. */
+  degree: number | null;
+  /** When something last happened to it. Null means nothing ever has, which is not "long ago". */
+  lastEpisode: number | null;
+  /** Held by a person against forgetting. */
+  pinned: boolean;
 };
 
 /**
@@ -84,6 +92,10 @@ export function rowFromView(row: ViewRow, commonDir: string | null): Row {
     broken: row.broken === true,
     nodeId: row.node_id ?? null,
     score: row.score ?? null,
+    salience: row.salience ?? null,
+    degree: row.degree ?? null,
+    lastEpisode: row.last_episode ?? null,
+    pinned: row.pinned === true,
   };
 }
 

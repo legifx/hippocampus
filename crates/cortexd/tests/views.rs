@@ -191,8 +191,8 @@ fn a_query_and_a_directory_answer_in_one_shape() {
         assert!(hit_row.get(field).is_some(), "{field} missing from a query row");
     }
 
-    // What only one source can fill is absent rather than invented.
-    assert!(dir_row.get("tier").is_none() && dir_row.get("node_id").is_none());
+    // Since step 2 a directory row the index knows carries the same memory a hit does — that is
+    // the point of the step. What is still absent is what only a *stat* can give.
     assert!(hit_row.get("tier").is_some() && hit_row.get("node_id").is_some());
     assert!(
         hit_row.get("mode").is_none(),
@@ -246,4 +246,91 @@ fn the_deny_list_is_counted_in_the_basis_and_never_named() {
     let basis = view["result"]["basis"].as_str().unwrap();
     assert!(basis.contains("Sperrliste"), "{basis}");
     assert!(!basis.contains("ed25519"), "R1: counted, never named — {basis}");
+}
+
+/// M10 step 2: the memory on every row, from one query per view.
+#[test]
+fn every_row_carries_what_the_brain_knows_about_it() {
+    let instance = Instance::start();
+    let mut client = Client::connect(&instance.socket());
+    corpus(&instance.work());
+    client.call("reconcile", json!({}));
+    let path = instance.work().display().to_string();
+
+    // Something has happened to one of them: opening a file is an episode, and an episode is
+    // what makes a row different from its neighbours.
+    let touched = instance.work().join("beta.md").display().to_string();
+    client.call("brain.pin", json!({ "target": touched }));
+
+    let view = client.call(
+        "view.open",
+        json!({ "source": { "kind": "dir", "path": path } }),
+    );
+    let rows = view["result"]["rows"].as_array().unwrap();
+    let beta = rows
+        .iter()
+        .find(|r| r["path"].as_str().unwrap().ends_with("beta.md"))
+        .expect("the directory holds beta.md");
+
+    // Every column the paper's step 2 names, on an ordinary directory row.
+    assert!(beta["node_id"].is_number(), "{beta}");
+    assert!(beta["tier"].is_string(), "{beta}");
+    assert!(beta["salience"].is_number(), "{beta}");
+    assert!(beta["degree"].is_number(), "{beta}");
+    assert_eq!(beta["pinned"], json!(true));
+    assert_eq!(beta["indexed"], json!(true));
+
+    // And the basis says how much of the directory the index actually knows, because a
+    // salience column over files it has never seen would be a column of zeroes pretending to
+    // be a judgement.
+    let basis = view["result"]["basis"].as_str().unwrap();
+    assert!(basis.contains("Einträge"), "{basis}");
+}
+
+/// The order salience makes possible, and the tie-break that keeps it stable.
+#[test]
+fn a_directory_can_be_ordered_by_what_the_brain_thinks_matters() {
+    let instance = Instance::start();
+    let mut client = Client::connect(&instance.socket());
+    let work = instance.work();
+    for name in ["a.md", "b.md", "c.md"] {
+        std::fs::write(work.join(name), b"words").unwrap();
+    }
+    client.call("reconcile", json!({}));
+
+    // Pinning is the one salience input a test can set directly, and it is the one a person
+    // uses: "keep this".
+    client.call(
+        "brain.pin",
+        json!({ "target": work.join("c.md").display().to_string() }),
+    );
+    // A consolidation pass is what turns inputs into scores.
+    client.call("brain.consolidate", json!({}));
+
+    let view = client.call(
+        "view.open",
+        json!({ "source": { "kind": "dir", "path": work.display().to_string() }, "order": "salience" }),
+    );
+    let rows = view["result"]["rows"].as_array().unwrap();
+    let order: Vec<&str> = rows
+        .iter()
+        .map(|r| r["path"].as_str().unwrap().rsplit('/').next().unwrap())
+        .collect();
+
+    assert_eq!(view["result"]["order"], json!("salience"));
+    assert_eq!(
+        order.first(),
+        Some(&"c.md"),
+        "the pinned file is what the brain thinks matters here: {order:?}"
+    );
+    let basis = view["result"]["basis"].as_str().unwrap();
+    assert!(basis.contains("Salienz"), "{basis}");
+
+    // Asked twice, the same order: a listing that disagreed with itself would be worse than one
+    // ordered by nothing.
+    let again = client.call(
+        "view.open",
+        json!({ "source": { "kind": "dir", "path": work.display().to_string() }, "order": "salience" }),
+    );
+    assert_eq!(again["result"]["rows"], view["result"]["rows"]);
 }

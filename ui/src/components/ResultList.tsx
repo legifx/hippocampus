@@ -11,7 +11,7 @@
  */
 
 import { memo, useLayoutEffect } from "react";
-import { elideStart, fileUri, formatAge, formatSize, tierLabel } from "../format";
+import { elideStart, fileUri, formatAge, formatSize } from "../format";
 import { useThumbnails } from "../hooks/useThumbnails";
 import { useVirtual } from "../hooks/useVirtual";
 import type { Row } from "../row";
@@ -150,14 +150,18 @@ const ListRow = memo(function ListRow({
   onActivate,
   selectedPaths,
 }: ListRowProps) {
-  const tier = row.tier ? tierLabel(row.tier) : null;
-
   return (
     <div
       id={`hc-row-${index}`}
       role="option"
       aria-selected={selected}
       className={rowClass(row, selected, cursor)}
+      // Tier is brightness, not a badge (M10 §4.4): a cold row is dimmer, which is the same
+      // encoding the three-dimensional view uses, so the two windows teach one visual language.
+      // A badge said "cold" on one row in fifty and said nothing at all about the other
+      // forty-nine.
+      data-tier={row.tier ?? undefined}
+      data-pinned={row.pinned ? "yes" : undefined}
       style={{
         height: rowHeight,
         borderLeftColor: zoneBorder(hue),
@@ -212,7 +216,6 @@ const ListRow = memo(function ListRow({
       {row.dir && <span className="hc-row-dir hc-meta">{elideStart(row.dir, 48)}</span>}
       {row.snippet && <span className="hc-row-snippet hc-meta">{row.snippet}</span>}
       <span className="hc-row-meta hc-meta">
-        {tier && <span className="hc-pill hc-tier">{tier}</span>}
         {!row.indexed && (
           <span className="hc-pill hc-unindexed" title="Der Index kennt diese Datei noch nicht">
             neu

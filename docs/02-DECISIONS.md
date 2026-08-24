@@ -2545,3 +2545,58 @@ currently is — is the inconsistency this chooses against.
 **Revisit when:** step 3 adds sources that are neither spatial nor a query (`concept`,
 `working_set`, `tier`). If `useView`'s two slots — a place and an overlay — cannot hold them,
 the stack of views the paper describes in §4.2 replaces them, and this entry is where to say so.
+
+### D86 — The memory columns cost less than the queries they replace
+
+**Status:** accepted · 2026-08-24 · M10 step 2
+
+Every row from every source now carries what the index knows about it: salience, tier, degree,
+when it was last touched, whether somebody pinned it, and which zone it is in. §5 of the explorer
+paper demanded the measurement *before* the design, with a stated threshold — **more than 15 ms
+on ten thousand rows and the columns belong in a deferred second message instead.**
+
+**Measured, on ten thousand rows** (`cortex-store/tests/listing_cost.rs`, debug build, warm page
+cache, a tenth of the rows carrying edges and episodes):
+
+| | |
+|---|---|
+| One `node_by_path` per row — what the listing already does, to mark a row as "new" | **286 ms** |
+| One statement per chunk of 900 paths, with degree and last-episode joined in | **55 ms** |
+
+The columns do not cost 15 ms. They cost **negative** time against the shape they sit next to,
+and the test asserts the difference rather than the absolute number, because the absolute number
+is a property of the machine and the ratio is a property of the design.
+
+**A consequence worth naming rather than quietly enjoying:** the expensive half of a large
+listing is now the per-row lookup inside `Surface::list`, not the memory. Replacing it with the
+same batched statement is a follow-up, deliberately not done in this step — `fs.list` serves
+agents and the CLI as well, and changing it belongs in its own change with its own test.
+
+**Keyed by path, not by `parent_id`.** The first version selected the children of a directory
+node. It came back empty against a freshly reconciled directory: the parent link is filled in by
+a pass of its own, so a file has a path before it has a parent, and a listing that waited for the
+link would show a directory with no memory in it for as long as that took. The view knows exactly
+which paths it is showing; asking about those is both correct and independent of when the link
+pass last ran.
+
+**Degree is counted, not stored.** The paper suggests the consolidation pass leave a count
+behind. It is not stored, for two reasons: the measurement says counting it is a fraction of a
+listing's cost, and a stored count is a second copy of a fact that goes stale between passes —
+`edges` is the fact. **Revisit when** a corpus appears where the count is the slow part: either an
+index with a node of very high degree, or the batched statement crossing 15 ms in the test above.
+The column is the answer then, and it belongs in the consolidation pass rather than in the
+listing path.
+
+**Tier is brightness, and pinned is the exception to it** (§4.4). The badge that used to say
+"cold" on one row in fifty said nothing at all about the other forty-nine; four steps of one
+dimension say something about every row, and it is the encoding the three-dimensional view
+already uses, so the two windows teach one visual language. Applied to the row's *text* rather
+than to the row, so a dim row is still visibly selected. A pinned row does not fade: somebody
+said "keep this", and an interface that faded it would be disagreeing with them.
+
+**Salience ordering happens in the daemon, on stored numbers.** The frontend asks for an order
+and renders what comes back (D4). A directory has no salience of its own, so the listing arrives
+by name and is reordered once the columns are attached, with the path as the tie-break — two
+listings of one directory must never disagree, which is the same rule `fs.list` already has for names.
+Nothing in the listing path waits on a model, which is §7's rule and the reason salience is
+arithmetic rather than a ranking call.

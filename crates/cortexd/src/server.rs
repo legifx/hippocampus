@@ -1823,7 +1823,10 @@ async fn dispatch_inner(
                         Order::Name => cortex_core::tools::SortBy::Name,
                         Order::Size => cortex_core::tools::SortBy::Size,
                         Order::Modified => cortex_core::tools::SortBy::Modified,
-                        Order::None => cortex_core::tools::SortBy::None,
+                        // Salience is not something a directory has; the listing comes back by
+                        // name and is reordered below, once the numbers are attached. Asking the
+                        // filesystem layer for an order it cannot know would be inventing one.
+                        Order::Salience | Order::None => cortex_core::tools::SortBy::Name,
                     };
                     let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
                     let listed = surface(daemon, &ctx.actor, &auditor)
@@ -1839,12 +1842,61 @@ async fn dispatch_inner(
 
                     let hidden = listed.hidden as u64;
                     let truncated = listed.truncated;
-                    let rows: Vec<ViewRow> =
+                    let mut rows: Vec<ViewRow> =
                         listed.entries.into_iter().map(ViewRow::from_entry).collect();
+
+                    // The memory columns, in one statement for the whole listing rather than one
+                    // per row (§5). Measured before it was built: on ten thousand rows the join
+                    // costs a sixth of the per-row lookups the listing already makes — see
+                    // `cortex-store/tests/listing_cost.rs`.
+                    let shown: Vec<std::path::PathBuf> =
+                        rows.iter().map(|r| r.path.clone()).collect();
+                    let columns =
+                        cortex_store::memory_columns::for_paths(&daemon.store, &shown)
+                            .unwrap_or_default();
+                    let mut known = 0u64;
+                    for row in &mut rows {
+                        if let Some(c) = columns.get(&row.path) {
+                            known += 1;
+                            cortex_core::view::attach_memory(
+                                row,
+                                c.node_id,
+                                c.tier,
+                                c.salience,
+                                c.pinned,
+                                c.zone_id,
+                                c.degree,
+                                c.last_episode,
+                            );
+                        }
+                    }
+
+                    // Ordering is the daemon's for every source (D4). Salience is the one order
+                    // the filesystem cannot provide, so it is applied here — on stored numbers,
+                    // with the name as the tie-break so two listings never disagree.
+                    if order == Order::Salience {
+                        rows.sort_by(|a, b| {
+                            let (x, y) = (a.salience.unwrap_or(0.0), b.salience.unwrap_or(0.0));
+                            y.partial_cmp(&x)
+                                .unwrap_or(std::cmp::Ordering::Equal)
+                                .then_with(|| a.path.cmp(&b.path))
+                        });
+                        if params.reverse {
+                            rows.reverse();
+                        }
+                    }
+
                     let total = rows.len() as u64;
 
                     json(View {
-                        basis: view::basis_for_dir(rows.len(), total, hidden, truncated),
+                        basis: view::basis_for_dir(
+                            rows.len(),
+                            total,
+                            hidden,
+                            truncated,
+                            order,
+                            known,
+                        ),
                         rows,
                         origin: Source::Dir {
                             path: listed.path,
@@ -1893,12 +1945,35 @@ async fn dispatch_inner(
                         && !outcome.hits.is_empty();
 
                     let mode = format!("{:?}", outcome.mode).to_lowercase();
-                    let rows: Vec<ViewRow> = outcome
+                    let mut rows: Vec<ViewRow> = outcome
                         .hits
                         .iter()
                         .cloned()
                         .map(ViewRow::from_hit)
                         .collect();
+
+                    // A hit already carries its tier and its zone; salience, degree, when it was
+                    // last touched and whether somebody pinned it come from the same statement a
+                    // directory uses, keyed by id instead of by parent.
+                    let ids: Vec<cortex_core::ids::NodeId> =
+                        rows.iter().filter_map(|r| r.node_id).collect();
+                    let columns =
+                        cortex_store::memory_columns::for_nodes(&daemon.store, &ids)
+                            .unwrap_or_default();
+                    for row in &mut rows {
+                        if let Some(c) = row.node_id.and_then(|id| columns.get(&id)) {
+                            cortex_core::view::attach_memory(
+                                row,
+                                c.node_id,
+                                c.tier,
+                                c.salience,
+                                c.pinned,
+                                c.zone_id,
+                                c.degree,
+                                c.last_episode,
+                            );
+                        }
+                    }
                     let total = rows.len() as u64;
                     let answer = View {
                         basis: view::basis_for_query(&text, &mode, total, refining),

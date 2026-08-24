@@ -58,6 +58,10 @@ test.describe("the Agent Inspector without a mouse", () => {
   }) => {
     await page.setViewportSize({ width: 900, height: 700 });
     await page.goto("/harness.html?at=/&hits=20");
+    // The application before the keystroke: a press that lands before React has attached its
+    // keydown listener is simply lost, and the failure reads as a broken panel thirty seconds
+    // later. See the note in `openMemoryTab`.
+    await page.waitForSelector(".hc-row");
 
     await page.keyboard.press("Control+Shift+A");
     await page.waitForSelector(".hc-inspector");
@@ -85,6 +89,7 @@ test.describe("the Agent Inspector without a mouse", () => {
   test("a button does what it says when it is pressed rather than clicked", async ({ page }) => {
     await page.setViewportSize({ width: 900, height: 700 });
     await page.goto("/harness.html?at=/&hits=20");
+    await page.waitForSelector(".hc-row");
     await page.keyboard.press("Control+Shift+A");
     await page.waitForSelector(".hc-inspector");
 

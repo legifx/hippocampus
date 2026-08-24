@@ -14,6 +14,7 @@ pub mod chunks;
 pub mod embeddings;
 pub mod graph;
 pub mod memories;
+pub mod memory_columns;
 pub mod memory;
 pub mod error;
 pub mod migrations;

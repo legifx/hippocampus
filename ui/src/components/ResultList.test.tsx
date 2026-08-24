@@ -118,10 +118,10 @@ describe("ResultList", () => {
     expect(names).toEqual(["notes-2.md", "notes-0.md", "notes-1.md"]);
   });
 
-  it("marks a cold result so the tiering model is legible", () => {
+  it("marks a cold result as brightness rather than as a word", () => {
     withViewport(VIEWPORT);
     const cold = sampleRows(1).map((r) => ({ ...r, tier: "cold" }));
-    render(
+    const { container } = render(
       <ResultList
         rows={cold}
         cursor={0}
@@ -135,7 +135,12 @@ describe("ResultList", () => {
         selectedPaths={[]}
       />,
     );
-    expect(screen.getByText("cold")).toBeTruthy();
+    // M10 §4.4: tier is brightness everywhere except the view that is about tiers. The badge
+    // this test used to assert said "cold" on one row in fifty and said nothing about the other
+    // forty-nine; the encoding now carries every tier, and it is the one the 3D view uses.
+    expect(screen.queryByText("cold")).toBeNull();
+    const row = container.querySelector(".hc-row");
+    expect(row?.getAttribute("data-tier")).toBe("cold");
   });
 
   it("says so when there is nothing, rather than showing an empty box", () => {
