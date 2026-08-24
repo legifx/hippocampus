@@ -1675,6 +1675,47 @@ direction is therefore reversed — embeddings and reranking stay local. Recorde
 
 ---
 
+## Driving it by hand, and the four things that found
+
+Ten minutes at the command line against a real daemon, after every test was green. It found four
+defects, and none of them was reachable from a unit test.
+
+**1. A memory about "every commit" was not returned for the task "committing a change."** The
+tokeniser folds case and diacritics and does nothing else, so `commit` and `committing` are
+unrelated tokens. With an embedding model the semantic arm covers it — and R5 means a fresh
+install has no model, so a context tool that only works after a download is one that does not
+work on the day somebody tries it. Task terms of seven characters or more now also match a
+sixty-per-cent prefix of themselves: `commit`* for `committing`, `reposi`* for `repository`,
+`Umbene`* for `Umbenennung`. Short words are left alone, where truncation would make a wildcard
+matching most of the store. It over-matches on purpose — `commit`* also finds `committee` — and
+the trade is not symmetric: one extra slot in a ranked list against never seeing the memory that
+answered the question.
+
+**2. A human could not correct an agent.** The guard that stops a client retrying a failed call
+from doubling its own vote was written as "refuse any second report on a pack item", which also
+silenced the human — the exact opposite of the weighting D76 is about. Watching a `noise` report
+from a person land on a memory an agent had called helpful, and nothing happen, is what showed
+it. They are two properties and they need two rules: the same *class* of reporter may not report
+twice, and a human may overrule an agent. A correction reverses the agent's weighted delta and
+its count before applying the human's, so the Inspector does not go on showing a "helped" that
+the human has already contradicted.
+
+**3. The CLI defaulted every write to `global`, even for an agent.** The flag's default was set
+once, for a person typing at a terminal who has no agent scope — and it applied just as happily
+to `cortex --as claude remember`, which silently widened exactly what the scope rules exist to
+keep narrow. The default follows who is speaking now.
+
+**4. `cortex rebuild` waited forever when extraction was switched off.** Not an M11 defect and
+it was found by M11 work: the progress loop polls until `pending` reaches zero, and a queue
+nothing drains never gets there. No content root is the *default* configuration, so this is the
+first thing a new user would have hit. It stops and says so.
+
+**And R10 verified against a live daemon rather than only in a test.** Six memories including a
+supersession chain and a human's deletion, `cortex rebuild`, and the two listings compare
+identical — with the deleted one still deleted. The daemon logged `memory layer replayed from
+the episode log memories=8`: six writes, one supersession and one deletion, all of them
+assertions.
+
 ## The M11 benchmark, and the two things it found
 
 Written after the implementation rather than before it, which is the wrong way round and is

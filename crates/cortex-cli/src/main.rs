@@ -77,11 +77,14 @@ enum Command {
         no_rerank: bool,
     },
     /// Say why a file ranked where it did for a query — or why it did not appear.
+    ///
+    /// Also takes a node id, which is the only way to name a memory: a memory has no path,
+    /// and explaining one says what it has earned rather than where it ranked.
     Explain {
-        /// The query, exactly as it would be searched.
+        /// The query, exactly as it would be searched. Ignored for a memory.
         query: String,
-        /// The file to explain.
-        target: std::path::PathBuf,
+        /// A path, or a numeric node id.
+        target: String,
     },
     /// Show how far content extraction has got.
     Extract {
@@ -170,10 +173,14 @@ enum Command {
         text: String,
         #[arg(long, default_value = "observation")]
         kind: String,
-        /// session | agent | project | global. On the command line the default is `global`,
-        /// because a person typing this has no agent scope to write into.
-        #[arg(long, default_value = "global")]
-        scope: String,
+        /// session | agent | project | global.
+        ///
+        /// The default follows who is speaking: `agent` when `--as` names one, `global`
+        /// otherwise. A person typing this has no agent scope to write into; an agent does,
+        /// and defaulting *its* writes to global would widen them silently, which is the one
+        /// thing the scope rules exist to prevent.
+        #[arg(long)]
+        scope: Option<String>,
         /// The file this is about.
         #[arg(long)]
         about: Option<std::path::PathBuf>,
@@ -677,19 +684,26 @@ async fn run(args: Args) -> Result<()> {
         }
 
         Command::Explain { query, target } => {
-            let path = target
-                .canonicalize()
-                .unwrap_or(target)
-                .display()
-                .to_string();
+            let (path, id) = match parse_target(&target) {
+                Target::Node(id) => (None, Some(cortex_core::ids::NodeId(id))),
+                Target::Path(path) => (
+                    Some(
+                        path.canonicalize()
+                            .unwrap_or(path)
+                            .display()
+                            .to_string(),
+                    ),
+                    None,
+                ),
+            };
             let result: SearchExplainResult = client
                 .call(
                     method::SEARCH_EXPLAIN,
                     SearchExplainParams {
                         query,
                         mode: Default::default(),
-                        path: Some(path.clone()),
-                        id: None,
+                        path: path.clone(),
+                        id,
                         prefix: None,
                     },
                 )
@@ -697,7 +711,19 @@ async fn run(args: Args) -> Result<()> {
 
             if args.json {
                 print_json(&result)?;
+            } else if let Some(memory) = &result.memory {
+                // A memory does not compete with files for a place in a result list, so the
+                // ranking lines below would all be "did not appear" and would say nothing.
+                println!("memory {}", memory.node_id);
+                println!("  {}", memory.text);
+                for reason in &result.reasons {
+                    println!("  · {reason}");
+                }
             } else {
+                let path = path.unwrap_or_else(|| match id {
+                    Some(id) => format!("node {id}"),
+                    None => "?".to_string(),
+                });
                 println!("{path}");
                 println!("  query      {:?} ({} mode)", result.query, mode_name(result.mode));
                 if let Some(expression) = &result.expression {
@@ -976,6 +1002,18 @@ async fn run(args: Args) -> Result<()> {
                         println!("extraction complete: {} chunks", status.chunks);
                         break;
                     }
+                    // Extraction that is switched off never drains its queue, and waiting for
+                    // it to is waiting forever. Found by running `rebuild` against an index
+                    // with no content root — which is the default configuration, so this is the
+                    // first thing a new user would have hit.
+                    if !status.enabled {
+                        println!(
+                            "\r{} file(s) are queued but no content root is configured, so \
+                             nothing will extract them   ",
+                            status.pending
+                        );
+                        break;
+                    }
                     print!("\r  {} files left to extract   ", status.pending);
                     use std::io::Write;
                     let _ = std::io::stdout().flush();
@@ -1055,14 +1093,17 @@ async fn run(args: Args) -> Result<()> {
         }
 
         Command::Remember { text, kind, scope, about, confidence, supersedes } => {
-            let scope = match scope.as_str() {
-                "session" => ScopeRequest::Session,
-                "agent" => ScopeRequest::Agent,
-                "project" => ScopeRequest::Project,
-                "global" => ScopeRequest::Global,
-                other => anyhow::bail!(
+            let scope = match scope.as_deref() {
+                Some("session") => ScopeRequest::Session,
+                Some("agent") => ScopeRequest::Agent,
+                Some("project") => ScopeRequest::Project,
+                Some("global") => ScopeRequest::Global,
+                Some(other) => anyhow::bail!(
                     "{other} is not a scope; it is one of session, agent, project, global"
                 ),
+                // Whoever is speaking gets the narrowest scope that can hold it.
+                None if args.actor.is_some() => ScopeRequest::Agent,
+                None => ScopeRequest::Global,
             };
             let result: RememberResult = client
                 .call(
