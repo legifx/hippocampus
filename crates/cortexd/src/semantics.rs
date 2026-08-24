@@ -220,7 +220,7 @@ impl Semantics {
             }
         };
 
-        let path = self.state_dir.join("vectors.usearch");
+        let path = cortex_core::paths::vector_index_in(&self.state_dir);
         let vectors = match VectorIndex::open(&path, dim) {
             Ok(index) => Arc::new(index),
             Err(e) => {
@@ -229,7 +229,7 @@ impl Semantics {
                 return Err(note);
             }
         };
-        let memory_path = self.state_dir.join("memories.usearch");
+        let memory_path = cortex_core::paths::memory_vector_index_in(&self.state_dir);
         let memory_vectors = match VectorIndex::open(&memory_path, dim) {
             Ok(index) => Arc::new(index),
             Err(e) => {

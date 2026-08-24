@@ -1702,15 +1702,19 @@ the specification lists things, and the call site belonged to a different layer 
 earlier or later. The tests were written at the same moment as the function and therefore called
 it directly, which is exactly the shape that cannot catch this.
 
-**The cheap defence, and it is genuinely cheap:** for every public function added to a layer,
-grep for a caller outside its own file before the commit. Three of these four were found in about
-a minute by
+**The cheap defence, and it is genuinely cheap:** `scripts/uncalled.sh`, which is that grep with
+its lessons in the header. Three of these four came out of it in about a minute.
 
-```sh
-for f in $(grep -o "pub fn [a-z_]*" crates/cortex-store/src/memories.rs | sed 's/pub fn //' | sort -u); do
-  printf '%s %s\n' "$(grep -rl "\.$f(" crates/ bench/ --include=*.rs | grep -vc memories.rs)" "$f"
-done | sort -n | head
-```
+Two things about it are worth knowing before running it. The first version matched only `.f(`
+and `::f(`, so it missed every function imported with `use` and called by its bare name — it
+reported a clean sweep over four crates that in fact had sixteen candidates in them. **A tool
+that finds nothing is indistinguishable from a codebase with nothing to find**, which is the
+same failure this whole section is about, one level up.
+
+The second is that it is a prompt and not a verdict, and the header says so: a query helper whose
+only user is a test assertion is test infrastructure, something reached through a trait or
+`serde` has no call site to find, and a library crate's public API may be called from outside
+this tree. Sorting the list is the work; producing it is the easy part.
 
 Running that sweep over the whole of M11 afterwards found four more, and sorting them was the
 useful part. **The rule is not "delete everything with no production caller"** — a query helper

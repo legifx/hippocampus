@@ -18,6 +18,22 @@ pub struct Paths {
     runtime_dir: PathBuf,
 }
 
+/// Where the file collection lives, given a state directory.
+///
+/// A free function beside the method because the daemon's semantics layer holds a state
+/// directory rather than a [`Paths`], and it had `state_dir.join("vectors.usearch")` written out
+/// again — two places that have to agree about a filename and no way to notice when they stop.
+/// Rule R4 is about where the index lives; a location spelled twice is a location that moves
+/// halfway.
+pub fn vector_index_in(state_dir: &std::path::Path) -> PathBuf {
+    state_dir.join("vectors.usearch")
+}
+
+/// The same, for the memory collection.
+pub fn memory_vector_index_in(state_dir: &std::path::Path) -> PathBuf {
+    state_dir.join("memories.usearch")
+}
+
 impl Paths {
     /// Resolve from the environment, honouring `XDG_*` variables.
     pub fn from_env() -> Result<Self> {
@@ -86,13 +102,21 @@ impl Paths {
     }
 
     /// The ANN index. Rebuildable from the database, so it is safe to delete.
+    ///
+    /// `scripts/uncalled.sh` reports this and its neighbours as having no caller outside this
+    /// file, and that is the third shape its header describes rather than a finding: these
+    /// methods are the *description of the layout*, asserted whole by
+    /// `every_artefact_lives_under_a_directory_we_own`. Production reaches the two vector
+    /// indexes through the free functions above, because the layer that opens them holds a
+    /// state directory rather than a `Paths` — and the free functions are the single definition
+    /// of the filename, which is the thing that actually mattered.
     pub fn vector_index(&self) -> PathBuf {
-        self.state_dir.join("vectors.usearch")
+        vector_index_in(&self.state_dir)
     }
 
     /// The ANN index over memory chunks. A second collection, same format, same rebuild path.
     pub fn memory_vector_index(&self) -> PathBuf {
-        self.state_dir.join("memories.usearch")
+        memory_vector_index_in(&self.state_dir)
     }
 
     pub fn models_dir(&self) -> PathBuf {
@@ -164,6 +188,26 @@ pub fn restrict_file(path: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    /// The two places that name the vector index agree, because there is one place.
+    ///
+    /// This was two: `Paths::vector_index` and, in the daemon's semantics layer,
+    /// `state_dir.join("vectors.usearch")` written out again. Nothing would have failed if one
+    /// of them changed — the daemon would have opened an index nothing else could find, built
+    /// it from the table, and answered searches correctly from a file the rebuild command does
+    /// not know about.
+    #[test]
+    fn the_vector_indexes_are_named_in_exactly_one_place() {
+        let dir = std::path::Path::new("/tmp/state");
+        let paths = Paths {
+            config_dir: dir.to_path_buf(),
+            state_dir: dir.to_path_buf(),
+            runtime_dir: dir.to_path_buf(),
+        };
+        assert_eq!(paths.vector_index(), super::vector_index_in(dir));
+        assert_eq!(paths.memory_vector_index(), super::memory_vector_index_in(dir));
+        assert_ne!(paths.vector_index(), paths.memory_vector_index());
+    }
+
     use super::*;
 
     #[cfg(unix)]
