@@ -147,7 +147,7 @@ function PlaceRow({
           daemon deliberately does not make it. */}
       {place.kind === "network" && place.device && (
         <span className="hc-place-space hc-meta">
-          <span className="hc-faint">{place.device}</span>
+          <span className="hc-faint hc-place-address">{place.device}</span>
         </span>
       )}
 

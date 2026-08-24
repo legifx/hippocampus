@@ -304,7 +304,10 @@
 
 .hc-place {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
+  /* The name keeps a floor and the column beside it gives way. With `auto` there, a long
+     address — `server:/export/backup` is an ordinary one — took its full width and the name
+     collapsed to nothing: a row that shows where a share is and not what it is called. */
+  grid-template-columns: 16px minmax(6ch, 1fr) minmax(0, auto);
   align-items: center;
   gap: 10px;
   padding: 0 12px;
@@ -388,12 +391,32 @@
   align-items: center;
   gap: 8px;
   white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* The address under a share. It elides; the bar and the free-space figure beside a drive do not,
+   because half a bar is a wrong bar while half an address is still an address. */
+.hc-place-address {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The figures beside a drive keep their size; there is nothing to elide in "21.0 GB frei". */
+.hc-place-space .hc-num,
+.hc-place-space .hc-faint:not(.hc-place-address) {
+  flex: 0 0 auto;
 }
 
 /* "Nearly full" is the only thing anybody reads off a capacity, and a bar says it without
    being read. */
 .hc-place-bar {
   display: block;
+  /* Fixed, and told not to shrink: the column beside the name may now give way, and a bar that
+     gave way with it would be a bar reading the wrong number. */
+  flex: 0 0 56px;
   width: 56px;
   height: 4px;
   border-radius: 2px;

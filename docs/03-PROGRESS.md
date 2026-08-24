@@ -825,6 +825,14 @@ it, which is the part that would have been reimplemented slightly differently.
   milliseconds. Replaced with a test about the listing's order, which is what that layer actually
   decides.
 
+**And one the screenshot found, which no test would have.** With the share section in it, the
+places sidebar showed `server:/export/backup` and *no name at all* for that row: the row's third
+grid column was `auto`, so a long address took its full width and the name — the thing somebody
+reads — collapsed to nothing. The name column has a floor now and the address elides instead;
+the capacity bar is pinned at 56 px, because making that column shrinkable squashed it to a stub
+on the first attempt, and a bar that gives way is a bar showing the wrong number. Both are
+asserted, at 1200 px and at 400 px.
+
 **A note on measuring, again.** The Playwright perf suite failed once during this session on
 "a keystroke reaches a painted row well inside 80 ms" — while `cargo test --workspace` was using
 every core in the background. On an idle machine the full run is 154/154. A performance gate
