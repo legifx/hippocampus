@@ -1045,6 +1045,9 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* A flex container's own automatic minimum is min-content too, so a list of paths refuses to
+     shrink even when every path inside it can break. Nested containers each need saying. */
+  min-width: 0;
 }
 
 .hc-rows-dense {
@@ -1077,6 +1080,11 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: 4px;
+  /* A flex item's automatic minimum is its min-content width, so a refusal message naming a
+     long path refuses to shrink and pushes its row 166 px wide — the same trap the overlay's
+     own grid has a comment about, in a different element. */
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 /* A refused call is the one a person opens this panel to find. */
@@ -1113,7 +1121,11 @@
   overflow-wrap: anywhere;
 }
 
-.hc-facts {
+/* Deliberately not `.hc-facts`, which already exists and whose contract is one line with an
+   ellipsis. Reusing the name gave every allow-list path `white-space: nowrap` inherited from a
+   component built for something else, and the later rules could not override what they had not
+   thought to mention. A panel that wraps is a different thing from a sidebar that elides. */
+.hc-inspector-facts {
   margin: 0;
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
@@ -1121,12 +1133,28 @@
   font-size: 12.5px;
 }
 
-.hc-facts dt {
+.hc-inspector-facts dt {
   color: var(--hc-text-dim);
 }
 
-.hc-facts dd {
+.hc-inspector-facts dd {
   margin: 0;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* A path has no spaces to break at, so `overflow-wrap: anywhere` on the container is not
+   enough — the rule has to reach the element that holds the unbreakable run. An allow-list
+   entry pointing somewhere deep pushed its box 166 px wide at every width, which the layout
+   test found and nothing else would have. */
+.hc-inspector code {
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  min-width: 0;
+}
+
+.hc-inspector-facts dd .hc-rows li {
   min-width: 0;
   overflow-wrap: anywhere;
 }

@@ -454,7 +454,7 @@ function PolicyTab({
         <h2 className="hc-meta">Regeln</h2>
         {!status && <p className="hc-faint">…</p>}
         {status && (
-          <dl className="hc-facts">
+          <dl className="hc-inspector-facts">
             <dt>Agenten-Schnittstelle</dt>
             <dd className={status.enabled ? undefined : "hc-error"}>
               {status.enabled ? "an" : "aus — kein Agent-Aufruf wird beantwortet"}

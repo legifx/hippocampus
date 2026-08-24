@@ -203,3 +203,71 @@ test.describe("while nobody is looking", () => {
     await expect.poll(asked).toBeGreaterThan(before);
   });
 });
+
+/**
+ * M11 §10: the Agent Inspector at every width M4 names.
+ *
+ * The panel is the newest thing in this window and the one most likely to overflow: it holds
+ * paths, memory text and a two-column split, and at 400 px there is no second column to split
+ * into. Measured in a browser for the same reason the rest of this file is — happy-dom has no
+ * box model to be wrong about.
+ */
+test.describe("the Agent Inspector holds its width", () => {
+  async function openInspector(page: Page, width: number, tab: string) {
+    await page.setViewportSize({ width, height: 700 });
+    await page.goto(`/harness.html?at=/&hits=50`);
+    await page.getByLabel("Agenten-Inspektor").click();
+    await page.getByRole("tab", { name: tab }).click();
+    await page.waitForSelector(".hc-inspector");
+  }
+
+  for (const width of WIDTHS) {
+    for (const tab of ["Live", "Gedächtnis", "Regeln"]) {
+      test(`${tab} does not overflow at ${width} px`, async ({ page }) => {
+        await openInspector(page, width, tab);
+        // Give the fixture's answers a frame to land, so the measurement is of a full panel.
+        await page.waitForTimeout(150);
+
+        const overflow = await page.evaluate(() => {
+          const panel = document.querySelector(".hc-inspector") as HTMLElement;
+          const rows = Array.from(
+            document.querySelectorAll(".hc-row-item, .hc-inspector-facts dd"),
+          ) as HTMLElement[];
+          return {
+            body: document.body.scrollWidth - document.body.clientWidth,
+            panel: panel.scrollWidth - panel.clientWidth,
+            widestRow: rows.length
+              ? Math.max(...rows.map((row) => row.scrollWidth - row.clientWidth))
+              : 0,
+          };
+        });
+
+        expect(overflow.body, `body overflows by ${overflow.body}px`).toBeLessThanOrEqual(0);
+        expect(overflow.panel, `the panel overflows by ${overflow.panel}px`).toBeLessThanOrEqual(0);
+        expect(
+          overflow.widestRow,
+          `a row overflows its own box by ${overflow.widestRow}px`,
+        ).toBeLessThanOrEqual(0);
+      });
+    }
+  }
+
+  test("Escape closes it and gives the window back", async ({ page }) => {
+    await openInspector(page, 900, "Live");
+    await page.keyboard.press("Escape");
+    expect(await page.locator(".hc-inspector").count()).toBe(0);
+    // And the search field has the caret again, which is what "gives the window back" means
+    // for a launcher: the next keystroke is a query and not a lost one.
+    const focused = await page.evaluate(() => document.activeElement?.getAttribute("aria-label"));
+    expect(focused).toBe("Suche");
+  });
+
+  test("the button and Ctrl+Shift+A are the same control", async ({ page }) => {
+    await page.setViewportSize({ width: 900, height: 700 });
+    await page.goto("/harness.html?at=/&hits=50");
+    await page.keyboard.press("Control+Shift+A");
+    await page.waitForSelector(".hc-inspector");
+    await page.keyboard.press("Control+Shift+A");
+    expect(await page.locator(".hc-inspector").count()).toBe(0);
+  });
+});

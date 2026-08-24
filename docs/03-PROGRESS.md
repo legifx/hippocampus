@@ -1686,12 +1686,12 @@ partial in ways worth reading rather than in ways worth rounding up.
 | 2 | `rebuild` reproduces a byte-identical dump including supersession, deletion and what a memory earned | **met in shape, not at the stated scale** — see below |
 | 3 | The budget is honoured at 512, 2 048 and 8 192 tokens over 5 000 memories | **met** — asserted inside the benchmark loop, not only in its report |
 | 4 | `brain.context` P95 under 120 ms | **met** — 8.97 ms, a factor of thirteen |
-| 5 | MMR at λ 0.7 beats λ 1.0 on duplicates without losing distinct facts | **asserted, not quantified** — see below |
+| 5 | MMR at λ 0.7 beats λ 1.0 on duplicates without losing distinct facts | **met** — 4 restatements and 1 distinct fact at λ 1.0, against 2 and 3 at λ 0.7 |
 | 6 | The learning signal moves the ranking in all three directions | **met**, including the counter-intuitive one |
 | 7 | Scope isolation per surface; no unrequested promotion to `global` | **met** — and the CLI's default had to be fixed to make the second half true |
 | 8 | Supersession: absent, present with history, detected without deciding | **met** |
 | 9 | The kill switch reaches every memory tool | **met** — asserted per tool over the socket |
-| 10 | The Inspector renders at 400 px, costs under 1 % of a core, and gives the window back | **partly — the cost is not measured** |
+| 10 | The Inspector renders at 400 px, costs under 1 % of a core, and gives the window back | **partly — the width and the give-back are measured; the cost is not** |
 | 11 | A human's deletion is immediate and survives a rebuild | **met**, live as well as in a test |
 | 12 | A real task, twice, by a human, measurably better the second time | **not done — this one needs the owner** |
 
@@ -1701,15 +1701,35 @@ a supersession chain, a deletion, and earned usefulness including a correction �
 that is lost is lost at any scale. A thousand would measure the rebuild's cost, which is a
 different question and does not have a budget yet.
 
-**§5's numbers.** The test asserts *strictly fewer* duplicates at λ 0.7 than at λ 1.0 with no
-loss of distinct facts, which is the property. It does not record the two counts, and the
-criterion asks for both to be recorded. Cheap to add; not added.
+**§5's numbers, now recorded.** On a seeded store of five restatements of one fact and three
+distinct facts, at a 200-token budget:
 
-**§10's cost.** The panel does not poll while it is shut and does not poll a tab that is not
-showing, and both are asserted. Nothing has measured what it costs while the Live tab streams.
-This project has a recorded case of a hidden window burning a full core that no amount of reading
-the code would have shown (D59), and the cgroup snippet at the top of this file is how to settle
-it in thirty seconds. Nobody has run it against this panel.
+| | restatements kept | distinct facts kept |
+|---|---|---|
+| λ = 1.0, pure relevance | 4 | 1 |
+| λ = 0.7 | 2 | 3 |
+
+Both pairs are pinned in the test rather than only compared, so a change that makes
+diversification more or less aggressive has to edit that line and say why. Two restatements
+rather than one is worth noticing: λ 0.7 is a trade-off and not a deduplicator, and the second
+copy costing a slot is the price of not dropping something that only *looked* like a copy.
+
+**§10, in two halves.** The width half is measured now: fourteen Playwright cases open the panel
+at 400, 600, 900 and 1400 px on three tabs and assert that neither the body, nor the panel, nor
+any row overflows its own box — plus Escape returning the caret to the search field, and the
+button and `Ctrl+Shift+A` being one control. **Those tests found a real overflow at every width**:
+the panel reused the existing `.hc-facts` class, whose contract is one line with an ellipsis, so
+every allow-list path inherited `white-space: nowrap` and pushed its box 166 px wide. Three
+attempts to fix it with `overflow-wrap` and `min-width` failed because they never mentioned the
+property that was actually wrong. The panel has its own class now — a panel that wraps is a
+different thing from a sidebar that elides.
+
+The cost half is still not measured. The panel does not poll while it is shut and does not poll a
+tab that is not showing, and both are asserted. Nothing has measured what it costs while the
+Live tab streams. This project has a recorded case of a hidden window burning a full core that no
+amount of reading the code would have shown (D59), and the cgroup snippet at the top of this file
+settles it in thirty seconds — **but it needs the window open, and the owner has asked not to
+have windows appear unasked.** It is theirs to run.
 
 **Two more gaps that are not Definition-of-Done items and matter anyway:**
 

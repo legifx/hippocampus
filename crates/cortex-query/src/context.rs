@@ -982,6 +982,21 @@ mod tests {
                 .count()
         };
 
+        // The Definition of Done asks for both numbers to be recorded, not only for the
+        // inequality to hold — so they are pinned here. A change that makes diversification
+        // more or less aggressive should have to edit this line and say why.
+        assert_eq!(
+            (duplicates(&greedy), distinct(&greedy)),
+            (4, 1),
+            "the greedy pack changed shape; λ = 1.0 is pure relevance and spends its slots on \
+             restatements"
+        );
+        assert_eq!(
+            (duplicates(&diverse), distinct(&diverse)),
+            (2, 3),
+            "the diversified pack changed shape; λ = 0.7 should keep the fact once and spend \
+             the rest on the distinct ones"
+        );
         assert!(
             duplicates(&diverse) < duplicates(&greedy),
             "diversification kept {} restatements against {}",

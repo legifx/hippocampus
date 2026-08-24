@@ -348,6 +348,75 @@ setTransport({
         } as T;
       case "mark_interactive":
         return 90 as T;
+
+      // The Agent Inspector. Enough shape for the layout tests to measure a full panel — a
+      // memory long enough to threaten a 400 px column, a session with a task, and a refused
+      // call — and no more: what the panel *does* with these is asserted in vitest against its
+      // own fixture, and this one exists to be laid out.
+      case "agent_sessions":
+        return {
+          sessions: [
+            {
+              id: "s-1",
+              name: "claude",
+              task: "tidy a directory whose name is long enough to threaten a narrow column",
+              started_at: 1_700_000_000,
+              calls: 42,
+              refusals: 3,
+              memories: 7,
+            },
+          ],
+          open: 1,
+          basis: "the 1 most recent agent sessions, newest first; 1 still running",
+        } as T;
+      case "audit_recent": {
+        const refused = args?.refusedOnly === true;
+        return {
+          entries: Array.from({ length: refused ? 3 : 20 }, (_, i) => ({
+            id: i + 1,
+            ts: 1_700_000_000 - i * 30,
+            actor: "agent:claude",
+            tool: refused ? "fs.write" : "brain.context",
+            args_json: "{}",
+            result_summary: refused
+              ? "/home/user/elsewhere/deeply/nested/file.txt is not inside the write allow-list"
+              : `${i + 3} items, 1840 of 2048 tokens`,
+            allowed: !refused,
+          })),
+        } as T;
+      }
+      case "agent_status":
+        return {
+          enabled: true,
+          indexing_paused: false,
+          write_allowlist: ["/home/user/Projects/a-directory-with-a-long-name/scratch"],
+          require_dry_run: true,
+        } as T;
+      case "memories":
+        return {
+          memories: Array.from({ length: 30 }, (_, i) => ({
+            node_id: i + 1,
+            scope: i % 3 === 0 ? { kind: "global" } : { kind: "agent", id: "claude" },
+            kind: ["fact", "preference", "procedure", "decision", "failure", "observation"][i % 6],
+            text:
+              `memory ${i}: a sentence long enough to threaten the layout of a narrow column, ` +
+              "with no spaces-free run in it that could be blamed instead",
+            confidence: 0.5,
+            usefulness: i % 4 === 0 ? -0.15 : 0.35,
+            helped_count: i % 4 === 0 ? 0 : 1,
+            noise_count: i % 4 === 0 ? 2 : 0,
+            retrieved_count: i,
+            human_confirmed: i % 5 === 0,
+            superseded_by: i % 7 === 0 ? 99 : undefined,
+            actor: "agent:claude",
+            ts: 1_700_000_000 - i * 600,
+            salience: 0.2,
+            pinned: false,
+          })),
+          basis: "every memory in the index, in every scope, including superseded and expired ones",
+        } as T;
+      case "brain_diff":
+        return { changes: [], cursor: 1, more: false } as T;
       default:
         return null as T;
     }
