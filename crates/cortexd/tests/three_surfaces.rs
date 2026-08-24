@@ -135,6 +135,39 @@ impl Daemon {
         serde_json::from_slice(&output.stdout).expect("the CLI printed JSON")
     }
 
+    /// One MCP tool call, with the envelope left on — the text block and the structured
+    /// content, rather than only the latter.
+    fn mcp_raw(&self, tool: &str, arguments: Value) -> Value {
+        let mut child = Command::new(bin("cortex-mcp"))
+            .arg("--root")
+            .arg(self.root())
+            .arg("--actor")
+            .arg("surfaces")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("cortex-mcp starts");
+        {
+            let stdin = child.stdin.as_mut().unwrap();
+            for request in [
+                json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}),
+                json!({"jsonrpc":"2.0","id":2,"method":"tools/call",
+                       "params":{"name": tool, "arguments": arguments}}),
+            ] {
+                writeln!(stdin, "{request}").unwrap();
+            }
+        }
+        let output = child.wait_with_output().unwrap();
+        for line in output.stdout.lines() {
+            let value: Value = serde_json::from_str(&line.unwrap()).unwrap();
+            if value.get("id") == Some(&json!(2)) {
+                return value["result"].clone();
+            }
+        }
+        panic!("cortex-mcp answered no tools/call");
+    }
+
     /// What an MCP client is told when it connects.
     fn mcp_initialize(&self) -> Value {
         let mut child = Command::new(bin("cortex-mcp"))
@@ -500,14 +533,17 @@ fn a_memory_written_once_is_returned_by_every_surface() {
     assert_eq!(items(&over_socket), items(&over_cli), "the CLI differed");
     assert_eq!(items(&over_socket), items(&over_mcp), "MCP differed");
 
+    // Absent means zero: the basis omits the counts nobody has moved yet, because "helped 0,
+    // noise 0, retrieved 0" on every item of every pack on a fresh install is the absence of an
+    // argument rather than one. The first call therefore has no `retrieved` field at all.
     let retrieved = |pack: &Value| -> u64 {
-        pack["items"]
+        let item = pack["items"]
             .as_array()
             .unwrap()
             .iter()
             .find(|item| item["node_id"].as_i64() == Some(memory_id))
-            .and_then(|item| item["basis"]["retrieved"].as_u64())
-            .expect("the memory is in the pack")
+            .expect("the memory is in the pack");
+        item["basis"]["retrieved"].as_u64().unwrap_or(0)
     };
     assert!(
         retrieved(&over_mcp) > retrieved(&over_socket),
@@ -596,6 +632,59 @@ fn a_session_counts_the_calls_and_the_refusals_that_belong_to_it() {
         "the refusal was not counted, and a refusal is the interesting half"
     );
     assert_eq!(mine["memories"].as_i64(), Some(0), "memories are scoped to the session that writes them, and these were global-scoped without a session_id");
+}
+
+/// A pack costs its budget once, not four times.
+///
+/// An MCP result carries the answer twice — pretty-printed as a text block, and verbatim as
+/// structured content — and the pack used to carry its own text twice as well, in `rendered`
+/// and in an item beside it. Four copies of every memory, for a feature whose entire purpose is
+/// a token budget.
+///
+/// The numbers are asserted as ratios rather than as byte counts, because the fixture's content
+/// will change and the property will not.
+#[test]
+fn a_context_pack_does_not_send_its_text_four_times() {
+    let daemon = Daemon::start();
+    for text in [
+        "the hygiene gate runs before every commit and must not be skipped",
+        "the reference corpus is generated from a seed and never checked in",
+        "the thumbnailer runs in its own process so a bad image cannot take the daemon down",
+    ] {
+        daemon.rpc("brain.remember", json!({ "text": text, "kind": "fact", "scope": "global" }));
+    }
+
+    let raw = daemon.mcp_raw("brain_context", json!({ "task": "committing a change", "budget_tokens": 2048 }));
+    let rendered = raw["structuredContent"]["rendered"].as_str().unwrap_or("");
+    assert!(rendered.contains("hygiene gate"), "the fixture found nothing: {raw}");
+
+    // The text block is the rendered pack itself, not a pretty-printed copy of the whole answer.
+    let block = raw["content"][0]["text"].as_str().unwrap_or("");
+    assert_eq!(block, rendered, "the text block is not the pack the daemon composed");
+
+    // And no item repeats what `rendered` already says.
+    let items = raw["structuredContent"]["items"].as_array().unwrap();
+    assert!(!items.is_empty());
+    for item in items {
+        assert!(
+            item.get("text").is_none(),
+            "an item carries the text that `rendered` already carries: {item}"
+        );
+        // What it does carry is what a caller needs to report on it and to argue with it.
+        assert!(item.get("node_id").is_some());
+        assert!(item.get("basis").is_some());
+    }
+
+    // The exact property, rather than a ratio that depends on how long the fixture's sentences
+    // happen to be: one memory's text appears **twice** in the whole answer — once in the block
+    // a model reads, once in the structured copy a client can act on — and not four times.
+    let whole = serde_json::to_string(&raw).unwrap();
+    let occurrences = whole.matches("hygiene gate").count();
+    assert_eq!(
+        occurrences, 2,
+        "a memory's text appears {occurrences} times in one answer; it should appear in the \
+         text block and in the structured copy, and nowhere else"
+    );
 }
 
 /// The first thing an agent reads names the tool it should call first.

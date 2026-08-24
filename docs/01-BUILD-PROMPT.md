@@ -719,6 +719,13 @@ Every item carries a **basis**: which arm retrieved it, its score components, an
 (who wrote it, when, from which episode). This is `brain.explain` per item, and it is mandatory —
 a memory an agent cannot attribute is a memory it cannot argue with.
 
+**The text appears once.** The rendered block is the deliverable; the items beside it carry the
+id, the arm, the kind, the scope and the basis, and *not* the text the block already holds. An
+MCP result carries the whole answer twice on its own — pretty-printed for a model, verbatim as
+structured content — so a pack that also repeated itself internally cost four copies of every
+memory. A feature whose entire purpose is a token budget cannot be four times over it, and a
+basis omits every count that is still zero for the same reason.
+
 The pack has a `pack_id`, and the budget is honoured by **measured tokens, not by an estimate of
 characters divided by four**. A budget that is wrong in the agent's favour wastes money and a
 budget that is wrong the other way truncates a system prompt at a byte boundary.

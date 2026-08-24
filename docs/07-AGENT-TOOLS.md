@@ -19,7 +19,11 @@ claude mcp add hippocampus -- /path/to/cortex-mcp --actor claude
 ## Start here: the four that carry the weight
 
 **`brain_context(task, budget_tokens)`** — the tool to reach for at the start of a task, before
-you are stuck rather than after. Everything else on this page exists so that what it returns can
+you are stuck rather than after. **Read the text block; it is the pack.** The structured content
+beside it carries the same items *without* their text — an id, an arm, a kind, a scope and a
+basis each — so that you can report an outcome and argue with a memory without paying for its
+words a second time. A pack that spent its budget four times over would be a pack that does not
+have one. Everything else on this page exists so that what it returns can
 be corrected, attributed or improved. It answers with a block fitted to a token budget:
 preferences that always apply, what the human has open right now, the memories that bear on the
 task, and the files those memories are about. Each item carries who wrote it, when, and which

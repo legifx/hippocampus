@@ -351,16 +351,38 @@ pub struct Basis {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub semantic_rank: Option<u32>,
     pub fused: f64,
+    // Everything below is omitted when it is zero, and absent means zero. A memory nobody has
+    // reported on yet — which on a fresh install is every memory — carried five fields saying
+    // so, on every item of every pack. The basis is there to be argued with, and "helped: 0,
+    // noise: 0, retrieved: 0" is not an argument, it is the absence of one.
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub salience: f64,
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub usefulness: f64,
     pub confidence: f64,
     /// Who wrote it, and when. A memory an agent cannot attribute is one it cannot argue with.
     pub actor: String,
     pub written_at: i64,
+    #[serde(default, skip_serializing_if = "is_zero_count")]
     pub helped: i64,
+    #[serde(default, skip_serializing_if = "is_zero_count")]
     pub noise: i64,
+    #[serde(default, skip_serializing_if = "is_zero_count")]
     pub retrieved: i64,
+    #[serde(default, skip_serializing_if = "is_false")]
     pub human_confirmed: bool,
+}
+
+fn is_zero(value: &f64) -> bool {
+    *value == 0.0
+}
+
+fn is_zero_count(value: &i64) -> bool {
+    *value == 0
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -371,6 +393,20 @@ pub struct PackItem {
     pub kind: Option<MemoryKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<MemoryScope>,
+    /// The memory itself — **not sent on the wire**, because `rendered` already carries it.
+    ///
+    /// A pack exists to fit inside a token budget, and it was spending that budget twice: once
+    /// in `rendered`, which is the deliverable, and once again in an item beside it. An MCP
+    /// client then receives the whole answer twice more — pretty-printed as a text block and
+    /// verbatim as structured content — so a 2 048-token budget cost an agent something closer
+    /// to eight thousand. A feature whose entire purpose is a budget cannot be four times over
+    /// it.
+    ///
+    /// The field stays in the struct because [`super::memory::ContextPack`]'s renderer needs it
+    /// on the way out, and it is skipped on the way to anybody. What a caller gets per item is
+    /// what it needs to *report* on and to *explain*: the id, the arm, the kind, the scope, the
+    /// path and the basis.
+    #[serde(skip)]
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<std::path::PathBuf>,
