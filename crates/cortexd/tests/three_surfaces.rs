@@ -135,6 +135,37 @@ impl Daemon {
         serde_json::from_slice(&output.stdout).expect("the CLI printed JSON")
     }
 
+    /// What an MCP client is told when it connects.
+    fn mcp_initialize(&self) -> Value {
+        let mut child = Command::new(bin("cortex-mcp"))
+            .arg("--root")
+            .arg(self.root())
+            .arg("--actor")
+            .arg("surfaces")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("cortex-mcp starts");
+        {
+            let stdin = child.stdin.as_mut().unwrap();
+            writeln!(
+                stdin,
+                "{}",
+                json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})
+            )
+            .unwrap();
+        }
+        let output = child.wait_with_output().unwrap();
+        for line in output.stdout.lines() {
+            let value: Value = serde_json::from_str(&line.unwrap()).unwrap();
+            if value.get("id") == Some(&json!(1)) {
+                return value["result"].clone();
+            }
+        }
+        panic!("cortex-mcp answered no initialize");
+    }
+
     /// Surface three: MCP over stdio, driven the way a client drives it.
     fn mcp(&self, tool: &str, arguments: Value) -> Value {
         let mut child = Command::new(bin("cortex-mcp"))
@@ -504,6 +535,30 @@ fn a_memory_written_once_is_returned_by_every_surface() {
         .expect("the memory is in the MCP pack too");
     assert_eq!(item["basis"]["actor"], json!("agent:surfaces"));
     assert!(item["basis"]["lexical_rank"].as_u64().is_some());
+}
+
+/// The first thing an agent reads names the tool it should call first.
+///
+/// Not a style check. The instructions block is the only place to tell an agent what to do
+/// *before* it is stuck, and it said nothing about the memory the agent now has — which made
+/// discovering the one tool that matters a matter of reading twenty descriptions and guessing.
+#[test]
+fn the_mcp_instructions_say_what_to_call_first_and_last() {
+    let daemon = Daemon::start();
+    let hello = daemon.mcp_initialize();
+    let instructions = hello["instructions"].as_str().unwrap_or("");
+
+    for expected in ["brain_context", "brain_outcome", "brain_remember"] {
+        assert!(
+            instructions.contains(expected),
+            "an agent reading this would not know about {expected}: {instructions}"
+        );
+    }
+    // And the property that is easy to leave out and is the whole of the learning signal.
+    assert!(
+        instructions.contains("noise"),
+        "the instructions ask for outcomes without saying that a negative one is worth having"
+    );
 }
 
 /// Pattern completion reaches what an agent learned, not only the files it learned about.

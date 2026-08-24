@@ -145,13 +145,37 @@ async fn handle(client: &mut Client, method_name: &str, params: Value) -> Result
                 "name": "hippocampus-cortex",
                 "version": env!("CARGO_PKG_VERSION"),
             },
+            // The first thing an agent reads, and the only place to say what to do *before* it
+            // is stuck rather than after. It said nothing about the memory the agent now has,
+            // which meant discovering `brain_context` was a matter of reading twenty tool
+            // descriptions and guessing which one mattered.
+            //
+            // Deliberately short and in the imperative. An instructions block that explains the
+            // architecture is a block that gets skimmed; this one says what to call first, what
+            // to call last, and which two things are dangerous.
             "instructions":
-                "This is a memory of the local filesystem. Search it by meaning rather than by \
-                 filename: `brain_search` finds documents that share no words with the query, \
-                 and `brain_recall` brings back what belongs with a fragment. What you work out \
-                 about a file belongs in `brain_annotate`, so the next search can find it. \
-                 Writing, moving and trashing files are gated — call them once to get a plan, \
-                 then again with the plan's id — and every one of them is undoable.",
+                "A memory of this machine, and a memory of your own.\n\n\
+                 **Start with `brain_context`.** Give it what you are about to do, in a \
+                 sentence, and a token budget. It answers with what is known that bears on it: \
+                 preferences that always apply, what the human has open right now, the memories \
+                 that match, and the files those are about — already fitted to the budget, each \
+                 item saying who wrote it and why it is there. Call it before you start, not \
+                 after you are stuck.\n\n\
+                 **Finish with `brain_outcome`.** Say which of that actually helped and which \
+                 was noise. It is the only signal that teaches this memory what is worth \
+                 keeping — a memory that keeps arriving in your context and is never reported \
+                 useful decays faster than one nobody ever retrieves. Reporting honestly that \
+                 something was noise is worth more than reporting that everything helped.\n\n\
+                 **In between: `brain_remember`** anything that cost you effort to work out and \
+                 would cost the next session the same — a flag, a convention, an approach that \
+                 failed, a decision and its reason. Not what a file already says; that is \
+                 indexed, and `brain_search` finds documents that share no words with the \
+                 query. `brain_recall` brings back what belongs with a fragment, memories \
+                 included.\n\n\
+                 Two things to know: writing, moving and trashing files are **gated** — call \
+                 once to get a plan, then again with the plan's id, and every one is undoable \
+                 with `undo`. And what you remember is visible to the human, who can correct or \
+                 delete it.",
         }))),
 
         // Notifications. Nothing to answer, and nothing to do.
