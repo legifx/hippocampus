@@ -201,10 +201,20 @@ export function AgentInspector({ open, onClose, tab, onTab }: AgentInspectorProp
     }
   }, [fail, status]);
 
+  const panel = useRef<HTMLElement | null>(null);
+  // Focus moves into the panel when it opens. Without this the keyboard is still talking to the
+  // search field behind it: Escape would close the window rather than the panel, and an arrow
+  // key would move a selection nobody can see.
+  useEffect(() => {
+    if (!open) return;
+    panel.current?.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus();
+  }, [open]);
+
   if (!open) return null;
 
   return (
     <section
+      ref={panel}
       className="hc-inspector"
       role="dialog"
       aria-label="Agenten-Inspektor"
@@ -217,16 +227,44 @@ export function AgentInspector({ open, onClose, tab, onTab }: AgentInspectorProp
       }}
     >
       <header className="hc-inspector-head">
-        <nav className="hc-tabs" role="tablist">
+        {/*
+          * A tab strip, and the arrow keys move along it — which is what a tablist does
+          * everywhere else and therefore what somebody will try. Left and right rather than up
+          * and down, because the strip is horizontal and the wrong axis is worse than none.
+          */}
+        <nav
+          className="hc-tabs"
+          role="tablist"
+          onKeyDown={(event) => {
+            const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+            if (step === 0) return;
+            event.preventDefault();
+            let index = 0;
+            for (let i = 0; i < TABS.length; i += 1) {
+              if (TABS[i]!.id === tab) index = i;
+            }
+            const next = TABS[(index + step + TABS.length) % TABS.length]!;
+            onTab(next.id);
+            // The focus follows the selection, or the next arrow key comes from the old tab and
+            // moves two.
+            const strip = event.currentTarget;
+            requestAnimationFrame(() => {
+              strip.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus();
+            });
+          }}
+        >
           {TABS.map((entry) => (
             <button
               key={entry.id}
               type="button"
               role="tab"
               aria-selected={entry.id === tab}
+              // Only the selected tab is in the tab order, which is what a tablist does: Tab
+              // moves *past* the strip to the panel, and the arrows move within it.
+              tabIndex={entry.id === tab ? 0 : -1}
               className={entry.id === tab ? "hc-tab hc-tab-on" : "hc-tab"}
               title={entry.hint}
-              onMouseDown={() => onTab(entry.id)}
+              onClick={() => onTab(entry.id)}
             >
               {entry.label}
             </button>
@@ -238,13 +276,13 @@ export function AgentInspector({ open, onClose, tab, onTab }: AgentInspectorProp
               type="button"
               className={status.enabled ? "hc-pill hc-pill-on" : "hc-pill hc-pill-off"}
               disabled={busy}
-              onMouseDown={() => void toggleSurface()}
+              onClick={() => void toggleSurface()}
               title="Not-Aus: schaltet die Agenten-Schnittstelle ab (R7)"
             >
               {status.enabled ? "Schnittstelle an" : "Schnittstelle aus"}
             </button>
           )}
-          <button type="button" className="hc-pill" onMouseDown={onClose}>
+          <button type="button" className="hc-pill" onClick={onClose}>
             Schließen (Esc)
           </button>
         </span>
@@ -391,7 +429,7 @@ function MemoryTab({
       {replacing && (
         <p className="hc-banner" role="status">
           Welche Erinnerung ersetzt „{replacing.text.slice(0, 60)}…“? Die passende auswählen.{" "}
-          <button type="button" className="hc-pill" onMouseDown={() => setReplacing(null)}>
+          <button type="button" className="hc-pill" onClick={() => setReplacing(null)}>
             Abbrechen
           </button>
         </p>
@@ -443,7 +481,7 @@ function MemoryTab({
                     type="button"
                     className="hc-pill hc-pill-on"
                     disabled={busy}
-                    onMouseDown={() => {
+                    onClick={() => {
                       onSupersede(replacing.node_id, memory.node_id);
                       setReplacing(null);
                     }}
@@ -458,7 +496,7 @@ function MemoryTab({
                     type="button"
                     className="hc-pill hc-pill-danger"
                     disabled={busy}
-                    onMouseDown={() => {
+                    onClick={() => {
                       setConfirming(null);
                       onForget(memory);
                     }}
@@ -468,7 +506,7 @@ function MemoryTab({
                   <button
                     type="button"
                     className="hc-pill"
-                    onMouseDown={() => setConfirming(null)}
+                    onClick={() => setConfirming(null)}
                   >
                     Abbrechen
                   </button>
@@ -482,7 +520,7 @@ function MemoryTab({
                       className="hc-pill"
                       disabled={busy || replacing !== null}
                       title="Sie war einmal richtig und ist es nicht mehr: eine andere tritt an ihre Stelle, die Historie bleibt"
-                      onMouseDown={() => setReplacing(memory)}
+                      onClick={() => setReplacing(memory)}
                     >
                       Ersetzen
                     </button>
@@ -492,7 +530,7 @@ function MemoryTab({
                     className="hc-pill"
                     disabled={busy}
                     title="Löscht sie endgültig — auch über einen Neuaufbau des Index hinweg. Für etwas, das nie richtig war."
-                    onMouseDown={() => setConfirming(memory.node_id)}
+                    onClick={() => setConfirming(memory.node_id)}
                   >
                     Löschen
                   </button>
@@ -593,7 +631,7 @@ function UndoTab() {
         type="button"
         className="hc-pill"
         disabled={busy}
-        onMouseDown={() => {
+        onClick={() => {
           setBusy(true);
           ipc
             .undo(1)
@@ -772,7 +810,7 @@ function ArchitectureTab() {
             <button
               type="button"
               className="hc-pill"
-              onMouseDown={() => {
+              onClick={() => {
                 const next = layout === "tree" ? "shells" : "tree";
                 setLayout(next);
                 scene.current?.setLayout(next);
@@ -807,7 +845,7 @@ function ArchitectureTab() {
               <button
                 type="button"
                 className="hc-pill"
-                onMouseDown={() => setReloads((n) => n + 1)}
+                onClick={() => setReloads((n) => n + 1)}
                 title="Holt den Schnappschuss neu. Die Kameraposition geht dabei verloren."
               >
                 Neu laden

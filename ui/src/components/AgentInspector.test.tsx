@@ -3,7 +3,13 @@
  *
  * What is worth asserting here is not that React renders — it is the three claims M11 §8 makes
  * about this panel: that it shows what a machine believes, that a person can delete one of
- * those beliefs, and that it does not poll while it is shut. The third is the one that decays
+ * those beliefs, and that it does not poll while it is shut.
+ *
+ * The events these dispatch are `click` and not `mousedown`, and the difference is the whole of
+ * a defect this file used to hide: every button in the panel was wired to `onMouseDown`, which
+ * a keyboard never fires. Tests that dispatched `mousedown` passed against a panel no keyboard
+ * could operate at all — M4 §7 says every function is reachable without a mouse, and this was
+ * a new surface where none was. The third is the one that decays
  * silently: a panel that costs a core is a panel that gets switched off, and this project has a
  * recorded case of exactly that (D59).
  */
@@ -188,14 +194,14 @@ describe("AgentInspector", () => {
     // reason to lose one. The first row is the one the fixture puts first.
     await act(async () => {
       getAllByText("Löschen")[0]!.dispatchEvent(
-        new MouseEvent("mousedown", { bubbles: true }),
+        new MouseEvent("click", { bubbles: true }),
       );
     });
     expect(forgotten).toEqual([]);
 
     await act(async () => {
       getByText("Wirklich löschen").dispatchEvent(
-        new MouseEvent("mousedown", { bubbles: true }),
+        new MouseEvent("click", { bubbles: true }),
       );
     });
     await waitFor(() => expect(forgotten).toEqual([MEMORY.node_id]));
@@ -210,7 +216,7 @@ describe("AgentInspector", () => {
     // Click one: the memory that is out of date. Nothing has happened yet.
     await act(async () => {
       getAllByText("Ersetzen")[0]!.dispatchEvent(
-        new MouseEvent("mousedown", { bubbles: true }),
+        new MouseEvent("click", { bubbles: true }),
       );
     });
     expect(superseded).toEqual([]);
@@ -219,7 +225,7 @@ describe("AgentInspector", () => {
     // Click two: the one that replaces it. Only the *other* rows offer it, because a memory
     // cannot supersede itself.
     await act(async () => {
-      getByText("Ersetzt sie").dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      getByText("Ersetzt sie").dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     await waitFor(() => expect(superseded).toEqual([[MEMORY.node_id, REPLACEMENT.node_id]]));
     // Superseding is not deleting: the history is the reason it exists.

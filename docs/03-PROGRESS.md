@@ -1747,7 +1747,7 @@ partial in ways worth reading rather than in ways worth rounding up.
 | 7 | Scope isolation per surface; no unrequested promotion to `global` | **met** — and the CLI's default had to be fixed to make the second half true |
 | 8 | Supersession: absent, present with history, detected without deciding | **met** |
 | 9 | The kill switch reaches every memory tool | **met** — asserted per tool over the socket |
-| 10 | The Inspector renders at 400 px, costs under 1 % of a core, and gives the window back | **partly — the width and the give-back are measured; the cost is not** |
+| 10 | The Inspector renders at 400 px, costs under 1 % of a core, and gives the window back | **partly — the width, the give-back and keyboard-completeness are measured; the CPU cost is not** |
 | — | *Not a criterion, and the one that decides whether any of this is used:* selecting a file in the ordinary window shows what agents have learned about it | **built** — the Inspector is where somebody audits the memory; the context panel is where they meet it without going anywhere |
 | 11 | A human's deletion is immediate and survives a rebuild | **met**, live as well as in a test — and superseding is wired now too, which the first version of the panel had not been |
 | 12 | A real task, twice, by a human, measurably better the second time | **not done — this one needs the owner** |
@@ -1776,7 +1776,19 @@ diversification more or less aggressive has to edit that line and say why. Two r
 rather than one is worth noticing: λ 0.7 is a trade-off and not a deduplicator, and the second
 copy costing a slot is the price of not dropping something that only *looked* like a copy.
 
-**§10, in two halves.** The width half is measured now: fourteen Playwright cases open the panel
+**§10, and a third thing M4 §7 asks for that it did not do at all.** Every button in the panel
+was wired to `onMouseDown`, which a keyboard never fires — a `<button>` activated with Enter
+raises `click` and nothing else. The tab strip, the kill switch, the delete confirmation and the
+supersede flow were all mouse-only, on a surface added to an application whose Definition of Done
+says every function is reachable without a mouse. Worse, the unit tests dispatched `mousedown`
+directly, so they passed against a panel no keyboard could operate.
+
+Fixed, and the arrows now move along the tab strip with the focus following the selection, which
+is what a tablist does everywhere else and therefore what somebody will try. Two Playwright cases
+drive the whole panel from the keyboard alone, in a real browser — "pressing Enter on a focused
+button activates it" is a statement about an event loop and not about a DOM emulation.
+
+**The width half is measured too:** fourteen Playwright cases open the panel
 at 400, 600, 900 and 1400 px on three tabs and assert that neither the body, nor the panel, nor
 any row overflows its own box — plus Escape returning the caret to the search field, and the
 button and `Ctrl+Shift+A` being one control. **Those tests found a real overflow at every width**:

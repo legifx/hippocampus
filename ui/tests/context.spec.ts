@@ -44,3 +44,62 @@ test.describe("the context panel carries what agents learned", () => {
     expect(overflow.worst).toBeLessThanOrEqual(0);
   });
 });
+
+/**
+ * M4 §7: every function is reachable without a mouse. The Inspector is a new surface and was
+ * not — every one of its buttons used `onMouseDown`, which a keyboard never fires.
+ *
+ * Checked in a browser rather than in happy-dom, because "pressing Enter on a focused button
+ * activates it" is a statement about a real event loop.
+ */
+test.describe("the Agent Inspector without a mouse", () => {
+  test("opens, switches tabs with the arrows, and closes, from the keyboard alone", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 900, height: 700 });
+    await page.goto("/harness.html?at=/&hits=20");
+
+    await page.keyboard.press("Control+Shift+A");
+    await page.waitForSelector(".hc-inspector");
+
+    // The selected tab takes the focus, so the arrows have somewhere to move from. Polled
+    // rather than read once: focus is moved by an effect that runs after the panel paints, and
+    // asserting immediately is a test that passes when the machine is idle and fails under
+    // load — which is the worst kind.
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.textContent ?? ""))
+      .toBe("Live");
+
+    await page.keyboard.press("ArrowRight");
+    await expect(page.locator('[role="tab"][aria-selected="true"]')).toHaveText("Gedächtnis");
+    await page.waitForSelector(".hc-memory, .hc-faint");
+
+    // And wraps, rather than stopping at the end where somebody would think it had broken.
+    for (let i = 0; i < 4; i += 1) await page.keyboard.press("ArrowRight");
+    await expect(page.locator('[role="tab"][aria-selected="true"]')).toHaveText("Live");
+
+    await page.keyboard.press("Escape");
+    expect(await page.locator(".hc-inspector").count()).toBe(0);
+  });
+
+  test("a button does what it says when it is pressed rather than clicked", async ({ page }) => {
+    await page.setViewportSize({ width: 900, height: 700 });
+    await page.goto("/harness.html?at=/&hits=20");
+    await page.keyboard.press("Control+Shift+A");
+    await page.waitForSelector(".hc-inspector");
+
+    // The kill switch, reached by focusing it and pressing Enter. It reads "Schnittstelle an"
+    // from the fixture; pressing it asks the daemon to turn the surface off.
+    const toggle = page.getByRole("button", { name: /Schnittstelle/ });
+    await toggle.focus();
+    await page.keyboard.press("Enter");
+
+    const calls = await page.evaluate(
+      () =>
+        ((window as unknown as { __hcCalls?: { command: string }[] }).__hcCalls ?? []).map(
+          (c) => c.command,
+        ),
+    );
+    expect(calls).toContain("agent_set_enabled");
+  });
+});
