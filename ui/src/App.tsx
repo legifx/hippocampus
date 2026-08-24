@@ -993,6 +993,7 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
 
       <AgentInspector
         open={inspectorOpen}
+        visible={visible}
         tab={inspectorTab}
         onTab={setInspectorTab}
         onClose={() => {

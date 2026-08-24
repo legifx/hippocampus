@@ -121,7 +121,7 @@ the Agent Inspector — and they follow one shape:
 | Escape | closes the panel and returns focus to the search field. It does *not* reach the window's own Escape |
 | Focus | moves into the panel when it opens. Without that the keyboard is still talking to what is behind it |
 | Keys | **every control is reachable and activatable without a mouse (M4 §7).** A `<button>` wired to `onMouseDown` is not: a keyboard raises `click` and nothing else, which made the Inspector entirely mouse-operable until a browser test said so |
-| Cost | nothing polls while a panel is shut, and nothing polls a tab that is not showing (§8.6) |
+| Cost | nothing polls while a panel is shut, nothing polls a tab that is not showing, and **nothing polls while the window is hidden** (§8.6). A hidden GTK window keeps running its page: the shell says whether anybody can see it, and `useVisibility` is how a component listens |
 
 **Do not reuse a class from another component to get its shape.** `.hc-facts` is a definition
 list that elides on one line, and the Inspector borrowed it for a list that has to wrap: every

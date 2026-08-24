@@ -138,8 +138,24 @@ function fixture(): void {
   });
 }
 
-function Harness({ open, tab }: { open: boolean; tab: InspectorTab }) {
-  return <AgentInspector open={open} tab={tab} onTab={() => {}} onClose={() => {}} />;
+function Harness({
+  open,
+  tab,
+  visible = true,
+}: {
+  open: boolean;
+  tab: InspectorTab;
+  visible?: boolean;
+}) {
+  return (
+    <AgentInspector
+      open={open}
+      visible={visible}
+      tab={tab}
+      onTab={() => {}}
+      onClose={() => {}}
+    />
+  );
 }
 
 describe("AgentInspector", () => {
@@ -159,6 +175,24 @@ describe("AgentInspector", () => {
     });
     expect(calls).toEqual([]);
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  // The failure `useVisibility` exists to prevent, one layer newer.
+  it("stops polling when the window is hidden, and starts again when it comes back", async () => {
+    const { rerender } = render(<Harness open tab="live" />);
+    await waitFor(() => expect(calls.length).toBeGreaterThan(0));
+
+    rerender(<Harness open tab="live" visible={false} />);
+    const hidden = calls.length;
+    await act(async () => {
+      vi.advanceTimersByTime(20_000);
+    });
+    expect(calls.length).toBe(hidden);
+
+    // A hidden GTK window keeps running its page, so this is not the browser's doing — the
+    // shell says, and the panel has to listen.
+    rerender(<Harness open tab="live" visible />);
+    await waitFor(() => expect(calls.length).toBeGreaterThan(hidden));
   });
 
   it("does not poll a tab that is not showing", async () => {

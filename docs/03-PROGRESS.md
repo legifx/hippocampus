@@ -1849,6 +1849,14 @@ and it is the half of M11 §10 that could be checked without opening a window: a
 Inspector, the memory section in the context panel and the compose row moved none of M4's
 numbers.
 
+**And one thing that would have made the cost unmeasurable anyway, found by reading the hook
+that exists to prevent it.** The panel polled four calls every two seconds regardless of whether
+the window was on screen. A hidden GTK window keeps running its page — that is D59's whole
+subject and `useVisibility`'s whole reason — so somebody who opened the Inspector and then
+dismissed the window left four calls a second and a half running against the daemon until the
+next reboot. It listens now, and the test that says so was checked against the version without
+the guard.
+
 The cost half is still not measured. The panel does not poll while it is shut and does not poll a
 tab that is not showing, and both are asserted. Nothing has measured what it costs while the
 Live tab streams. This project has a recorded case of a hidden window burning a full core that no

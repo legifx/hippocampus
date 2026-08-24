@@ -86,9 +86,20 @@ export type AgentInspectorProps = {
   /** Which tab to show. Held by the caller so a summon can reopen where it was left. */
   tab: InspectorTab;
   onTab: (tab: InspectorTab) => void;
+  /**
+   * Whether anybody can see the window.
+   *
+   * A hidden GTK window keeps running its page: intervals go on firing for nobody, and the
+   * daemon goes on answering them. This panel polls four calls every two seconds, so a person
+   * who opens it and then dismisses the window would leave that running until the next reboot.
+   *
+   * `useVisibility` was written for exactly this failure and this panel ignored it, which is
+   * the same defect one layer newer — see D59, and the hook's own doc comment.
+   */
+  visible: boolean;
 };
 
-export function AgentInspector({ open, onClose, tab, onTab }: AgentInspectorProps) {
+export function AgentInspector({ open, onClose, tab, onTab, visible }: AgentInspectorProps) {
   const [sessions, setSessions] = useState<SessionsResult | null>(null);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   /** The refused calls, asked for separately. The daemon filters; this renders (D4). */
@@ -147,7 +158,7 @@ export function AgentInspector({ open, onClose, tab, onTab }: AgentInspectorProp
   // that costs a core is a panel that gets switched off (M11 DoD §10), and this window has a
   // recorded case of an idle animation costing exactly that (D59).
   useEffect(() => {
-    if (!open) return;
+    if (!open || !visible) return;
     if (tab === "live" || tab === "policy") {
       void loadLive();
       const timer = setInterval(() => void loadLive(), LIVE_POLL_MS);
@@ -157,7 +168,7 @@ export function AgentInspector({ open, onClose, tab, onTab }: AgentInspectorProp
       void loadMemories();
     }
     return undefined;
-  }, [open, tab, loadLive, loadMemories]);
+  }, [open, visible, tab, loadLive, loadMemories]);
 
   const forget = useCallback(
     async (memory: Memory) => {
@@ -324,7 +335,7 @@ export function AgentInspector({ open, onClose, tab, onTab }: AgentInspectorProp
         )}
         {tab === "policy" && <PolicyTab status={status} refused={refused} />}
         {tab === "undo" && <UndoTab />}
-        {tab === "architecture" && <ArchitectureTab />}
+        {tab === "architecture" && <ArchitectureTab visible={visible} />}
       </div>
     </section>
   );
@@ -760,7 +771,7 @@ function UndoTab() {
  * Loaded on demand: three.js is around half a megabyte, this window has a 300 ms cold-start
  * gate, and most sessions never open this tab.
  */
-function ArchitectureTab() {
+function ArchitectureTab({ visible }: { visible: boolean }) {
   const host = useRef<HTMLDivElement | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "failed">("loading");
   const [detail, setDetail] = useState<string>("");
@@ -852,7 +863,7 @@ function ArchitectureTab() {
   // common case — are counted rather than drawn, and the count is what offers a reload. Redrawing
   // the scene on its own would throw away wherever the viewer had moved the camera to.
   useEffect(() => {
-    if (state !== "ready") return undefined;
+    if (state !== "ready" || !visible) return undefined;
     let stopped = false;
     let cursor: number | null = null;
 
@@ -888,7 +899,7 @@ function ArchitectureTab() {
       stopped = true;
       clearInterval(timer);
     };
-  }, [state]);
+  }, [state, visible]);
 
   return (
     <div className="hc-inspector-pane hc-architecture">
