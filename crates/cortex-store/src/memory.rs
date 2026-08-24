@@ -529,13 +529,23 @@ impl Store {
         // They are also never excluded by a zone filter: a concept spans whatever its members
         // span, and dropping it from a zone's view would hide the one node that says what the
         // zone is about.
+        //
+        // Memories (M11) are here for the same reason and a stronger one. They have no path
+        // either, and their text stands in for it. A view of the brain that drew the files and
+        // left out what the agents learned would be a view of half the brain, and the half it
+        // left out is the half this milestone is about. Like concepts, they survive a zone
+        // filter: a memory belongs to a scope, not to a directory.
         let mut stmt = conn.prepare(
-            "SELECT id, COALESCE(path, label, '?'), kind, parent_id, tier, salience, pinned,
-                    zone_id, size, mtime
+            "SELECT id,
+                    COALESCE(path, label,
+                             (SELECT substr(m.text, 1, 90) FROM memories m
+                              WHERE m.node_id = nodes.id),
+                             '?'),
+                    kind, parent_id, tier, salience, pinned, zone_id, size, mtime
              FROM nodes
-             WHERE kind IN ('file', 'dir', 'concept') AND salience >= ?1
-               AND (path IS NOT NULL OR kind = 'concept')
-               AND (?2 IS NULL OR zone_id = ?2 OR kind = 'concept')
+             WHERE kind IN ('file', 'dir', 'concept', 'memory') AND salience >= ?1
+               AND (path IS NOT NULL OR kind IN ('concept', 'memory'))
+               AND (?2 IS NULL OR zone_id = ?2 OR kind IN ('concept', 'memory'))
              ORDER BY salience DESC, mtime DESC
              LIMIT ?3",
         )?;
@@ -567,7 +577,12 @@ impl Store {
             let (id, path, kind, parent, tier, salience, pinned, zone, size, mtime) = row?;
             selected.insert(id, nodes.len());
             nodes.push(GraphNode {
-                name: if kind == "concept" { path.clone() } else { leaf(&path).to_string() },
+                name: if kind == "concept" || kind == "memory" {
+                    // A memory has no last path component; the thing it says *is* its name.
+                    path.clone()
+                } else {
+                    leaf(&path).to_string()
+                },
                 id,
                 path,
                 kind,
@@ -625,7 +640,12 @@ impl Store {
                 {
                     selected.insert(id, nodes.len());
                     nodes.push(GraphNode {
-                        name: if kind == "concept" { path.clone() } else { leaf(&path).to_string() },
+                        name: if kind == "concept" || kind == "memory" {
+                    // A memory has no last path component; the thing it says *is* its name.
+                    path.clone()
+                } else {
+                    leaf(&path).to_string()
+                },
                         id,
                         path,
                         kind,
@@ -1294,6 +1314,45 @@ pub fn source_label(source: EdgeSource) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    /// A view of the brain that drew the files and left out what the agents learned would be a
+    /// view of half of it, and the half it left out is the half M11 is about.
+    #[test]
+    fn a_memory_is_drawn_by_the_graph_and_says_what_it_says() {
+        use crate::memories::NewMemory;
+        use cortex_core::memory::{MemoryKind, MemoryScope};
+        use cortex_core::model::Actor;
+
+        let store = Store::open_in_memory().unwrap();
+        let written = store
+            .remember(
+                &NewMemory::new(
+                    MemoryScope::Global,
+                    MemoryKind::Decision,
+                    "usearch stays; a second collection rather than a second engine",
+                ),
+                &Actor::Agent("a".into()),
+                100,
+            )
+            .unwrap();
+
+        let snapshot = store
+            .graph_snapshot(&GraphParams {
+                now: 200,
+                ..GraphParams::default()
+            })
+            .unwrap();
+
+        let node = snapshot
+            .nodes
+            .iter()
+            .find(|n| n.id == written.node_id.0)
+            .expect("the memory is not in the graph");
+        assert_eq!(node.kind, "memory");
+        // A memory has no last path component, so the thing it says is its name.
+        assert!(node.name.contains("usearch stays"));
+        assert!(node.path.contains("usearch stays"));
+    }
+
     #[test]
     fn a_consolidation_pass_expires_scratch_and_penalises_what_nobody_reports() {
         use crate::memories::{MemoryFilter, NewMemory, PackItemRecord};

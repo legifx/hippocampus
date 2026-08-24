@@ -567,11 +567,16 @@ function ArchitectureTab() {
 
     (async () => {
       try {
-        const [{ BrainScene }, snapshot] = await Promise.all([
+        const [{ BrainScene }, { assertSnapshot }, answer] = await Promise.all([
           import("@agent-view/scene"),
+          import("@agent-view/snapshot"),
           ipc.brainGraph(4000),
         ]);
         if (disposed || !host.current) return;
+        // Validated before anything is drawn, exactly as the standalone view does it: a daemon
+        // that answers with something unexpected must produce one sentence rather than a black
+        // canvas with a stack trace behind it.
+        const snapshot = assertSnapshot(answer);
         const graph = snapshot as { nodes?: unknown[]; edges?: unknown[] };
         setTotals({ nodes: graph.nodes?.length ?? 0, edges: graph.edges?.length ?? 0 });
         // A brain with nothing in it draws as a black screen, which is indistinguishable from

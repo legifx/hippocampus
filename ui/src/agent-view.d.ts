@@ -16,6 +16,17 @@
  * that this tab fails loudly and visibly rather than silently — which is why the tab reports
  * what went wrong instead of showing an empty canvas.
  */
+declare module "@agent-view/snapshot" {
+  /**
+   * Check a snapshot before anything is drawn from it.
+   *
+   * Used here for the reason `ui-agent`'s own entry point uses it: a daemon that answers with
+   * something unexpected should produce one legible sentence rather than a black canvas with a
+   * stack trace behind it.
+   */
+  export function assertSnapshot(value: unknown): unknown;
+}
+
 declare module "@agent-view/scene" {
   export class BrainScene {
     constructor(options: { container: HTMLElement; snapshot: unknown });

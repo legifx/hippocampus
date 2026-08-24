@@ -19,7 +19,7 @@ export interface GraphNode {
   id: number;
   path: string;
   name: string;
-  kind: "file" | "dir" | "concept" | string;
+  kind: "file" | "dir" | "concept" | "memory" | string;
   parent: number | null;
   tier: Tier;
   salience: number;
@@ -34,7 +34,14 @@ export interface GraphNode {
 export interface GraphEdge {
   src: number;
   dst: number;
-  type: "contains" | "co_access" | "similar_to" | "annotates" | string;
+  type:
+    | "contains"
+    | "co_access"
+    | "similar_to"
+    | "annotates"
+    | "supersedes"
+    | "recalled_with"
+    | string;
   weight: number;
   source: "observed" | "inferred" | "explicit" | string;
 }

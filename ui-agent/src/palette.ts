@@ -59,6 +59,16 @@ export const EDGE_FALLBACK = { color: { r: 0.6, g: 0.6, b: 0.6 }, alpha: 0.4 };
  */
 const CONCEPT_HUE = 45;
 
+/**
+ * A memory has no zone either, and it is not a concept.
+ *
+ * Concepts are gold because the index inferred them; a memory is something an agent or a person
+ * *stated*, which is a different kind of claim and deserves to be told apart at a glance. Green,
+ * and away from the concept gold and from the neutral steel below on the wheel, so that the
+ * three read as three even in the corner of the eye.
+ */
+const MEMORY_HUE = 145;
+
 /** The hue a node with no zone gets: a neutral steel, so "unsorted" is visibly not a project. */
 const NO_ZONE_HUE = 215;
 const NO_ZONE_SATURATION = 0.12;
@@ -86,6 +96,9 @@ export function nodeColor(hue: number | undefined, tier: Tier, kind?: string): R
   if (kind === "concept") {
     return hslToRgb(CONCEPT_HUE, 0.25, Math.min(0.95, style.lightness + 0.3));
   }
+  if (kind === "memory") {
+    return hslToRgb(MEMORY_HUE, 0.42, Math.min(0.92, style.lightness + 0.22));
+  }
   if (hue === undefined) {
     return hslToRgb(NO_ZONE_HUE, NO_ZONE_SATURATION * style.saturation, style.lightness * 0.9);
   }
@@ -103,6 +116,9 @@ export function nodeRadius(salience: number, kind: string): number {
   // A concept stands for a whole cluster, so it is drawn as one thing rather than as another
   // file that happens to score well.
   if (kind === "concept") return 2.2 + Math.sqrt(Math.max(0, salience)) * 1.4;
+  // Between a file and a concept. A memory stands for one statement rather than for a cluster,
+  // but it is not another file that happened to score well either.
+  if (kind === "memory") return 1.1 + Math.sqrt(Math.max(0, salience)) * 1.2;
   const base = kind === "dir" ? 0.85 : 0.5;
   return base + Math.sqrt(Math.max(0, salience)) * 1.05;
 }
