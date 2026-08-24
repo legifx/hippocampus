@@ -30,10 +30,23 @@ declare module "@agent-view/snapshot" {
 declare module "@agent-view/scene" {
   export class BrainScene {
     constructor(options: { container: HTMLElement; snapshot: unknown });
+    /**
+     * Draw one frame, and return the seconds since the last one.
+     *
+     * **The scene does not drive itself.** The standalone view calls this from its own
+     * `requestAnimationFrame` loop; anything embedding the scene has to do the same. It was
+     * missing from this declaration, so the Agent Inspector could not call it and did not — and
+     * a canvas that is built, sized and never drawn is black, with no error, with four thousand
+     * nodes behind it. That is the failure this file's own comment says cannot happen, and it
+     * happened: a narrow boundary hides a *missing call* as effectively as it hides a wrong one.
+     */
+    render(onFrame?: (dt: number) => void): number;
     setLayout(mode: "tree" | "shells", animate?: boolean): void;
     /** Send a travelling light along a node's edges. Ignored for a node not in the scene. */
     pulse(nodeId: number, speed?: number): void;
     select(nodeId: number | null): void;
+    /** Put the camera back where it started, framing everything. */
+    resetCamera(): void;
     dispose(): void;
   }
 }

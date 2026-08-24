@@ -34,6 +34,36 @@ test.describe("the three-dimensional view inside the panel", () => {
     expect(Math.abs((box?.width ?? 0) - (host?.width ?? 0))).toBeLessThan(4);
   });
 
+  test("frames are actually drawn, not just a canvas created", async ({ page }) => {
+    await page.setViewportSize({ width: 1400, height: 800 });
+    await page.goto("/harness.html?at=/&hits=20");
+    await page.waitForSelector(".hc-row");
+    await page.keyboard.press("Control+Shift+A");
+    await page.waitForSelector(".hc-inspector");
+    await page.getByRole("tab", { name: "Architektur" }).click();
+    await expect(page.locator(".hc-scene canvas")).toBeVisible({ timeout: 15_000 });
+
+    // The scene does not drive itself: `render()` draws one frame and returns, and the panel has
+    // to call it from a loop. It did not, and the tab was black — built, sized, never drawn. The
+    // panel now measures its own frame rate and prints it, which is both the diagnostic that was
+    // missing and the thing a test can read.
+    const rate = page.locator(".hc-scene-rate");
+    await expect(rate).toBeVisible();
+    // Generous, and deliberately so: this is the one test in the suite that compiles shaders,
+    // and five of them at once on a software renderer take a while to produce a first frame.
+    // What is being asserted is "something draws", not "it draws quickly" — the frame budgets
+    // live in the perf suite, which runs alone.
+    await expect(rate).not.toContainText("es wird nichts gezeichnet", { timeout: 30_000 });
+
+    // And the canvas has a drawing buffer of its own, sized to the box rather than left at zero.
+    const buffer = await page.locator(".hc-scene canvas").evaluate((el) => ({
+      w: (el as HTMLCanvasElement).width,
+      h: (el as HTMLCanvasElement).height,
+    }));
+    expect(buffer.w).toBeGreaterThan(200);
+    expect(buffer.h).toBeGreaterThan(120);
+  });
+
   test("it says what it is showing, and how to read it", async ({ page }) => {
     await page.setViewportSize({ width: 1400, height: 800 });
     await page.goto("/harness.html?at=/&hits=20");

@@ -2732,3 +2732,37 @@ size of the box it sits in.
 with a separate answer. If the tab is still empty after this, the next thing to check is the
 renderer, and the honest way to check it is to make the failure say which one it was — the tab
 already has a failed state and shows the message, so an empty box means the renderer started.
+
+### D91 — The scene does not drive itself, and a narrow boundary hid that
+
+**Status:** accepted · 2026-08-24 · M11 §9 defect
+
+The Agent Inspector's *Architektur* tab was black. Not because of sizing (D90), not because of
+the data (`cortex graph --limit 4000` answers with 4 023 nodes), and not because of the renderer:
+**nothing was calling `render()`.**
+
+`BrainScene.render()` draws one frame and returns. The standalone view calls it from its own
+`requestAnimationFrame` loop; the panel constructed the scene and never drew a frame. A canvas
+that is built, sized and never drawn is black, silent, and indistinguishable from a broken GPU.
+
+**What made it invisible for three sessions is the interesting part.** `ui/src/agent-view.d.ts`
+declares the boundary between the window and `ui-agent` by hand — deliberately narrow, with its
+reasons written down, ending in: *"this tab fails loudly and visibly rather than silently — which
+is why the tab reports what went wrong instead of showing an empty canvas."* The declaration did
+not include `render`, so the panel could not call it, and a **missing call is not a failure the
+tab can report**. A narrow boundary hides an absent method exactly as well as it hides a wrong
+one; the comment claimed a property the boundary could not provide.
+
+`render` and `resetCamera` are declared now, with the reason in the file. The general lesson is
+the one the file already half-knew: a hand-written boundary needs a test that exercises what it
+allows, or it only documents what somebody remembered.
+
+**The panel now prints its own frame rate**, twice a second, and says *"es wird nichts
+gezeichnet"* at zero. That is the diagnostic that would have ended this in a minute: a black
+canvas says nothing, and "0 Bilder/s" says everything. `ui/tests/architecture.spec.ts` reads it.
+
+**And that test runs beside the perf suite, alone.** It is the only test in the suite that
+compiles shaders; five software renderers at once take long enough to produce a first frame that
+"is anything being drawn" starts failing for reasons unrelated to the answer. Same config, same
+one-worker rule, same reasoning as D-the-perf-gate above: a test that measures time has to be the
+only thing using the machine.

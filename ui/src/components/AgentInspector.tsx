@@ -844,9 +844,15 @@ function ArchitectureTab({ visible }: { visible: boolean }) {
     dispose(): void;
     pulse(nodeId: number, speed?: number): void;
     setLayout(mode: "tree" | "shells", animate?: boolean): void;
+    /** One frame. The panel drives this; without a caller the canvas stays black. */
+    render(onFrame?: (dt: number) => void): number;
   } | null>(null);
   /** Node ids the current scene knows about. A pulse for anything else would be silent. */
   const drawn = useRef<Set<number>>(new Set());
+  /** The animation frame the scene is drawn from, so it can be stopped. */
+  const frame = useRef<number | null>(null);
+  /** Frames a second, as measured while drawing them. Zero means nothing is being drawn. */
+  const [rate, setRate] = useState(0);
 
   useEffect(() => {
     let disposed = false;
@@ -885,11 +891,39 @@ function ArchitectureTab({ visible }: { visible: boolean }) {
           if (typeof node.id === "number") known.add(node.id);
         }
         drawn.current = known;
-        scene.current = new BrainScene({
+        const built = new BrainScene({
           container: host.current,
           snapshot: snapshot as never,
         });
+        scene.current = built;
         setState("ready");
+
+        // **Somebody has to draw the frames.** `BrainScene.render()` draws one and returns; the
+        // standalone view calls it from its own `requestAnimationFrame` loop, and this panel
+        // never called it at all — so the tab showed a correctly sized, correctly built,
+        // never-drawn canvas. Black, with no error, with four thousand nodes behind it.
+        //
+        // The loop stops when the tab is disposed, and it stops itself while the window is
+        // hidden: a resident overlay that renders a three-dimensional scene for nobody is D59's
+        // lesson with a GPU attached.
+        let drawnFrames = 0;
+        let since = 0;
+        const tick = (): void => {
+          if (disposed || scene.current !== built) return;
+          frame.current = requestAnimationFrame(tick);
+          const dt = built.render();
+          // A visible frame rate, twice a second at most. It is the diagnostic that would have
+          // ended this bug in a minute rather than an evening: a tab that says "0 Bilder/s" is
+          // a tab nobody is drawing, and a black canvas alone says nothing at all.
+          drawnFrames += 1;
+          since += dt;
+          if (since >= 0.5) {
+            setRate(Math.round(drawnFrames / since));
+            drawnFrames = 0;
+            since = 0;
+          }
+        };
+        frame.current = requestAnimationFrame(tick);
       } catch (e) {
         if (disposed) return;
         setState("failed");
@@ -901,6 +935,8 @@ function ArchitectureTab({ visible }: { visible: boolean }) {
       disposed = true;
       // Not optional: a WebGL context that is never released is a WebGL context the browser
       // eventually refuses to give again, and this tab can be opened and closed all evening.
+      if (frame.current !== null) cancelAnimationFrame(frame.current);
+      frame.current = null;
       scene.current?.dispose();
       scene.current = null;
     };
@@ -989,6 +1025,14 @@ function ArchitectureTab({ visible }: { visible: boolean }) {
         )}
       </h2>
       {state === "loading" && <p className="hc-faint">Wird geladen …</p>}
+      {state === "ready" && (
+        <p className="hc-meta hc-scene-rate">
+          <span className="hc-num">{rate}</span> Bilder/s
+          {rate === 0 && (
+            <span className="hc-error"> — es wird nichts gezeichnet</span>
+          )}
+        </p>
+      )}
       {state === "failed" && <p className="hc-banner hc-error">{detail}</p>}
       <div className="hc-scene" ref={host} data-state={state} />
       <p className="hc-faint">

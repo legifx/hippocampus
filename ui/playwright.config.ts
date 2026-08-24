@@ -47,8 +47,13 @@ export default defineConfig({
    * 6 ms p95; in a parallel run it has been seen at 31 ms against a 24 ms budget — three times
    * in one session, each time read as a regression first. `npm run test:perf` runs it through
    * `playwright.perf.config.ts`, one worker, nothing else in flight.
+   *
+   * `architecture.spec.ts` is excluded for the same reason with a different unit: it is the one
+   * test that compiles shaders, and five software renderers at once take long enough to produce
+   * a first frame that "is anything being drawn" starts failing for reasons that have nothing to
+   * do with the answer.
    */
-  testIgnore: /perf\.spec\.ts/,
+  testIgnore: /(perf|architecture)\.spec\.ts/,
   fullyParallel: true,
   reporter: process.env.CI ? "line" : "list",
   use: {
