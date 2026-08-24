@@ -241,6 +241,7 @@ impl Daemon {
                 .map(|m| m.total_bytes())
                 .unwrap_or(0),
             vectors_in_index: status.vectors,
+            memory_vectors_in_index: status.memory_vectors,
             chunks_total,
             chunks_embedded,
             chunks_pending: (chunks_total - chunks_embedded).max(0),

@@ -47,6 +47,10 @@ pub struct SemanticStatus {
     pub backend: Option<String>,
     pub dim: Option<usize>,
     pub vectors: usize,
+    /// The memory collection's size (M11). Reported separately because it is a separate file
+    /// with a separate rebuild path, and one number covering both would make a full memory
+    /// index and an empty file one look like a half-filled single one.
+    pub memory_vectors: usize,
     pub note: Option<String>,
     pub model_present: bool,
     pub runtime_present: bool,
@@ -298,6 +302,7 @@ impl Semantics {
             backend: loaded.as_ref().map(|l| l.embedder.backend()),
             dim: loaded.as_ref().map(|l| l.embedder.model().dim),
             vectors: loaded.as_ref().map(|l| l.vectors.len()).unwrap_or(0),
+            memory_vectors: loaded.as_ref().map(|l| l.memory_vectors.len()).unwrap_or(0),
             note: self.note(),
             model_present: spec.map(|s| self.store.model_present(s)).unwrap_or(false),
             runtime_present: runtime

@@ -1733,16 +1733,43 @@ have windows appear unasked.** It is theirs to run.
 
 **Two more gaps that are not Definition-of-Done items and matter anyway:**
 
-- **The semantic arm of `brain.context` has never run against a real embedding model.** The
-  second vector collection is built, filled by the embedding stage, rebuilt from the table
-  without the model, and asserted not to mix with the file collection — all with the hashing
-  embedder. Nothing has checked that a memory written in one wording is retrieved by a task
-  phrased in another, which is the entire reason the arm exists.
+- ~~**The semantic arm of `brain.context` has never run against a real embedding model.**~~ Run
+  on 2026-08-24, and it works. See below.
 - **Consolidation has never run over a corpus of memories.** They are nodes, so salience,
   tiering and decay reach them for free — and "for free" is an argument, not a measurement.
   Nobody has looked at whether a decay curve tuned for files suits a memory. D76's revisit
   trigger is the honest place to start: if a memory's usefulness does not predict a human
   calling it useful, the signal is decoration and should be removed rather than tuned.
+
+## The semantic arm, against the real model
+
+Run on 2026-08-24 with `multilingual-e5-small` on the GPU, in a throwaway root whose `models`
+directory is a symlink to the one that is already downloaded — no network, nothing written to
+the real state directory, and the reason for going to the trouble is that everything else about
+the second collection had only ever been exercised with the hashing embedder, which has no
+semantics to test.
+
+Four memories, then two tasks chosen to share as little wording as possible with them:
+
+| task | what came back first |
+|---|---|
+| *"how long does the file system observer delay before reacting"* | "the watcher waits three hundred milliseconds before it acts on a filesystem event" |
+| *"warum laufen Vorschaubilder in einem eigenen Prozess"* | "thumbnails are decoded in a separate process so a malformed image cannot take the daemon with it" |
+
+**The second one is the one that settles it.** The German task and the English memory share no
+token at all — not one — and it ranked first. The first task is weaker evidence than it looks:
+`before` is not in the stopword list, so the lexical arm had something to match on, and the
+result was fused rather than purely semantic. Worth knowing before quoting it.
+
+Two things this run also produced:
+
+- **`cortex model` reported "0 vectors in the index" while four memories were embedded.** It
+  printed `loaded.vectors.len()`, which is the file collection. It now prints both, because one
+  number covering two files with two rebuild paths would make a full memory index beside an
+  empty file one look like a half-filled single one.
+- The whole exercise took under a minute once the runtime was right, and the runtime was the
+  only obstacle: `device = "cpu"` asks for an ONNX runtime build that this machine has never
+  downloaded, while the CUDA one it does have is what `auto` or `cuda` selects.
 
 ## Driving it by hand, and the four things that found
 

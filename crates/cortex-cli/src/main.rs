@@ -2059,7 +2059,10 @@ fn print_model_status(status: &ModelStatusResult) {
     println!("           {}", status.model_dir);
 
     if let Some(dim) = status.dim {
-        println!("vectors    {} in the index, {dim} dimensions", status.vectors_in_index);
+        println!(
+            "vectors    {} over files, {} over memories, {dim} dimensions",
+            status.vectors_in_index, status.memory_vectors_in_index
+        );
     }
     println!(
         "coverage   {} of {} chunks embedded{}",

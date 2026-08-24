@@ -638,6 +638,9 @@ pub struct ModelStatusResult {
     pub download_bytes: u64,
 
     pub vectors_in_index: usize,
+    /// The memory collection's size. A second file with a second rebuild path (M11, D75).
+    #[serde(default)]
+    pub memory_vectors_in_index: usize,
     pub chunks_total: i64,
     pub chunks_embedded: i64,
     /// Chunks still waiting for a vector. Zero and `caught_up` together mean semantic search
