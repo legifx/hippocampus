@@ -106,6 +106,30 @@ Layout constants:
 - Max preview panel width: 460 px (island-ui's max card width) at narrow columns; it may grow
   proportionally above 900 px viewport width
 
+### Panels inside the one toplevel
+
+niri owns the layout and this project ships no second window (M4's constraints), so anything
+that would be a dialog elsewhere is a panel here. Two of them exist — the command palette and
+the Agent Inspector — and they follow one shape:
+
+| | |
+|---|---|
+| Position | `absolute; inset: 0` inside `.hc-overlay`, which is `position: relative` for exactly this |
+| Cover or beside | **cover.** At 400 px there is no beside, and a panel that is a column at 1400 px and a sliver at 400 is two designs |
+| Radius | the overlay's 26, because it is the overlay's own edge that is showing |
+| Two panes | `grid-template-columns: minmax(0, 1fr)` below 900 px and two columns above; the second pane's separator moves from a top border to a left one |
+| Escape | closes the panel and returns focus to the search field. It does *not* reach the window's own Escape |
+| Focus | moves into the panel when it opens. Without that the keyboard is still talking to what is behind it |
+| Keys | **every control is reachable and activatable without a mouse (M4 §7).** A `<button>` wired to `onMouseDown` is not: a keyboard raises `click` and nothing else, which made the Inspector entirely mouse-operable until a browser test said so |
+| Cost | nothing polls while a panel is shut, and nothing polls a tab that is not showing (§8.6) |
+
+**Do not reuse a class from another component to get its shape.** `.hc-facts` is a definition
+list that elides on one line, and the Inspector borrowed it for a list that has to wrap: every
+allow-list path inherited `white-space: nowrap` and pushed its box 166 px wide at every width.
+Three attempts to fix it with `overflow-wrap` and `min-width` failed because none of them
+mentioned the property that was actually wrong. A panel that wraps is a different component from
+a sidebar that elides, and it needs a class of its own.
+
 ## 5. Motion
 
 Named springs, used verbatim from island-ui:
