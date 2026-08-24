@@ -1740,11 +1740,14 @@ have windows appear unasked.** It is theirs to run.
 
 - ~~**The semantic arm of `brain.context` has never run against a real embedding model.**~~ Run
   on 2026-08-24, and it works. See below.
-- **Consolidation has never run over a corpus of memories.** They are nodes, so salience,
-  tiering and decay reach them for free — and "for free" is an argument, not a measurement.
-  Nobody has looked at whether a decay curve tuned for files suits a memory. D76's revisit
-  trigger is the honest place to start: if a memory's usefulness does not predict a human
-  calling it useful, the signal is decoration and should be removed rather than tuned.
+- ~~**Consolidation has never run over a corpus of memories.**~~ Run, and it found that
+  **every memory scored exactly 0.0 and stayed in Working for ever**: the scoring pass selects
+  `kind IN ('file', 'dir')`, so memories were not scored low, they were not scored. D80 has the
+  whole of it, including the part where adding the component did not work either because
+  `Components::sum()` lists its fields by hand. Memories are scored now, `usefulness` is a real
+  component of the shared model, and a memory's tier floor is Long-term rather than Cold. What
+  remains open is D76's own question — whether usefulness predicts a human calling something
+  useful — and that needs reports that only use produces.
 
 ## The semantic arm, against the real model
 

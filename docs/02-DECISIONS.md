@@ -2279,3 +2279,59 @@ estimate is bounded by word count below and character count above, and the pack 
 **Revisit when:** the caller can declare its tokeniser and ship the vocabulary — an MCP client
 could — or when a measurement of the estimate against a real tokeniser on this corpus exists.
 Until then, adding a second tokeniser would be adding a second wrong answer.
+
+---
+
+### D80 — "It gets salience for free" was a claim about effort, not about fit
+**Status:** ACCEPTED
+
+D74's argument for making a memory a node rather than a second store was that salience, decay,
+tiering and consolidation would then apply to it without being written twice. That argument is
+still right, and the sentence *"so it gets them for free"* was not: nobody had run the
+consolidation pass over a corpus of memories, and when somebody finally did, **every memory in
+the index scored exactly 0.0 and sat in the Working tier for ever.**
+
+The reason was one line. `raw_nodes`, which feeds the scoring pass, selects
+`WHERE path IS NOT NULL AND kind IN ('file', 'dir')` — written before there was any node kind
+that legitimately had no path. Memories were not scored low. They were not scored.
+
+Three things changed, and the third is the one worth remembering.
+
+**One: memories are in the pass.** Same query, same scoring function, same tier assignment. Not
+a second engine — that is the thing D74 refuses, and a second engine is what this would have
+grown into the moment somebody wanted memories ranked at all.
+
+**Two: `usefulness` is a component of the shared model.** D76 said it "enters salience", and it
+did not enter anything: the column was written, printed by the Inspector, and read by nothing.
+It is `w8` now, zero for every file because a file cannot be reported useful, squashed by `tanh`
+so that the first report to say a memory helped moves it noticeably and the fortieth does not
+move it at all. Weighted below `recency` on purpose: a memory that has proved useful should
+outrank one that has not, and it should not outrank being about what is happening right now.
+The measured result, on a store of three memories and a two-month gap: fresh 1.68 in Working,
+ignored-for-two-months 0.13 in Short-term, pinned 10.13 in Working.
+
+**Three: a memory's tier floor is Long-term, never Cold.** Cold means "path and stat, no
+embeddings, read only on an explicit deep search". That is a coherent thing to say about a file
+and an incoherent one about a memory, whose text is the whole of it — there is nothing left to
+be metadata-only about. Nothing breaks today, because memory retrieval does not filter on tier;
+it is a word that would mean the wrong thing the first time anything acted on it.
+
+**And a fourth thing, which is the actual lesson.** Adding the component did not work either,
+and for a while it was worse than not adding it: `Components::sum()` lists its fields by hand,
+so the new one was set, stored, printed — and contributed nothing. Two memories with entirely
+different histories scored identically to sixteen decimal places, which is a suspicious enough
+result to notice only because a test happened to compare them. There is now a test that assigns
+each component a distinct power of two and asserts the total, so a missing term is not only
+detected but *named* by the difference. It was checked against the broken version before being
+kept.
+
+**And a fifth, found by the test suite two minutes later.** Scoring memories meant the pass now
+held ids for nodes that the memory housekeeping — expiry — was about to *delete*, and the write
+in step 5 failed the entire consolidation with `FOREIGN KEY constraint failed`. Housekeeping runs
+before the scoring now, which is also where it belongs on its own merits: scoring something that
+is about to be deleted is wasted work. The order of the steps in a pass is part of its
+specification, not an implementation detail.
+
+**Revisit when:** enough outcome reports exist to ask D76's own question — whether a memory's
+usefulness predicts a human calling it useful. If it does not, `w8` is decoration and should be
+removed rather than tuned.

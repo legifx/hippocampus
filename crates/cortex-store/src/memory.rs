@@ -227,6 +227,12 @@ struct RawNode {
     zone: Option<i64>,
     first_seen: i64,
     salience: f64,
+    /// True for a `memory` node. Two things depend on it: the usefulness component, which is
+    /// zero for anything else, and the tier floor — a memory is never demoted to Cold, because
+    /// Cold means "metadata only, no embeddings" and a memory *is* its text.
+    is_memory: bool,
+    /// What this memory has earned from outcome reports. Zero for a file, always (M11, D76).
+    usefulness: f64,
 }
 
 /// A node's episodes, split into the two kinds salience cares about.
@@ -302,6 +308,27 @@ impl Store {
         };
         let clusters = proposed;
 
+        // 3b — The memory layer's own housekeeping (M11).
+        //
+        // Here rather than on a timer of its own because it is the same question the rest of
+        // this pass asks — what still deserves to be in the hot part of the index — and because
+        // a second scheduler is a second thing to be wrong about when it last ran.
+        //
+        // **Before the scoring, and that is not a preference.** Expiry deletes nodes. Running
+        // it afterwards leaves the scoring pass holding ids that no longer exist, and the write
+        // in step 5 fails the whole transaction with `FOREIGN KEY constraint failed` — which is
+        // exactly what happened the moment memories started being scored at all. Scoring
+        // something that is about to be deleted is also just wasted work.
+        let memories_total = self.count_memories()?;
+        let (memories_expired, memories_unreported) = if p.dry_run {
+            (self.expiring_memory_count(p.now)?, self.unreported_memory_count(p.decay.min_retrievals)?)
+        } else {
+            (
+                self.expire_memories(p.now)?,
+                self.decay_unreported(p.decay.min_retrievals, p.decay.step)?,
+            )
+        };
+
         // 4 — Score and tier.
         let degrees = self.degrees()?;
         let degree_reference = percentile_degree(&degrees, 0.95);
@@ -329,9 +356,10 @@ impl Store {
                 pinned: node.pinned,
                 in_active_project: node.zone.is_some_and(|z| active_zones.contains(&z)),
                 noise: noise_score(&node.path),
+                usefulness: node.usefulness,
             };
             let components = score(&input, &p.weights);
-            let tier = assign_tier(
+            let mut tier = assign_tier(
                 node.tier,
                 components.total,
                 node.pinned,
@@ -340,6 +368,14 @@ impl Store {
                 p.now,
                 &p.tiers,
             );
+            // A memory's floor is Long-term, never Cold. Cold means "path and stat, no
+            // embeddings, read only on an explicit deep search" — which is a coherent thing to
+            // say about a file and an incoherent one about a memory, whose text is all there
+            // is of it. Demoting one to Cold would be a word that means the wrong thing the
+            // first time anything acts on it.
+            if node.is_memory && tier == Tier::Cold {
+                tier = Tier::Ltm;
+            }
 
             if node.pinned {
                 pinned_held += 1;
@@ -354,21 +390,6 @@ impl Store {
             ranked.push((components.total, index));
             updates.push((node.id, components.total, tier, components));
         }
-
-        // 4b — The memory layer's own housekeeping (M11).
-        //
-        // Here rather than on a timer of its own because it is the same question the rest of
-        // this pass asks — what still deserves to be in the hot part of the index — and because
-        // a second scheduler is a second thing to be wrong about when it last ran.
-        let memories_total = self.count_memories()?;
-        let (memories_expired, memories_unreported) = if p.dry_run {
-            (self.expiring_memory_count(p.now)?, self.unreported_memory_count(p.decay.min_retrievals)?)
-        } else {
-            (
-                self.expire_memories(p.now)?,
-                self.decay_unreported(p.decay.min_retrievals, p.decay.step)?,
-            )
-        };
 
         let (orphans, duplicates) = self.health()?;
 
@@ -926,11 +947,19 @@ impl Store {
 
     fn raw_nodes(&self) -> Result<Vec<RawNode>> {
         let conn = self.conn();
+        // Memories are in this list, and they were not until it was measured. "A memory is a
+        // node, so it gets salience, tiering and decay for free" (D74) is a claim about
+        // *effort*, not about *fit* — and this query's `kind IN ('file', 'dir')` meant every
+        // memory in the index scored exactly 0.0 and stayed in Working for ever, which is not
+        // free, it is absent. D80 has the measurement and what it changed.
         let mut stmt = conn.prepare(
-            "SELECT id, path, tier, pinned, zone_id, first_seen, salience
-             FROM nodes
-             WHERE path IS NOT NULL AND kind IN ('file', 'dir')
-             ORDER BY id",
+            "SELECT n.id, coalesce(n.path, ''), n.tier, n.pinned, n.zone_id, n.first_seen,
+                    n.salience, n.kind = 'memory', coalesce(m.usefulness, 0.0)
+             FROM nodes n
+             LEFT JOIN memories m ON m.node_id = n.id
+             WHERE n.kind IN ('file', 'dir', 'memory')
+               AND (n.path IS NOT NULL OR n.kind = 'memory')
+             ORDER BY n.id",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok((
@@ -941,12 +970,15 @@ impl Store {
                 row.get::<_, Option<i64>>(4)?,
                 row.get::<_, i64>(5)?,
                 row.get::<_, f64>(6)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, f64>(8)?,
             ))
         })?;
 
         let mut out = Vec::new();
         for row in rows {
-            let (id, path, tier, pinned, zone, first_seen, salience) = row?;
+            let (id, path, tier, pinned, zone, first_seen, salience, is_memory, usefulness) =
+                row?;
             out.push(RawNode {
                 id,
                 path,
@@ -956,6 +988,8 @@ impl Store {
                 zone,
                 first_seen,
                 salience,
+                is_memory: is_memory != 0,
+                usefulness,
             });
         }
         Ok(out)
@@ -1316,6 +1350,129 @@ pub fn source_label(source: EdgeSource) -> &'static str {
 mod tests {
     /// A view of the brain that drew the files and left out what the agents learned would be a
     /// view of half of it, and the half it left out is the half M11 is about.
+    /// What the salience engine actually does to a memory, measured rather than assumed.
+    ///
+    /// "A memory is a node, so it gets salience, tiering and decay for free" is the argument
+    /// D74 makes. Free is a claim about *effort*, not about *fit*, and nobody had run the pass
+    /// over a corpus of memories to see whether the curve tuned for files suits them. This is
+    /// that run, and what it found is written into the assertion below.
+    #[test]
+    fn what_consolidation_does_to_a_memory() {
+        use crate::memories::{MemoryFilter, NewMemory};
+        use cortex_core::memory::{MemoryKind, MemoryScope};
+        use cortex_core::model::Actor;
+
+        let store = Store::open_in_memory().unwrap();
+        let actor = Actor::Agent("a".into());
+        let day = 86_400;
+        let now = 100 * day;
+
+        // Three memories with three histories: one written today, one written two months ago
+        // and never mentioned since, and one written two months ago and pinned.
+        let fresh = store
+            .remember(
+                &NewMemory::new(MemoryScope::Global, MemoryKind::Fact, "written today"),
+                &actor,
+                now - 60,
+            )
+            .unwrap()
+            .node_id;
+        let old = store
+            .remember(
+                &NewMemory::new(MemoryScope::Global, MemoryKind::Fact, "written two months ago"),
+                &actor,
+                now - 60 * day,
+            )
+            .unwrap()
+            .node_id;
+        let pinned = store
+            .remember(
+                &NewMemory::new(MemoryScope::Global, MemoryKind::Preference, "always this"),
+                &actor,
+                now - 60 * day,
+            )
+            .unwrap()
+            .node_id;
+        store.set_pinned(pinned, true).unwrap();
+
+        store.consolidate(&ConsolidateParams::new(now)).unwrap();
+
+        let by_id = |id: cortex_core::ids::NodeId| {
+            store
+                .list_memories(&MemoryFilter::everything(now))
+                .unwrap()
+                .into_iter()
+                .find(|m| m.node_id == id.0)
+                .unwrap()
+        };
+        let tier = |id: cortex_core::ids::NodeId| {
+            store.node_by_id(id).unwrap().unwrap().tier.as_str().to_string()
+        };
+
+        // What was found, stated as the assertion so that a change to the weights has to come
+        // back here and argue with it:
+        //
+        // * A memory carries the episode that created it, so it is never scoreless the way an
+        //   unopened file is — writing it *is* an access.
+        // * A pin holds a memory in the hot tier exactly as it holds a file, which is what
+        //   makes `preference` usable: the scope of a preference is "always", and always is
+        //   what a pin means.
+        // * **A two-month-old memory nobody has mentioned is demoted, and that is right in
+        //   principle and wrong in one detail**: the tier it is demoted towards is `cold`,
+        //   which for a file means "metadata only, no embeddings" — and a memory *is* its text,
+        //   so there is nothing left of it to be metadata-only about. Nothing breaks today,
+        //   because memory retrieval does not filter on tier; it is a word that will mean the
+        //   wrong thing the first time something does.
+        assert!(
+            by_id(fresh).salience > by_id(old).salience,
+            "a memory written today did not outscore one from two months ago"
+        );
+        assert_eq!(tier(pinned), "working", "a pin did not hold a memory");
+        assert!(
+            by_id(pinned).salience > by_id(old).salience,
+            "pinning did not lift a memory above an ignored one"
+        );
+        assert!(
+            by_id(fresh).salience > 0.0,
+            "a memory written a minute ago scored zero, so writing it did not count as \
+             touching it — which would mean every memory starts life indistinguishable from a \
+             file nobody has ever opened"
+        );
+
+        // The numbers this run produced, pinned so that a change to the weights has to come
+        // back here: fresh 1.68 in Working, ignored-for-two-months 0.13 in Short-term, pinned
+        // 10.13 in Working.
+        assert_eq!(tier(fresh), "working");
+        assert_eq!(tier(old), "stm");
+
+        // And what a memory has earned moves it, which is the whole of D76's second half.
+        // Without this the `usefulness` column would be a number the Inspector prints and
+        // nothing reads.
+        let earned = store
+            .remember(
+                &NewMemory::new(MemoryScope::Global, MemoryKind::Fact, "this one proved useful"),
+                &actor,
+                now - 60 * day,
+            )
+            .unwrap()
+            .node_id;
+        store
+            .conn()
+            .execute(
+                "UPDATE memories SET usefulness = 1.0 WHERE node_id = ?1",
+                rusqlite::params![earned.0],
+            )
+            .unwrap();
+        store.consolidate(&ConsolidateParams::new(now)).unwrap();
+        assert!(
+            by_id(earned).salience > by_id(old).salience,
+            "a memory a human called useful did not outrank one nobody has ever mentioned: \
+             {} against {}",
+            by_id(earned).salience,
+            by_id(old).salience
+        );
+    }
+
     #[test]
     fn a_memory_is_drawn_by_the_graph_and_says_what_it_says() {
         use crate::memories::NewMemory;

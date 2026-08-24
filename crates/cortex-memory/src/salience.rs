@@ -43,6 +43,17 @@ pub struct Weights {
     pub project: f64,
     /// w7 — build output, caches, download debris. Subtracted.
     pub noise: f64,
+    /// w8 — what a memory has *earned*, from outcome reports (M11, D76).
+    ///
+    /// Zero for every file, because a file cannot be reported useful; this is the one component
+    /// that exists for the memory layer, and it is here rather than in a scoring engine of its
+    /// own because a second engine is exactly what D74 refuses. Signed on the way in: a memory
+    /// reported as noise carries a negative usefulness and this term subtracts.
+    ///
+    /// Smaller than `recency` on purpose. A memory that has proved useful should outrank one
+    /// that has not, and it should not outrank *being about what is happening right now* — the
+    /// point of a context pack is the task in front of the agent, not a hall of fame.
+    pub usefulness: f64,
     /// Half-life of the recency component, in days.
     pub recency_half_life_days: f64,
     /// Half-life of stored salience between consolidations, in days. This is the λ in
@@ -60,6 +71,7 @@ impl Default for Weights {
             pin: 10.0,
             project: 0.5,
             noise: 2.0,
+            usefulness: 1.0,
             recency_half_life_days: 14.0,
             decay_half_life_days: 30.0,
         }
@@ -100,6 +112,12 @@ pub struct Inputs {
     pub in_active_project: bool,
     /// `0.0` for ordinary content, `1.0` for certain debris. See [`noise_score`].
     pub noise: f64,
+    /// What a memory has earned from outcome reports (M11). Zero for a file, always.
+    ///
+    /// Signed and unbounded on the way in — it is a running sum of weighted reports — and
+    /// squashed into `[-1, 1]` by [`score`], because an unbounded term would let a memory with
+    /// forty helpful reports outrank a pin.
+    pub usefulness: f64,
 }
 
 impl Inputs {
@@ -116,6 +134,7 @@ impl Inputs {
             pinned: false,
             in_active_project: false,
             noise: 0.0,
+            usefulness: 0.0,
         }
     }
 }
@@ -135,6 +154,11 @@ pub struct Components {
     /// Negative or zero. Stored signed so that the fields sum to `total` without the reader
     /// having to remember which one is subtracted.
     pub noise: f64,
+    /// Signed: positive for a memory that has been reported useful, negative for one reported
+    /// as noise or retrieved repeatedly without ever being mentioned (M11, D76). Always zero
+    /// for a file.
+    #[serde(default)]
+    pub usefulness: f64,
     pub total: f64,
 }
 
@@ -142,7 +166,14 @@ impl Components {
     /// The sum of the parts, recomputed. Used by the test that guards the invariant, and by
     /// anything that wants to check a stored breakdown it did not compute itself.
     pub fn sum(&self) -> f64 {
-        self.access + self.recency + self.edits + self.centrality + self.pin + self.project + self.noise
+        self.access
+            + self.recency
+            + self.edits
+            + self.centrality
+            + self.pin
+            + self.project
+            + self.noise
+            + self.usefulness
     }
 }
 
@@ -186,6 +217,11 @@ pub fn score(input: &Inputs, w: &Weights) -> Components {
 
     let noise_unit = input.noise.clamp(0.0, 1.0);
 
+    // Squashed rather than clamped, so that the difference between one report and two still
+    // registers while forty and forty-one do not. `tanh` at this scale reaches 0.76 at one
+    // human-confirmed report and 0.96 at two.
+    let usefulness_unit = (input.usefulness / USEFULNESS_REFERENCE).tanh();
+
     let components = Components {
         access: w.access * access_unit,
         recency: w.recency * recency_unit,
@@ -194,6 +230,7 @@ pub fn score(input: &Inputs, w: &Weights) -> Components {
         pin: if input.pinned { w.pin } else { 0.0 },
         project: if input.in_active_project { w.project } else { 0.0 },
         noise: -w.noise * noise_unit,
+        usefulness: w.usefulness * usefulness_unit,
         total: 0.0,
     };
     Components {
@@ -219,6 +256,13 @@ pub fn single_touch_ceiling(w: &Weights) -> f64 {
     let access = 1.0_f64.ln_1p() / ACCESS_REFERENCE.ln_1p();
     w.access * access + w.recency
 }
+
+/// The scale at which earned usefulness saturates.
+///
+/// One human-confirmed helpful report is `+1.0`, so this reaching 0.76 of the weight at a single
+/// report is deliberate: the first person to say a memory was useful should move it noticeably,
+/// and the fortieth should not move it at all.
+const USEFULNESS_REFERENCE: f64 = 1.0;
 
 /// `salience(t) = base · e^(−λ·Δt) + Σ(reinforcements)` — the specification's decay law.
 ///
@@ -313,6 +357,40 @@ pub fn noise_score(path: &str) -> f64 {
 
 #[cfg(test)]
 mod tests {
+
+    /// Every component reaches the total.
+    ///
+    /// `Components::sum()` lists its fields by hand, so adding a component and forgetting the
+    /// one line that adds it up produces a score that is silently missing a term — which is
+    /// precisely what happened when `usefulness` arrived: the field was set, printed and
+    /// stored, and contributed nothing. Nothing failed, and two memories with different
+    /// histories scored identically to sixteen decimal places.
+    ///
+    /// Distinct powers of two, so that a missing field is not only detected but *named* by the
+    /// difference.
+    #[test]
+    fn every_component_is_part_of_the_total() {
+        let parts = Components {
+            access: 1.0,
+            recency: 2.0,
+            edits: 4.0,
+            centrality: 8.0,
+            pin: 16.0,
+            project: 32.0,
+            noise: 64.0,
+            usefulness: 128.0,
+            total: 0.0,
+        };
+        let missing = 255.0 - parts.sum();
+        assert_eq!(
+            missing, 0.0,
+            "a component worth {missing} is set but never added up — the powers of two say \
+             which: 1 access, 2 recency, 4 edits, 8 centrality, 16 pin, 32 project, 64 noise, \
+             128 usefulness"
+        );
+    }
+
+
     use super::*;
 
     fn at(now: i64) -> Inputs {
