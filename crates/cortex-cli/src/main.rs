@@ -1374,6 +1374,17 @@ async fn run(args: Args) -> Result<()> {
                         println!("    {snippet}");
                     }
                 }
+                if !result.memories.is_empty() {
+                    println!("\nwhat is known about it and is not in a file:");
+                    for memory in &result.memories {
+                        println!(
+                            "  {:<11} {}",
+                            memory.kind.as_str(),
+                            first_line(&memory.text)
+                        );
+                        println!("              {} · {}", memory.actor, memory.scope.as_str());
+                    }
+                }
                 if !result.associations.is_empty() {
                     println!("\nbrought back with them:");
                     for a in &result.associations {

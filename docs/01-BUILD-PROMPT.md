@@ -359,7 +359,7 @@ Reading file contents in any form.
 | Tool | Purpose |
 |---|---|
 | `brain.search(query, mode, filters, k)` | main search, all modes |
-| `brain.recall(cue, depth)` | pattern completion — fragment to context |
+| `brain.recall(cue, depth)` | pattern completion — fragment to context. Reaches memories directly as well as through the files they are about (M11) |
 | `brain.neighbors(node_id, edge_types, depth)` | associative traversal |
 | `brain.timeline(from, to, filter)` | episodic retrieval |
 | `brain.working_set()` | what the human is doing right now |

@@ -1554,19 +1554,55 @@ async fn dispatch(
             }
 
             let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
-            if let Err(e) = surface(daemon, &ctx.actor, &auditor).gate("brain.recall") {
+            let recaller = surface(daemon, &ctx.actor, &auditor);
+            if let Err(e) = recaller.gate("brain.recall") {
                 return Err(tool_error(e));
             }
+
+            // The cue against the memory layer as well. Pattern completion that could only
+            // reach what an agent learned when the learning happened to hang off a file the
+            // file search also found would be reliable for the easy half of the question and
+            // silent for the other.
+            //
+            // The task form of the expression rather than the search form: a cue is a phrase,
+            // and a conjunction of every word in it matches nothing over a store of thousands.
+            let mut memories = Vec::new();
+            if let Some(expression) = cortex_query::lexical::task_expression(&params.cue) {
+                let reader = recaller.reader_scope(None, &[]);
+                let now = indexer::unix_now();
+                match daemon.store.search_memories(
+                    &expression,
+                    &reader.visible_scopes(),
+                    now,
+                    params.limit.unwrap_or(10),
+                ) {
+                    Ok(hits) => {
+                        for hit in hits {
+                            if let Ok(Some(memory)) = daemon.store.memory(hit.node_id) {
+                                memories.push(memory);
+                            }
+                        }
+                    }
+                    Err(e) => tracing::warn!(error = %e, "the memory arm of recall failed"),
+                }
+            }
+
             auditor.allowed(
                 indexer::unix_now(),
                 "brain.recall",
                 &serde_json::json!({ "cue": params.cue, "depth": depth }),
-                &format!("{} hits, {} associations", outcome.hits.len(), associations.len()),
+                &format!(
+                    "{} hits, {} associations, {} memories",
+                    outcome.hits.len(),
+                    associations.len(),
+                    memories.len()
+                ),
             );
 
             json(RecallResult {
                 hits: outcome.hits,
                 associations,
+                memories,
                 mode: outcome.mode,
                 elapsed_ms: started.elapsed().as_millis() as u64,
             })

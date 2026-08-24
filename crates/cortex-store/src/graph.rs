@@ -156,14 +156,33 @@ impl Store {
         self.fill_notes(out)
     }
 
-    /// Attach the text of any annotation nodes in a traversal result.
+    /// Attach the text of any node in a traversal result whose whole content is its text.
+    ///
+    /// Annotations and memories both. A traversal that returned an id for either would make the
+    /// caller fetch every one of them to find out what it says, which is the thing `note`
+    /// exists to prevent — and it was returning bare ids for memories, which is worse than for
+    /// annotations because a memory has no path to fall back on either.
     fn fill_notes(&self, mut neighbors: Vec<Neighbor>) -> Result<Vec<Neighbor>> {
         for neighbor in &mut neighbors {
-            if neighbor.kind == "annotation" {
-                neighbor.note = self.annotation_text(NodeId(neighbor.node_id))?;
-            }
+            neighbor.note = match neighbor.kind.as_str() {
+                "annotation" => self.annotation_text(NodeId(neighbor.node_id))?,
+                "memory" => self.memory_text(NodeId(neighbor.node_id))?,
+                _ => continue,
+            };
         }
         Ok(neighbors)
+    }
+
+    /// The text a memory node carries.
+    pub fn memory_text(&self, node: NodeId) -> Result<Option<String>> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT text FROM memories WHERE node_id = ?1",
+                params![node.0],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?)
     }
 
     /// The note an annotation node carries.

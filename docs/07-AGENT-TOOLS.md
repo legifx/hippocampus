@@ -45,7 +45,7 @@ two are different questions and the second one is the one this system is unusual
 | tool | what it answers |
 |---|---|
 | `brain_search(query, mode, limit)` | files, by meaning, by words, or by path |
-| `brain_recall(cue, depth)` | pattern completion: a fragment, and what belongs with it |
+| `brain_recall(cue, depth)` | pattern completion: a fragment, and what belongs with it — files, the graph around them, **and the memories the cue names** |
 | `brain_neighbors(target, edge_types, depth)` | the associative graph around one node |
 | `brain_timeline(from, to)` | what happened, in order |
 | `brain_working_set()` | what the human is doing right now, with the basis it was derived from |

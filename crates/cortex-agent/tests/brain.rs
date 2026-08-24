@@ -504,3 +504,66 @@ fn the_working_set_ignores_what_is_outside_its_window() {
         .nodes
         .is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// The memory layer's half of the traversal (M11)
+// ---------------------------------------------------------------------------
+
+/// A memory reached by walking the graph comes back with what it says.
+///
+/// It came back as a bare node id, which is worse for a memory than for an annotation: an
+/// annotation at least hangs off a path the caller can print, and a memory has neither. An
+/// agent traversing from a file would have been told "node 7 is associated with this, by an
+/// `annotates` edge" and nothing else, and would have had to fetch every one of them —
+/// which is precisely what the `note` field exists to prevent.
+#[test]
+fn a_memory_found_by_traversal_says_what_it_says() {
+    use cortex_core::memory::{MemoryKind, MemoryScope};
+    use cortex_store::memories::NewMemory;
+
+    let (env, file, _) = Env::new();
+    let path = env
+        .store
+        .node_by_id(file)
+        .unwrap()
+        .unwrap()
+        .path
+        .display()
+        .to_string();
+
+    env.store
+        .remember(
+            &NewMemory {
+                subject: Some((file, path)),
+                ..NewMemory::new(
+                    MemoryScope::Agent("tester".into()),
+                    MemoryKind::Observation,
+                    "this file is output rather than input, whatever its name says",
+                )
+            },
+            &Actor::Agent("tester".into()),
+            10,
+        )
+        .unwrap();
+
+    let s = env.surface(true);
+    let found = s
+        .neighbors(&NeighborsParams {
+            target: Target::Node(file.0),
+            edge_types: vec![],
+            depth: None,
+            limit: None,
+        })
+        .unwrap();
+
+    let memory = found
+        .neighbors
+        .iter()
+        .find(|n| n.kind == "memory")
+        .expect("the memory is not reachable from the file it is about");
+    assert_eq!(
+        memory.note.as_deref(),
+        Some("this file is output rather than input, whatever its name says"),
+        "a memory came back as an id with no text"
+    );
+}

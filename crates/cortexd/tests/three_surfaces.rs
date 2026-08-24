@@ -506,6 +506,39 @@ fn a_memory_written_once_is_returned_by_every_surface() {
     assert!(item["basis"]["lexical_rank"].as_u64().is_some());
 }
 
+/// Pattern completion reaches what an agent learned, not only the files it learned about.
+///
+/// `brain.recall` walked outwards from what the *file* search found, so a memory was reachable
+/// only when it happened to hang off a file the cue also matched — reliable for the easy half
+/// of the question and silent for the other. The cue goes to the memory layer too now.
+#[test]
+fn recall_brings_back_a_memory_the_cue_names() {
+    let daemon = Daemon::start();
+
+    daemon.rpc(
+        "brain.remember",
+        json!({
+            "text": "the thumbnailer runs in its own process so a malformed image cannot take \
+                     the daemon with it",
+            "kind": "decision",
+            "scope": "global",
+        }),
+    );
+
+    // A cue that names the memory and matches no file in this fixture at all.
+    let recalled = daemon.rpc("brain.recall", json!({ "cue": "why the thumbnailer is separate" }));
+    let memories = recalled["memories"].as_array().cloned().unwrap_or_default();
+    assert!(
+        memories
+            .iter()
+            .any(|m| m["text"].as_str().unwrap_or("").contains("malformed image")),
+        "the cue named a memory and recall did not bring it back: {recalled}"
+    );
+    // And it arrives whole, with who wrote it — a memory a caller cannot attribute is one it
+    // cannot argue with.
+    assert_eq!(memories[0]["actor"], json!("agent:surfaces"));
+}
+
 /// M11 §7: scope isolation, asserted at the surface rather than only in the store.
 #[test]
 fn one_agents_memory_does_not_reach_another_agent() {

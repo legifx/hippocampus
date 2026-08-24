@@ -854,6 +854,17 @@ pub struct RecallResult {
     pub hits: Vec<SearchHit>,
     /// What the graph adds around those hits, and why each one is here.
     pub associations: Vec<RecalledAssociation>,
+    /// Memories the cue matched directly (M11).
+    ///
+    /// Separate from `associations`, which are things reached *through* a file. A memory that
+    /// answers the cue on its own is not an association with anything — it is a hit, and the
+    /// only reason it is not in `hits` is that a `SearchHit` has a path and a memory does not.
+    ///
+    /// Without this, pattern completion could only reach what an agent learned if the learning
+    /// happened to hang off a file the file search also found, which is most of what makes
+    /// recall worth calling and none of what makes it reliable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub memories: Vec<cortex_core::memory::Memory>,
     pub mode: QueryMode,
     pub elapsed_ms: u64,
 }
