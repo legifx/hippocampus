@@ -30,7 +30,9 @@
 //! comes out is what was written, attributed to whoever wrote it.
 
 use cortex_core::ids::{ChunkId, NodeId};
-use cortex_core::memory::{Memory, MemoryKind, MemoryScope, PackArm, ReaderScope};
+use cortex_core::memory::{
+    Basis, ContextPack, Memory, MemoryKind, PackArm, PackItem, ReaderScope,
+};
 use cortex_core::tokens;
 use cortex_embed::{Embedder, Input};
 use cortex_store::embeddings::ModelRef;
@@ -38,7 +40,6 @@ use cortex_store::memories::{MemoryFilter, PackItemRecord};
 use cortex_store::vectors::VectorIndex;
 use cortex_store::Store;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 
 /// How many candidates each arm contributes before fusion.
 pub const DEFAULT_CANDIDATES: usize = 60;
@@ -110,86 +111,23 @@ impl<'a> ContextParams<'a> {
     }
 }
 
-/// Why one item is in the pack.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct Basis {
-    pub arm: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lexical_rank: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub semantic_rank: Option<u32>,
-    pub fused: f64,
-    pub salience: f64,
-    pub usefulness: f64,
-    pub confidence: f64,
-    /// Who wrote it, and when. A memory an agent cannot attribute is one it cannot argue with.
-    pub actor: String,
-    pub written_at: i64,
-    pub helped: i64,
-    pub noise: i64,
-    pub retrieved: i64,
-    pub human_confirmed: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct PackItem {
-    pub node_id: i64,
-    pub arm: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kind: Option<MemoryKind>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scope: Option<MemoryScope>,
-    pub text: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path: Option<PathBuf>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub byte_range: Option<(i64, i64)>,
-    pub tokens: usize,
-    pub basis: Basis,
-}
-
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ContextPack {
-    pub pack_id: String,
-    pub task: String,
-    pub budget_tokens: usize,
-    /// What the pack is estimated to cost. An estimate on purpose, and biased upwards — see
-    /// `cortex_core::tokens` and D79.
-    pub used_tokens: usize,
-    pub items: Vec<PackItem>,
-    /// Candidates that were found and did not fit. A pack that silently drops half its
-    /// candidates and one that had nothing to say look identical without this.
-    pub dropped: usize,
-    /// Things the caller should know: a budget too small for the preferences, a missing model,
-    /// a scope with nothing in it.
-    pub notes: Vec<String>,
-    /// The block, formatted and ready to paste into a prompt.
-    pub rendered: String,
-}
-
-impl ContextPack {
-    /// The record the store keeps so that an outcome reported later can be attributed.
-    pub fn records(&self) -> Vec<PackItemRecord> {
-        self.items
-            .iter()
-            .enumerate()
-            .map(|(rank, item)| PackItemRecord {
-                node_id: NodeId(item.node_id),
-                rank,
-                arm: PackArm::parse(&item.arm).unwrap_or(PackArm::Lexical),
-                score: item.basis.fused,
-            })
-            .collect()
-    }
-
-    /// The memories in it, for `note_retrieved`.
-    pub fn memory_ids(&self) -> Vec<NodeId> {
-        self.items
-            .iter()
-            .filter(|item| item.kind.is_some())
-            .map(|item| NodeId(item.node_id))
-            .collect()
-    }
+/// The record the store keeps of one pack, so that an outcome reported ten minutes later can
+/// be attributed to what the pack actually contained.
+///
+/// Here rather than as a method on [`ContextPack`] because the record type belongs to the
+/// storage layer, and the pack itself is a domain type that the CLI deserialises without
+/// linking storage at all.
+pub fn records(pack: &ContextPack) -> Vec<PackItemRecord> {
+    pack.items
+        .iter()
+        .enumerate()
+        .map(|(rank, item)| PackItemRecord {
+            node_id: NodeId(item.node_id),
+            rank,
+            arm: PackArm::parse(&item.arm).unwrap_or(PackArm::Lexical),
+            score: item.basis.fused,
+        })
+        .collect()
 }
 
 /// Assemble a pack.
@@ -375,7 +313,7 @@ fn memory_candidates(
     // The lexical arm.
     let mut lexical: Vec<NodeId> = Vec::new();
     let mut chunk_of: HashMap<i64, ChunkId> = HashMap::new();
-    if let Some(expr) = crate::lexical::match_expression(params.task, false) {
+    if let Some(expr) = crate::lexical::task_expression(params.task) {
         match params.store.search_memories_with(
             &expr,
             visible,
@@ -737,6 +675,7 @@ fn render(task: &str, items: &[PackItem]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cortex_core::memory::MemoryScope;
     use cortex_core::model::Actor;
     use cortex_store::memories::NewMemory;
 
@@ -1043,7 +982,7 @@ mod tests {
         write(&store, MemoryScope::Global, MemoryKind::Fact, "the second thing");
         let pack = pack(&store, &ReaderScope::for_agent("a"), "thing", 2048);
 
-        let records = pack.records();
+        let records = records(&pack);
         assert_eq!(records.len(), pack.items.len());
         for (record, item) in records.iter().zip(&pack.items) {
             assert_eq!(record.node_id.0, item.node_id);

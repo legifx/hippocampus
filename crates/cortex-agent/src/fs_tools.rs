@@ -119,6 +119,16 @@ impl Surface<'_> {
         Err(self.auditor.refuse(self.now, tool, args, r).into())
     }
 
+    /// The same, for tool modules outside this file.
+    pub(crate) fn refuse_public<T>(
+        &self,
+        tool: &str,
+        args: &serde_json::Value,
+        r: Refusal,
+    ) -> ToolResult<T> {
+        self.refuse(tool, args, r)
+    }
+
     // -----------------------------------------------------------------------
     // Reading
     // -----------------------------------------------------------------------

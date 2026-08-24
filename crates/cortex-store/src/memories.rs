@@ -903,22 +903,7 @@ pub struct PackItemRecord {
     pub score: f64,
 }
 
-/// One agent's run against the surface.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct AgentSession {
-    pub id: String,
-    pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub task: Option<String>,
-    pub started_at: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ended_at: Option<i64>,
-    pub calls: i64,
-    pub refusals: i64,
-    /// Memories written during it. Derived, and the number a human actually wants.
-    #[serde(default)]
-    pub memories: i64,
-}
+pub use cortex_core::memory::AgentSession;
 
 impl Store {
     /// Record a pack and its items, in one transaction.

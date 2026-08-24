@@ -19,6 +19,8 @@ onnx = ["cortex-embed/onnx"]
 cortex-core.workspace = true
 cortex-store.workspace = true
 cortex-agent.workspace = true
+# Making a pack identifier out of what the pack is about, so two packs in one second differ.
+blake3.workspace = true
 cortex-rpc.workspace = true
 cortex-query.workspace = true
 cortex-ingest.workspace = true

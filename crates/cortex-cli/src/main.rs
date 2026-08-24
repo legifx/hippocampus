@@ -5,6 +5,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
+use cortex_core::memory::{AgentSession, ContextPack};
 use cortex_core::paths::Paths;
 use cortex_core::tools::{
     AnnotateParams, AnnotateResult, AppsForPathParams, AppsForPathResult, AppsSetDefaultParams,
@@ -15,6 +16,11 @@ use cortex_core::tools::{
     FsWriteParams, LinkParams, LinkResult, Mutation, NeighborsParams, NeighborsResult, PinParams,
     PinResult, Target, TimelineParams, TimelineResult, UndoParams, UndoResult, WorkingSetResult,
     WriteMode,
+};
+use cortex_core::tools::{
+    ChangedResult, ContextParams, ForgetMemoryParams, MemoriesParams, MemoriesResult,
+    OutcomeParams, OutcomeResult, RememberParams, RememberResult, ScopeRequest, SessionsParams,
+    SupersedeParams,
 };
 use cortex_rpc::client::Client;
 use cortex_rpc::protocol::{
@@ -139,6 +145,66 @@ enum Command {
     Reconcile {
         /// Reconcile only this path. Defaults to every configured root.
         path: Option<std::path::PathBuf>,
+    },
+    /// What the memory knows about a task, budgeted for a context window.
+    ///
+    /// The tool an agent reaches for first, on the command line so that a person can see
+    /// exactly what an agent would have been handed.
+    Context {
+        /// What you are about to do, in a sentence.
+        task: Vec<String>,
+        #[arg(long, default_value_t = 2048)]
+        budget: usize,
+        /// Restrict to these kinds. Repeatable.
+        #[arg(long = "kind")]
+        kinds: Vec<String>,
+        /// Include memories that have been superseded.
+        #[arg(long)]
+        history: bool,
+        /// Print the block exactly as an agent would receive it, and nothing else.
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Write something into the memory that is not in a file.
+    Remember {
+        text: String,
+        #[arg(long, default_value = "observation")]
+        kind: String,
+        /// session | agent | project | global. On the command line the default is `global`,
+        /// because a person typing this has no agent scope to write into.
+        #[arg(long, default_value = "global")]
+        scope: String,
+        /// The file this is about.
+        #[arg(long)]
+        about: Option<std::path::PathBuf>,
+        #[arg(long)]
+        confidence: Option<f64>,
+        /// Memory ids this replaces. Repeatable.
+        #[arg(long = "supersedes")]
+        supersedes: Vec<i64>,
+    },
+    /// List memories, with their scope, provenance and how useful they have proved.
+    Memories {
+        #[command(subcommand)]
+        command: Option<MemoryCommand>,
+        /// Repeatable.
+        #[arg(long = "kind")]
+        kinds: Vec<String>,
+        #[arg(long)]
+        about: Option<std::path::PathBuf>,
+        /// Include superseded memories.
+        #[arg(long)]
+        history: bool,
+        /// Every scope in the index, not only the ones this caller can see.
+        #[arg(long)]
+        all: bool,
+        #[arg(short, long, default_value_t = 50)]
+        limit: usize,
+    },
+    /// The agent sessions this daemon has seen.
+    Sessions {
+        #[arg(short, long, default_value_t = 20)]
+        limit: usize,
     },
     /// Attach a note to a file without touching the file.
     Annotate {
@@ -406,9 +472,36 @@ enum ZoneCommand {
 }
 
 #[derive(Subcommand, Debug)]
+enum MemoryCommand {
+    /// Delete a memory. For things that were never true; supersede what merely stopped being.
+    Forget { memory_id: i64 },
+    /// Mark one memory as replaced by another.
+    Supersede { old: i64, new: i64 },
+    /// Say which memories of a pack helped. A human's report outweighs an agent's.
+    Outcome {
+        pack_id: String,
+        #[arg(long = "helped")]
+        helped: Vec<i64>,
+        #[arg(long = "noise")]
+        noise: Vec<i64>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
 enum WatchCommand {
     /// Watch coverage, degradation and the last reconciliation.
     Status,
+}
+
+/// One line of a memory, for a listing. Memories are prose and some of them are paragraphs.
+fn first_line(text: &str) -> String {
+    let line = text.lines().next().unwrap_or("").trim();
+    if line.chars().count() > 96 {
+        let cut: String = line.chars().take(93).collect();
+        format!("{cut}…")
+    } else {
+        line.to_string()
+    }
 }
 
 fn main() -> Result<()> {
@@ -919,6 +1012,208 @@ async fn run(args: Args) -> Result<()> {
                          ({} unchanged, {} ms)",
                         s.added, s.updated, s.removed, s.renamed, s.unchanged, result.elapsed_ms
                     );
+                }
+            }
+        }
+
+        Command::Context { task, budget, kinds, history, raw } => {
+            let task = task.join(" ");
+            let pack: ContextPack = client
+                .call(
+                    method::BRAIN_CONTEXT,
+                    ContextParams {
+                        task: task.clone(),
+                        budget_tokens: Some(budget),
+                        kinds,
+                        include_history: Some(history),
+                        ..Default::default()
+                    },
+                )
+                .await?;
+            if args.json {
+                print_json(&pack)?;
+            } else if raw {
+                print!("{}", pack.rendered);
+            } else {
+                if pack.items.is_empty() {
+                    println!("nothing in memory bears on {task:?}");
+                }
+                print!("{}", pack.rendered);
+                println!();
+                println!(
+                    "{} items · ~{} of {} tokens · {} dropped · pack {}",
+                    pack.items.len(),
+                    pack.used_tokens,
+                    pack.budget_tokens,
+                    pack.dropped,
+                    pack.pack_id
+                );
+                for note in &pack.notes {
+                    println!("note: {note}");
+                }
+            }
+        }
+
+        Command::Remember { text, kind, scope, about, confidence, supersedes } => {
+            let scope = match scope.as_str() {
+                "session" => ScopeRequest::Session,
+                "agent" => ScopeRequest::Agent,
+                "project" => ScopeRequest::Project,
+                "global" => ScopeRequest::Global,
+                other => anyhow::bail!(
+                    "{other} is not a scope; it is one of session, agent, project, global"
+                ),
+            };
+            let result: RememberResult = client
+                .call(
+                    method::BRAIN_REMEMBER,
+                    RememberParams {
+                        text,
+                        kind: Some(kind),
+                        scope,
+                        session_id: None,
+                        about,
+                        confidence,
+                        supersedes,
+                        ttl_secs: None,
+                    },
+                )
+                .await?;
+            if args.json {
+                print_json(&result)?;
+            } else if result.deduplicated {
+                println!(
+                    "memory {} in {} already said exactly that",
+                    result.memory_id, result.scope
+                );
+            } else {
+                println!("memory {} in {}", result.memory_id, result.scope);
+                for id in &result.superseded {
+                    println!("  superseded {id}");
+                }
+                for duplicate in &result.possible_duplicates {
+                    println!(
+                        "  possibly the same as {}: {}",
+                        duplicate.node_id,
+                        first_line(&duplicate.text)
+                    );
+                }
+                if !result.possible_duplicates.is_empty() {
+                    println!("  (reported, not acted on — supersede them if they are)");
+                }
+            }
+        }
+
+        Command::Memories { command, kinds, about, history, all, limit } => match command {
+            Some(MemoryCommand::Forget { memory_id }) => {
+                let result: ChangedResult = client
+                    .call(method::BRAIN_FORGET_MEMORY, ForgetMemoryParams { memory_id })
+                    .await?;
+                if args.json {
+                    print_json(&result)?;
+                } else if result.changed {
+                    println!("memory {memory_id} forgotten");
+                } else {
+                    println!("no memory {memory_id}");
+                }
+            }
+            Some(MemoryCommand::Supersede { old, new }) => {
+                let result: ChangedResult = client
+                    .call(method::BRAIN_SUPERSEDE, SupersedeParams { old, new })
+                    .await?;
+                if args.json {
+                    print_json(&result)?;
+                } else if result.changed {
+                    println!("memory {old} superseded by {new}");
+                } else {
+                    println!("nothing changed; check both ids are memories");
+                }
+            }
+            Some(MemoryCommand::Outcome { pack_id, helped, noise }) => {
+                let result: OutcomeResult = client
+                    .call(
+                        method::BRAIN_OUTCOME,
+                        OutcomeParams { pack_id, helped, noise, note: None },
+                    )
+                    .await?;
+                if args.json {
+                    print_json(&result)?;
+                } else {
+                    println!(
+                        "{} helped, {} noise, {} ignored, as {}",
+                        result.helped, result.noise, result.ignored, result.reporter
+                    );
+                }
+            }
+            None => {
+                let result: MemoriesResult = client
+                    .call(
+                        method::BRAIN_MEMORIES,
+                        MemoriesParams {
+                            kinds,
+                            about,
+                            include_superseded: history,
+                            everything: all,
+                            limit: Some(limit),
+                            ..Default::default()
+                        },
+                    )
+                    .await?;
+                if args.json {
+                    print_json(&result)?;
+                } else {
+                    println!("{}", result.basis);
+                    for memory in &result.memories {
+                        let mark = if memory.superseded_by.is_some() {
+                            "×"
+                        } else if memory.human_confirmed {
+                            "✓"
+                        } else {
+                            " "
+                        };
+                        println!(
+                            "{mark} {:>6}  {:<11} {:<22} {}",
+                            memory.node_id,
+                            memory.kind.as_str(),
+                            memory.scope.as_str(),
+                            first_line(&memory.text)
+                        );
+                        println!(
+                            "         by {} · useful {:+.2} · helped {} · noise {} · shown {}",
+                            memory.actor,
+                            memory.usefulness,
+                            memory.helped_count,
+                            memory.noise_count,
+                            memory.retrieved_count
+                        );
+                    }
+                    if result.memories.is_empty() {
+                        println!("(nothing)");
+                    }
+                }
+            }
+        },
+
+        Command::Sessions { limit } => {
+            let sessions: Vec<AgentSession> = client
+                .call(method::AGENT_SESSIONS, SessionsParams { limit: Some(limit) })
+                .await?;
+            if args.json {
+                print_json(&sessions)?;
+            } else {
+                for session in &sessions {
+                    println!(
+                        "{:<28} {:<12} {:>5} calls {:>4} refused {:>4} memories  {}",
+                        session.id,
+                        session.name,
+                        session.calls,
+                        session.refusals,
+                        session.memories,
+                        session.task.as_deref().unwrap_or("")
+                    );
+                }
+                if sessions.is_empty() {
+                    println!("no agent has opened a session on this daemon");
                 }
             }
         }

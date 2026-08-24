@@ -427,3 +427,192 @@ fn the_kill_switch_stops_mcp_from_starting_at_all() {
 
     daemon.rpc("agent.set_enabled", json!({ "enabled": true }));
 }
+
+/// M11 §1: a memory written in one session comes back in the next, identically on all three.
+///
+/// The write goes in over the socket, and the read comes out of all three — which is the
+/// interesting direction. A memory that only the surface that wrote it can see would pass a
+/// same-surface round trip and fail the moment an agent connected over MCP rather than over the
+/// CLI, which is exactly the arrangement this project expects.
+#[test]
+fn a_memory_written_once_is_returned_by_every_surface() {
+    let daemon = Daemon::start();
+
+    let written = daemon.rpc(
+        "brain.remember",
+        json!({
+            "text": "the reference corpus is generated from a seed and is never checked in",
+            "kind": "fact",
+            "scope": "global",
+        }),
+    );
+    let memory_id = written["memory_id"].as_i64().expect("a memory id");
+    assert_eq!(written["scope"], json!("global"));
+
+    let task = "where does the reference corpus come from";
+    let over_socket = daemon.rpc("brain.context", json!({ "task": task, "budget_tokens": 512 }));
+    let over_cli = daemon.cli(&["context", task, "--budget", "512"]);
+    let over_mcp = daemon.mcp("brain_context", json!({ "task": task, "budget_tokens": 512 }));
+
+    // Two fields legitimately differ between three calls made at three moments: the pack id,
+    // which is derived from the second it was built in, and `retrieved`, which counts how often
+    // a memory has been put into a pack and is therefore one higher on each successive call.
+    // That second one is not noise — it is D76's bookkeeping working — so it is stripped from
+    // the comparison and asserted separately.
+    let items = |pack: &Value| -> Value {
+        let mut items = pack["items"].clone();
+        for item in items.as_array_mut().unwrap() {
+            item["basis"]["retrieved"] = json!(null);
+        }
+        items
+    };
+    assert_eq!(items(&over_socket), items(&over_cli), "the CLI differed");
+    assert_eq!(items(&over_socket), items(&over_mcp), "MCP differed");
+
+    let retrieved = |pack: &Value| -> u64 {
+        pack["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["node_id"].as_i64() == Some(memory_id))
+            .and_then(|item| item["basis"]["retrieved"].as_u64())
+            .expect("the memory is in the pack")
+    };
+    assert!(
+        retrieved(&over_mcp) > retrieved(&over_socket),
+        "putting a memory into a pack did not count as a retrieval"
+    );
+
+    let ids: Vec<i64> = over_socket["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|item| item["node_id"].as_i64())
+        .collect();
+    assert!(
+        ids.contains(&memory_id),
+        "the memory written a moment ago is not in the pack: {over_socket}"
+    );
+
+    // And the basis is there, on every surface, because a memory an agent cannot attribute is
+    // one it cannot argue with.
+    let item = over_mcp["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["node_id"].as_i64() == Some(memory_id))
+        .expect("the memory is in the MCP pack too");
+    assert_eq!(item["basis"]["actor"], json!("agent:surfaces"));
+    assert!(item["basis"]["lexical_rank"].as_u64().is_some());
+}
+
+/// M11 §7: scope isolation, asserted at the surface rather than only in the store.
+#[test]
+fn one_agents_memory_does_not_reach_another_agent() {
+    let daemon = Daemon::start();
+
+    // Two agents, distinguished only by the name they identify with.
+    let as_agent = |name: &str, method: &str, params: Value| -> Value {
+        use std::os::unix::net::UnixStream;
+        let stream = UnixStream::connect(daemon.root().join("run/cortex.sock")).unwrap();
+        let mut writer = stream.try_clone().unwrap();
+        let mut reader = BufReader::new(stream);
+        for (id, method, params) in [
+            (1, "identify", json!({ "actor": name })),
+            (2, method, params),
+        ] {
+            writeln!(
+                writer,
+                "{}",
+                json!({"jsonrpc":"2.0","id":id,"method":method,"params":params})
+            )
+            .unwrap();
+        }
+        writer.flush().unwrap();
+        let mut last = Value::Null;
+        for _ in 0..2 {
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            last = serde_json::from_str(&line).unwrap();
+        }
+        last.get("result").cloned().unwrap_or(last)
+    };
+
+    let mine = as_agent(
+        "alpha",
+        "brain.remember",
+        json!({ "text": "the staging deployment target is the blue cluster", "kind": "fact" }),
+    );
+    let mine_id = mine["memory_id"].as_i64().unwrap();
+    assert_eq!(mine["scope"], json!("agent:alpha"), "the default scope is not the writer's own");
+
+    let task = "the staging deployment target";
+    let alpha_sees = as_agent("alpha", "brain.context", json!({ "task": task }));
+    let beta_sees = as_agent("beta", "brain.context", json!({ "task": task }));
+
+    let ids = |pack: &Value| -> Vec<i64> {
+        pack["items"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|item| item["node_id"].as_i64())
+            .collect()
+    };
+    assert!(ids(&alpha_sees).contains(&mine_id));
+    assert!(
+        !ids(&beta_sees).contains(&mine_id),
+        "another agent's private memory reached the pack: {beta_sees}"
+    );
+
+    // And beta cannot enumerate it either.
+    let listed = as_agent("beta", "brain.memories", json!({}));
+    let texts = serde_json::to_string(&listed).unwrap();
+    assert!(
+        !texts.contains("blue cluster"),
+        "another agent's memory was listed: {texts}"
+    );
+
+    // Asking for every scope is refused for an agent outright.
+    let refused = as_agent("beta", "brain.memories", json!({ "everything": true }));
+    assert!(
+        refused.get("error").is_some() || refused["code"].is_i64(),
+        "an agent was allowed to enumerate every scope: {refused}"
+    );
+}
+
+/// M11 §9: with the surface off, nothing is written and nothing is read.
+#[test]
+fn the_kill_switch_reaches_the_memory_tools() {
+    let daemon = Daemon::start();
+
+    daemon.rpc(
+        "brain.remember",
+        json!({ "text": "written while the surface was on", "scope": "global" }),
+    );
+    let off = daemon.rpc("agent.set_enabled", json!({ "enabled": false }));
+    assert_eq!(off["enabled"], json!(false));
+
+    for (method, params) in [
+        ("brain.remember", json!({ "text": "written while off", "scope": "global" })),
+        ("brain.context", json!({ "task": "anything" })),
+        ("brain.memories", json!({})),
+        ("brain.outcome", json!({ "pack_id": "p", "helped": [] })),
+    ] {
+        let answer = daemon.rpc(method, params);
+        assert!(
+            answer.get("error").is_some() || answer["code"].is_i64(),
+            "{method} answered while the Agent Surface was switched off: {answer}"
+        );
+    }
+
+    // Back on, and the memory written before is still the only one.
+    daemon.rpc("agent.set_enabled", json!({ "enabled": true }));
+    let listed = daemon.rpc("brain.memories", json!({}));
+    let texts = serde_json::to_string(&listed).unwrap();
+    assert!(texts.contains("while the surface was on"));
+    assert!(
+        !texts.contains("written while off"),
+        "a memory was written through a switched-off surface: {texts}"
+    );
+}

@@ -84,6 +84,71 @@ pub fn match_expression(query: &str, prefix_last: bool) -> Option<String> {
     Some(parts.join(" AND "))
 }
 
+/// The expression for a *task* rather than for a typed query.
+///
+/// `brain.context` is handed a sentence — "work out why the watcher misses renames" — and not
+/// a search box's worth of words. Running that through [`match_expression`] produces a
+/// conjunction of every word in it, which matches nothing: no memory contains "work" and "out"
+/// and "why" and "the" and "watcher" and "misses" and "renames" all at once.
+///
+/// So this is a disjunction over the content words, and BM25 does the discriminating. The
+/// reason that is safe here and not for the file search is corpus size. An OR over a hundred
+/// thousand files returns everything and ranks noise above the answer, which is why
+/// [`match_expression`] is a conjunction and says so. A memory store holds thousands, the
+/// caller takes the top of the ranking rather than the whole match set, and a rare word carries
+/// exactly the weight BM25 gives it.
+///
+/// Stopwords are dropped so that "the" does not tie a task to every memory in the index. The
+/// list is short and bilingual on purpose: this project's interface is German and its content
+/// is mostly English, and a stemmer for either is a much larger thing than the problem needs.
+/// If every word in the task is a stopword, the whole task is used — an empty expression would
+/// silently return nothing at all, which is the one outcome worse than a noisy answer.
+pub fn task_expression(task: &str) -> Option<String> {
+    let terms = terms(task);
+    if terms.is_empty() {
+        return None;
+    }
+    let content: Vec<&Term> = terms
+        .iter()
+        // Lowercased before the comparison: a task that begins with "Der" or "The" would
+        // otherwise keep its stopword and tie itself to most of the index.
+        .filter(|term| term.phrase || !is_stopword(&term.text.to_lowercase()))
+        .collect();
+    let chosen: Vec<&Term> = if content.is_empty() {
+        terms.iter().collect()
+    } else {
+        content
+    };
+    let parts: Vec<String> = chosen
+        .iter()
+        .map(|term| format!("\"{}\"", term.text.replace('"', "\"\"")))
+        .collect();
+    Some(parts.join(" OR "))
+}
+
+/// Words too common to say anything about which memory is meant.
+///
+/// English and German together, and deliberately short — every entry is a word that would
+/// otherwise match most of the index, and nothing else. A long list starts removing words that
+/// carry meaning in a technical corpus ("state", "process", "make").
+fn is_stopword(word: &str) -> bool {
+    const STOPWORDS: &[&str] = &[
+        // English
+        "a", "an", "and", "are", "as", "at", "be", "but", "by", "can", "do", "does", "for",
+        "from", "has", "have", "how", "i", "if", "in", "is", "it", "its", "me", "my", "no",
+        "not", "of", "on", "or", "our", "out", "so", "that", "the", "their", "them", "then",
+        "there", "these", "they", "this", "to", "up", "was", "we", "were", "what", "when",
+        "where", "which", "who", "why", "will", "with", "you", "your",
+        // German
+        "aber", "als", "am", "auch", "auf", "aus", "bei", "bin", "bist", "das", "dass", "dem",
+        "den", "der", "des", "die", "dies", "diese", "du", "ein", "eine", "einem", "einen",
+        "einer", "es", "für", "hat", "ich", "ihr", "im", "ist", "kann", "mein", "mit", "nicht",
+        "noch", "nur", "oder", "sein", "sich", "sie", "sind", "über", "um", "und", "uns", "von",
+        "vom", "war", "was", "wenn", "wer", "wie", "wir", "wird", "zu", "zum", "zur",
+    ];
+    STOPWORDS.contains(&word)
+}
+
 /// The plain words of a query, for highlighting a snippet.
 pub fn plain_terms(query: &str) -> Vec<String> {
     terms(query).into_iter().map(|t| t.text).collect()
@@ -98,6 +163,45 @@ mod tests {
         assert_eq!(
             match_expression("kamerawinkel blickachse", false).as_deref(),
             Some("\"kamerawinkel\" AND \"blickachse\"")
+        );
+    }
+
+    #[test]
+    fn a_task_becomes_a_disjunction_of_its_content_words() {
+        // The failure this exists for: a whole sentence run through the conjunction matched
+        // nothing at all, and a context pack that returns nothing looks exactly like an empty
+        // memory.
+        assert_eq!(
+            task_expression("where does the reference corpus come from").as_deref(),
+            Some("\"reference\" OR \"corpus\" OR \"come\"")
+        );
+    }
+
+    #[test]
+    fn a_task_made_only_of_stopwords_keeps_them_rather_than_matching_nothing() {
+        assert_eq!(
+            task_expression("what is it").as_deref(),
+            Some("\"what\" OR \"is\" OR \"it\"")
+        );
+    }
+
+    #[test]
+    fn a_german_task_loses_its_stopwords_too() {
+        // Case is kept in the expression — FTS5 folds it — but the stopword check does not
+        // depend on it, which a capitalised "Der" at the start of a sentence would otherwise
+        // slip past.
+        assert_eq!(
+            task_expression("warum findet der Watcher die Umbenennung nicht").as_deref(),
+            Some("\"warum\" OR \"findet\" OR \"Watcher\" OR \"Umbenennung\"")
+        );
+    }
+
+    #[test]
+    fn a_quoted_phrase_survives_being_a_stopword() {
+        // Somebody who quoted "the" meant it.
+        assert_eq!(
+            task_expression("\"the\" watcher").as_deref(),
+            Some("\"the\" OR \"watcher\"")
         );
     }
 

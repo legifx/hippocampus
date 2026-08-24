@@ -1320,3 +1320,199 @@ mod mode_tests {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// The agent brain (M11)
+//
+// One rule governs every type below: the caller never names a scope it is not entitled to.
+// It says which *kind* of scope it wants — session, agent, project, global — and the daemon
+// resolves that against the caller's own identity. A parameter that took a scope string
+// verbatim would let any agent read or write any other's by spelling it correctly.
+// ---------------------------------------------------------------------------
+
+/// Which scope a write belongs in, as a caller may ask for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScopeRequest {
+    /// Scratch, expiring with the session. Requires a `session_id`.
+    Session,
+    /// Private to the calling agent. The default.
+    Agent,
+    /// Shared inside one zone. Requires a path, so the daemon can resolve the zone itself.
+    Project,
+    /// Everyone. Never a default — an agent gets this only by asking for it in as many words,
+    /// and the audit entry says so.
+    Global,
+}
+
+impl Default for ScopeRequest {
+    fn default() -> Self {
+        ScopeRequest::Agent
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RememberParams {
+    pub text: String,
+    /// One of the memory kinds. Defaults to `observation`, which is also the kind that decays
+    /// first — a caller that does not say what it is remembering gets the cheapest treatment.
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub scope: ScopeRequest,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    /// The file this is about. Also the zone source for `project` scope.
+    #[serde(default)]
+    pub about: Option<PathBuf>,
+    /// The writer's own confidence, 0–1. Recorded, shown, and never treated as evidence.
+    #[serde(default)]
+    pub confidence: Option<f64>,
+    /// Memories this one replaces.
+    #[serde(default)]
+    pub supersedes: Vec<i64>,
+    /// Seconds until this memory expires. Only meaningful for `session` scope; ignored
+    /// elsewhere, because a durable memory's lifetime is the decay engine's business.
+    #[serde(default)]
+    pub ttl_secs: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RememberResult {
+    pub memory_id: i64,
+    pub scope: String,
+    pub kind: String,
+    /// True when this text was already in this scope and kind, and the existing memory was
+    /// returned instead of a second copy being written.
+    pub deduplicated: bool,
+    pub superseded: Vec<i64>,
+    /// Memories that look like this one and were **not** acted on.
+    ///
+    /// The daemon reports; the caller decides. Deciding that two statements contradict each
+    /// other is a language model's job and there is no language model in this daemon.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub possible_duplicates: Vec<crate::memory::Memory>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ContextParams {
+    /// What the caller is about to do. The query, named for what it is.
+    pub task: String,
+    #[serde(default)]
+    pub budget_tokens: Option<usize>,
+    /// Restrict to these memory kinds. Empty means all.
+    #[serde(default)]
+    pub kinds: Vec<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    /// Paths whose zones the caller is working in, which is what makes `project` scope visible.
+    #[serde(default)]
+    pub project_paths: Vec<PathBuf>,
+    #[serde(default)]
+    pub include_files: Option<bool>,
+    #[serde(default)]
+    pub include_history: Option<bool>,
+    /// The caller's own characters-per-token calibration, if it has measured one.
+    #[serde(default)]
+    pub chars_per_token: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutcomeParams {
+    /// Which pack this is about. An outcome that does not name a pack cannot be attributed,
+    /// because by the time it arrives the ranking has moved — not least because the pack moved
+    /// it.
+    pub pack_id: String,
+    #[serde(default)]
+    pub helped: Vec<i64>,
+    #[serde(default)]
+    pub noise: Vec<i64>,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutcomeResult {
+    pub helped: usize,
+    pub noise: usize,
+    /// Named by the report and not in the pack. Counted rather than refused, so that one stale
+    /// id does not lose the rest of the report.
+    pub ignored: usize,
+    pub reporter: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MemoriesParams {
+    #[serde(default)]
+    pub kinds: Vec<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub project_paths: Vec<PathBuf>,
+    #[serde(default)]
+    pub include_superseded: bool,
+    /// Every memory in the index rather than only what the caller may see.
+    ///
+    /// The Inspector's view and the human's, and it is refused for an agent: a machine that can
+    /// enumerate every other machine's private scope has no scope isolation at all.
+    #[serde(default)]
+    pub everything: bool,
+    #[serde(default)]
+    pub limit: Option<usize>,
+    /// Only memories about this path.
+    #[serde(default)]
+    pub about: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoriesResult {
+    pub memories: Vec<crate::memory::Memory>,
+    /// What this list is, and what it is not. Every view states its own basis.
+    pub basis: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForgetMemoryParams {
+    pub memory_id: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SupersedeParams {
+    /// The memory that is now wrong.
+    pub old: i64,
+    /// The memory that replaces it.
+    pub new: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChangedResult {
+    pub changed: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SessionBeginParams {
+    /// Defaults to the calling agent's name.
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub task: Option<String>,
+    /// A caller that resumes a session it already has says so; otherwise the daemon makes one.
+    #[serde(default)]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionResult {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SessionsParams {
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionEndParams {
+    pub session_id: String,
+}

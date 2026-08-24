@@ -242,6 +242,28 @@ pub mod method {
     /// The last consolidation report, without running one.
     pub const BRAIN_REPORT: &str = "brain.report";
 
+    // The agent brain (M11). Writes to the brain, never to a file, so the same rule applies:
+    // gated by the kill switch, audited, and not subject to the write allow-list (R6).
+    /// Write a memory. The scope is resolved from the caller's identity, never taken verbatim.
+    pub const BRAIN_REMEMBER: &str = "brain.remember";
+    /// A context pack: budgeted, deduplicated and attributed. The tool an agent reaches for
+    /// first, and the one M11 exists to provide.
+    pub const BRAIN_CONTEXT: &str = "brain.context";
+    /// Report which items of a pack helped and which were noise. The learning signal (D76).
+    pub const BRAIN_OUTCOME: &str = "brain.outcome";
+    /// List memories. An agent sees its own scopes; only a human may ask for all of them.
+    pub const BRAIN_MEMORIES: &str = "brain.memories";
+    /// Mark one memory as replaced by another.
+    pub const BRAIN_SUPERSEDE: &str = "brain.supersede";
+    /// Delete a memory, recording the deletion so that it survives a rebuild (D78).
+    pub const BRAIN_FORGET_MEMORY: &str = "brain.forget_memory";
+
+    /// Open an agent session, so that attribution can answer "this task" rather than "this
+    /// agent, some time in the last year".
+    pub const AGENT_SESSION_BEGIN: &str = "agent.session.begin";
+    pub const AGENT_SESSION_END: &str = "agent.session.end";
+    pub const AGENT_SESSIONS: &str = "agent.sessions";
+
     /// Every method this build serves. Used by `status` so a client can discover the surface.
     /// Methods that may be answered out of order, concurrently with each other.
     ///
@@ -284,6 +306,12 @@ pub mod method {
                 | BRAIN_NEIGHBORS
                 | BRAIN_TIMELINE
                 | BRAIN_WORKING_SET
+                // Reads, and the pack is the expensive one: it runs two arms and a
+                // diversification pass, and an agent asking for it must not hold up the window
+                // asking for a preview.
+                | BRAIN_MEMORIES
+                | BRAIN_CONTEXT
+                | AGENT_SESSIONS
         )
     }
 
@@ -340,6 +368,15 @@ pub mod method {
         BRAIN_GRAPH,
         BRAIN_CONSOLIDATE,
         BRAIN_REPORT,
+        BRAIN_REMEMBER,
+        BRAIN_CONTEXT,
+        BRAIN_OUTCOME,
+        BRAIN_MEMORIES,
+        BRAIN_SUPERSEDE,
+        BRAIN_FORGET_MEMORY,
+        AGENT_SESSION_BEGIN,
+        AGENT_SESSION_END,
+        AGENT_SESSIONS,
         BRAIN_DIFF,
         BRAIN_RECALL,
         BRAIN_EXPLAIN,

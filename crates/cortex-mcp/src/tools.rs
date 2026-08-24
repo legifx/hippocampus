@@ -388,6 +388,220 @@ pub const TOOLS: &[Tool] = &[
             )
         },
     },
+    // ---- The agent brain (M11) ------------------------------------------------------------
+    //
+    // `brain_context` is deliberately first among these in the description an agent reads: it
+    // is the tool to reach for at the start of a task, and every other one here exists so that
+    // what it returns can be corrected, attributed or improved.
+    Tool {
+        name: "brain_context",
+        method: method::BRAIN_CONTEXT,
+        gated: false,
+        description: "Start here. Given what you are about to do, returns everything this \
+                      memory knows that bears on it, already fitted to a token budget: the \
+                      preferences that always apply, what the human has open right now, the \
+                      memories that match, and the files those memories are about. Each item \
+                      says who wrote it and why it was chosen. Call this before you start, not \
+                      after you are stuck. Report back with `brain_outcome` — a memory nobody \
+                      says is useful decays.",
+        schema: || {
+            object(
+                json!({
+                    "task": {
+                        "type": "string",
+                        "description": "What you are about to do, in a sentence. This is the query."
+                    },
+                    "budget_tokens": {
+                        "type": "integer",
+                        "description": "How much context to spend. Default 2048. The count is \
+                                        an upward-biased estimate, not your tokeniser's."
+                    },
+                    "kinds": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": ["fact", "preference", "procedure", "decision", "failure",
+                                     "observation"]
+                        },
+                        "description": "Restrict to these kinds. Leave unset for all of them."
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "From `agent_session_begin`, if you opened one."
+                    },
+                    "project_paths": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Paths you are working in. What makes project-scoped \
+                                        memories visible."
+                    },
+                    "include_files": { "type": "boolean" },
+                    "include_history": {
+                        "type": "boolean",
+                        "description": "Include memories that have been superseded. Off by \
+                                        default, and off is almost always right."
+                    }
+                }),
+                &["task"],
+            )
+        },
+    },
+    Tool {
+        name: "brain_remember",
+        method: method::BRAIN_REMEMBER,
+        gated: false,
+        description: "Write something into the memory that is not in a file: a fact, a \
+                      preference, a procedure, a decision, a failure. Worth doing for anything \
+                      that cost you effort to work out and would cost the next session the \
+                      same. Scope defaults to you alone; `global` means everyone, and is a \
+                      deliberate act. If something similar is already there, the answer names \
+                      it — decide whether yours supersedes it rather than adding a second copy.",
+        schema: || {
+            object(
+                json!({
+                    "text": { "type": "string", "description": "The memory itself. A sentence or two." },
+                    "kind": {
+                        "type": "string",
+                        "enum": ["fact", "preference", "procedure", "decision", "failure",
+                                 "observation"],
+                        "description": "What sort of thing this is. Default `observation`, \
+                                        which is also the kind that decays first — say what it \
+                                        really is."
+                    },
+                    "scope": {
+                        "type": "string",
+                        "enum": ["session", "agent", "project", "global"],
+                        "description": "Who this belongs to. Default `agent`: you. `session` \
+                                        is scratch and expires. `project` needs `about`. \
+                                        `global` is everyone and is audited as such."
+                    },
+                    "about": {
+                        "type": "string",
+                        "description": "The file this is about, if it is about one."
+                    },
+                    "session_id": { "type": "string" },
+                    "confidence": {
+                        "type": "number",
+                        "description": "0 to 1, your own. Recorded and shown; never treated as \
+                                        evidence."
+                    },
+                    "supersedes": {
+                        "type": "array",
+                        "items": { "type": "integer" },
+                        "description": "Memory ids this replaces."
+                    },
+                    "ttl_secs": { "type": "integer", "description": "Session scope only." }
+                }),
+                &["text"],
+            )
+        },
+    },
+    Tool {
+        name: "brain_outcome",
+        method: method::BRAIN_OUTCOME,
+        gated: false,
+        description: "Say which parts of a context pack actually helped and which were noise. \
+                      This is the only signal that teaches the memory what is worth keeping — \
+                      without it, a memory that keeps arriving in your context and never helps \
+                      goes on arriving for ever. Costs one call and improves every later one.",
+        schema: || {
+            object(
+                json!({
+                    "pack_id": {
+                        "type": "string",
+                        "description": "From the `brain_context` answer you are reporting on."
+                    },
+                    "helped": {
+                        "type": "array",
+                        "items": { "type": "integer" },
+                        "description": "Memory ids you actually used."
+                    },
+                    "noise": {
+                        "type": "array",
+                        "items": { "type": "integer" },
+                        "description": "Memory ids that wasted the space. Be honest; this is \
+                                        the half that makes the ranking improve."
+                    },
+                    "note": { "type": "string" }
+                }),
+                &["pack_id"],
+            )
+        },
+    },
+    Tool {
+        name: "brain_memories",
+        method: method::BRAIN_MEMORIES,
+        gated: false,
+        description: "List the memories you can see, with their scope, kind, provenance and \
+                      how useful they have proved. For reviewing what you believe rather than \
+                      for retrieving it — `brain_context` is retrieval.",
+        schema: || {
+            object(
+                json!({
+                    "kinds": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                    },
+                    "about": { "type": "string", "description": "Only memories about this file." },
+                    "include_superseded": { "type": "boolean" },
+                    "session_id": { "type": "string" },
+                    "project_paths": { "type": "array", "items": { "type": "string" } },
+                    "limit": { "type": "integer" }
+                }),
+                &[],
+            )
+        },
+    },
+    Tool {
+        name: "brain_supersede",
+        method: method::BRAIN_SUPERSEDE,
+        gated: false,
+        description: "Mark one memory as replaced by another. The old one leaves retrieval and \
+                      stays in the history. Use this rather than deleting when the old memory \
+                      was true once.",
+        schema: || {
+            object(
+                json!({
+                    "old": { "type": "integer" },
+                    "new": { "type": "integer" }
+                }),
+                &["old", "new"],
+            )
+        },
+    },
+    Tool {
+        name: "brain_forget_memory",
+        method: method::BRAIN_FORGET_MEMORY,
+        gated: false,
+        description: "Delete a memory outright. For things that were never true. If it was \
+                      true and is not any more, supersede it instead.",
+        schema: || object(json!({ "memory_id": { "type": "integer" } }), &["memory_id"]),
+    },
+    Tool {
+        name: "agent_session_begin",
+        method: method::AGENT_SESSION_BEGIN,
+        gated: false,
+        description: "Open a session, so that everything you do next is attributable to this \
+                      task rather than to your name in general. Returns an id to pass to the \
+                      other tools. Worth doing at the start of any piece of work you might \
+                      later want to ask questions about.",
+        schema: || {
+            object(
+                json!({
+                    "name": { "type": "string", "description": "Defaults to your agent name." },
+                    "task": { "type": "string", "description": "What this session is for." }
+                }),
+                &[],
+            )
+        },
+    },
+    Tool {
+        name: "agent_session_end",
+        method: method::AGENT_SESSION_END,
+        gated: false,
+        description: "Close a session. Session-scoped memories expire with it.",
+        schema: || object(json!({ "session_id": { "type": "string" } }), &["session_id"]),
+    },
 ];
 
 pub fn find(name: &str) -> Option<&'static Tool> {

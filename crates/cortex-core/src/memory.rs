@@ -342,6 +342,95 @@ impl PackArm {
     }
 }
 
+/// Why one item is in the pack.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Basis {
+    pub arm: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lexical_rank: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_rank: Option<u32>,
+    pub fused: f64,
+    pub salience: f64,
+    pub usefulness: f64,
+    pub confidence: f64,
+    /// Who wrote it, and when. A memory an agent cannot attribute is one it cannot argue with.
+    pub actor: String,
+    pub written_at: i64,
+    pub helped: i64,
+    pub noise: i64,
+    pub retrieved: i64,
+    pub human_confirmed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PackItem {
+    pub node_id: i64,
+    pub arm: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<MemoryKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<MemoryScope>,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<std::path::PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub byte_range: Option<(i64, i64)>,
+    pub tokens: usize,
+    pub basis: Basis,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ContextPack {
+    pub pack_id: String,
+    pub task: String,
+    pub budget_tokens: usize,
+    /// What the pack is estimated to cost. An estimate on purpose, and biased upwards — see
+    /// `cortex_core::tokens` and D79.
+    pub used_tokens: usize,
+    pub items: Vec<PackItem>,
+    /// Candidates that were found and did not fit. A pack that silently drops half its
+    /// candidates and one that had nothing to say look identical without this.
+    pub dropped: usize,
+    /// Things the caller should know: a budget too small for the preferences, a missing model,
+    /// a scope with nothing in it.
+    pub notes: Vec<String>,
+    /// The block, formatted and ready to paste into a prompt.
+    pub rendered: String,
+}
+
+impl ContextPack {
+    /// The memories in it — the only items an outcome can be reported against.
+    pub fn memory_ids(&self) -> Vec<crate::ids::NodeId> {
+        self.items
+            .iter()
+            .filter(|item| item.kind.is_some())
+            .map(|item| crate::ids::NodeId(item.node_id))
+            .collect()
+    }
+}
+
+
+/// One agent's run against the surface.
+///
+/// Here rather than in the storage crate because three surfaces report it and one of them —
+/// the CLI — has no business linking storage.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentSession {
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    pub started_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<i64>,
+    pub calls: i64,
+    pub refusals: i64,
+    /// Memories written during it. Derived, and the number a human actually wants.
+    #[serde(default)]
+    pub memories: i64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

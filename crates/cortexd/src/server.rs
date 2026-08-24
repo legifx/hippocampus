@@ -816,6 +816,12 @@ async fn dispatch(
                 // agent ever recorded. They are replayed from the episode log, which is the
                 // only table a rebuild does not touch (R10).
                 let (replayed, skipped) = store.replay_assertions()?;
+                // And the memory layer, which is the larger half of what an agent ever
+                // recorded and the half with columns to lose. Replayed after the annotations
+                // because a memory may name a file as its subject, and the node has to exist
+                // for the edge to be written.
+                let (memories, memories_skipped) = store.replay_memories()?;
+                let (replayed, skipped) = (replayed + memories, skipped + memories_skipped);
                 if skipped > 0 {
                     tracing::warn!(
                         replayed,
@@ -823,6 +829,7 @@ async fn dispatch(
                         "some assertions name files that no longer exist and were dropped"
                     );
                 }
+                tracing::info!(memories, "memory layer replayed from the episode log");
                 store.prune_orphan_annotations()?;
                 cortex_store::error::Result::Ok((indexed, replayed, skipped))
             })
@@ -1304,6 +1311,181 @@ async fn dispatch(
             json(surface(daemon, &ctx.actor, &auditor).diff(&params).map_err(tool_error)?)
         }
 
+        // ---- The agent brain (M11) --------------------------------------------------------
+
+        method::BRAIN_REMEMBER => {
+            let params = parse(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            json(
+                surface(daemon, &ctx.actor, &auditor)
+                    .remember(&params)
+                    .map_err(tool_error)?,
+            )
+        }
+
+        method::BRAIN_SUPERSEDE => {
+            let params = parse(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            json(
+                surface(daemon, &ctx.actor, &auditor)
+                    .supersede(&params)
+                    .map_err(tool_error)?,
+            )
+        }
+
+        method::BRAIN_FORGET_MEMORY => {
+            let params = parse(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            json(
+                surface(daemon, &ctx.actor, &auditor)
+                    .forget_memory(&params)
+                    .map_err(tool_error)?,
+            )
+        }
+
+        method::BRAIN_MEMORIES => {
+            let params = optional(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            json(
+                surface(daemon, &ctx.actor, &auditor)
+                    .memories(&params)
+                    .map_err(tool_error)?,
+            )
+        }
+
+        method::BRAIN_OUTCOME => {
+            let params = parse(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            json(
+                surface(daemon, &ctx.actor, &auditor)
+                    .outcome(&params)
+                    .map_err(tool_error)?,
+            )
+        }
+
+        // The one M11 tool that is assembled here rather than in `cortex-agent`, because it
+        // needs the embedder and the memory collection — both of which the daemon owns and the
+        // surface layer deliberately does not. The gate and the audit entry still go through
+        // the surface, so a pack cannot be built while the kill switch is off.
+        method::BRAIN_CONTEXT => {
+            let params: cortex_core::tools::ContextParams = parse(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            let surface = surface(daemon, &ctx.actor, &auditor);
+            surface.gate("brain.context").map_err(tool_error)?;
+            daemon.activity.ping();
+
+            let reader = surface.reader_scope(
+                params.session_id.as_deref(),
+                &params.project_paths,
+            );
+            let kinds: Vec<cortex_core::memory::MemoryKind> = params
+                .kinds
+                .iter()
+                .filter_map(|k| cortex_core::memory::MemoryKind::parse(k))
+                .collect();
+
+            let loaded = daemon.semantics.get();
+            let model = loaded.as_ref().map(|l| l.embedder.model());
+            let semantic = match (loaded.as_ref(), model.as_ref()) {
+                (Some(loaded), Some(model)) => Some(cortex_query::context::Semantic {
+                    embedder: loaded.embedder.as_ref(),
+                    memory_vectors: loaded.memory_vectors.as_ref(),
+                    model: cortex_store::embeddings::ModelRef {
+                        id: &model.id,
+                        version: &model.version,
+                        dim: model.dim,
+                    },
+                }),
+                _ => None,
+            };
+
+            let now = indexer::unix_now();
+            let pack_id = pack_id(now, &ctx.actor, &params.task);
+            let pack = cortex_query::context::build(
+                cortex_query::context::ContextParams {
+                    store: &daemon.store,
+                    semantic,
+                    reader: &reader,
+                    task: &params.task,
+                    budget_tokens: params.budget_tokens.unwrap_or(DEFAULT_CONTEXT_BUDGET),
+                    kinds: &kinds,
+                    include_files: params.include_files.unwrap_or(true),
+                    include_history: params.include_history.unwrap_or(false),
+                    now,
+                    candidates: cortex_query::context::DEFAULT_CANDIDATES,
+                    mmr_lambda: cortex_query::context::DEFAULT_LAMBDA,
+                    rrf_k: daemon.config.search.rrf_k,
+                    chars_per_token: params
+                        .chars_per_token
+                        .unwrap_or(cortex_core::tokens::CHARS_PER_TOKEN),
+                },
+                &pack_id,
+            );
+
+            // The record is what makes an outcome attributable later. A pack that could not be
+            // recorded is still a usable pack — it just cannot be reported on — so this warns
+            // rather than failing the call.
+            if let Err(e) = daemon.store.record_pack(
+                &pack.pack_id,
+                params.session_id.as_deref(),
+                &params.task,
+                pack.budget_tokens,
+                pack.used_tokens,
+                &cortex_query::context::records(&pack),
+                now,
+            ) {
+                tracing::warn!(error = %e, "could not record the context pack");
+            }
+            if let Err(e) = daemon.store.note_retrieved(&pack.memory_ids()) {
+                tracing::warn!(error = %e, "could not count a retrieval");
+            }
+
+            auditor.allowed(
+                now,
+                "brain.context",
+                &serde_json::to_value(&params).unwrap_or_default(),
+                &format!(
+                    "{} items, {} of {} tokens, {} dropped",
+                    pack.items.len(),
+                    pack.used_tokens,
+                    pack.budget_tokens,
+                    pack.dropped
+                ),
+            );
+            json(pack)
+        }
+
+        method::AGENT_SESSION_BEGIN => {
+            let params: cortex_core::tools::SessionBeginParams = optional(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            let generated = session_id(indexer::unix_now(), &ctx.actor);
+            json(
+                surface(daemon, &ctx.actor, &auditor)
+                    .session_begin(&params, &generated)
+                    .map_err(tool_error)?,
+            )
+        }
+
+        method::AGENT_SESSION_END => {
+            let params = parse(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            json(
+                surface(daemon, &ctx.actor, &auditor)
+                    .session_end(&params)
+                    .map_err(tool_error)?,
+            )
+        }
+
+        method::AGENT_SESSIONS => {
+            let params = optional(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            json(
+                surface(daemon, &ctx.actor, &auditor)
+                    .sessions(&params)
+                    .map_err(tool_error)?,
+            )
+        }
+
         // `brain.search` and `brain.explain` are the same operations as `search` and
         // `search.explain`, reached by the name an agent looks for. Aliases rather than
         // reimplementations — a second search would be a second set of results to explain.
@@ -1553,6 +1735,50 @@ fn parse<T: serde::de::DeserializeOwned>(
 ) -> Result<T, RpcError> {
     let params = params.ok_or_else(|| RpcError::invalid_params("missing params"))?;
     serde_json::from_value(params).map_err(|e| RpcError::invalid_params(e.to_string()))
+}
+
+/// Parse params that a caller may leave out entirely.
+fn optional<T: serde::de::DeserializeOwned + Default>(
+    params: Option<serde_json::Value>,
+) -> Result<T, RpcError> {
+    match params {
+        None | Some(serde_json::Value::Null) => Ok(T::default()),
+        Some(value) => {
+            serde_json::from_value(value).map_err(|e| RpcError::invalid_params(e.to_string()))
+        }
+    }
+}
+
+/// How much of a context window a pack fills when the caller does not say.
+///
+/// Two thousand tokens: about one per cent of a large context window, and enough for a dozen
+/// memories with their attribution. A default that filled a tenth of the window would be a
+/// default nobody leaves alone.
+const DEFAULT_CONTEXT_BUDGET: usize = 2_048;
+
+/// A stable, readable identifier for one pack.
+///
+/// Derived rather than random because this crate has no random number generator and does not
+/// need one: the pair (when, who) is unique in practice, and the hash of the task makes two
+/// packs in the same second distinguishable. It is an identifier, not a secret.
+fn pack_id(now: i64, actor: &cortex_core::model::Actor, task: &str) -> String {
+    let digest = blake3::hash(task.as_bytes()).to_hex();
+    format!("pack-{now}-{}-{}", short_actor(actor), &digest[..8])
+}
+
+fn session_id(now: i64, actor: &cortex_core::model::Actor) -> String {
+    format!("s-{now}-{}", short_actor(actor))
+}
+
+fn short_actor(actor: &cortex_core::model::Actor) -> String {
+    match actor {
+        cortex_core::model::Actor::Agent(name) => name
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .take(12)
+            .collect(),
+        other => other.as_str(),
+    }
 }
 
 fn json<T: serde::Serialize>(value: T) -> Result<serde_json::Value, RpcError> {
