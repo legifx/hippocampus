@@ -28,6 +28,14 @@ four tiers rather than being deleted; associations are formed from co-occurrence
 than from content similarity alone; and pins are an exemption from the machinery rather than a
 large number inside it.
 
+For the half of the memory an *agent* writes — what it learned that is not in any file — we add
+one component and one argument. The component is what a memory has earned; the argument is that
+**retrieval is not evidence of usefulness**, because a memory that appears in a context window
+was chosen by the ranking under evaluation rather than by anybody, so counting its appearance in
+its favour closes the loop that the evaluation was supposed to open. The consequence is
+counter-intuitive and, we think, correct: a memory that keeps arriving and is never reported
+useful should decay faster than one that is never retrieved at all.
+
 We ground the design in three literatures that are rarely brought together: the **rational
 analysis of human memory**, where the probability that a memory will be needed follows a power law
 in recency and frequency (Anderson & Schooler, 1991); **systems consolidation and replay**, where a
@@ -42,7 +50,7 @@ quadratic in sequence length, effective context is measurably shorter than nomin
 position within the prompt changes retrieval accuracy, and prompt caching makes *where* a memory
 injects its output an architectural decision with a direct cost consequence.
 
-Finally we report what building it actually cost, including four defects that no amount of
+Finally we report what building it actually cost, including the defects that no amount of
 reasoning found and that only real data, a real clock and a real test suite exposed. We consider
 that section the most useful part of the paper.
 
@@ -230,6 +238,51 @@ component in the loop. This is why the interface described in §5.3 returns summ
 by default, why `brain.graph` — the one call that genuinely returns a large object — is documented
 as needing a result gate, and why Mem0's reported token savings come primarily from *not returning
 things*.
+
+### 3.7 Retrieval is not evidence of usefulness
+
+Every importance signal in the file half of this system rewards being touched: access count,
+recency, degree. That is sound for files, because a person opening a file is a person finding it
+useful — the act and the evidence are the same act.
+
+It is unsound for an agent's memory, and the reason is a loop. A memory that appears in a context
+pack was not chosen by anybody; it was chosen by the ranking under evaluation. Counting its
+appearance as evidence of its value closes the loop: whatever ranked highly first goes on ranking
+highly, and the system has no channel through which it could ever discover it was wrong. The
+failure is invisible, because a self-confirming ranking looks exactly like a good one.
+
+So the design needs a signal from outside the loop, and there is only one candidate: whether the
+retrieved memory was *used*. **A memory that keeps arriving in context and is never reported
+useful should decay faster than one that is never retrieved at all.** That is the
+counter-intuitive consequence and it is the one that matters: a memory nobody asks for costs
+nothing, and one that arrives in every pack and earns no mention is costing tokens on every turn
+for nothing.
+
+Two honesty constraints follow, and both are structural rather than advisory. An agent reporting
+on its own success is an unreliable narrator, so the reporter is recorded and weighted — a human's
+confirmation outranks an agent's self-report, which outranks silence — and a human may overrule
+an agent on the same item, which is a different rule from "nobody may report twice" and has to be
+written as one. And positive and negative reports are counted separately rather than netted,
+because a memory that is useful in one context and noise in another needs splitting, and a net of
+zero is exactly how that stays invisible.
+
+### 3.8 An agent has a context window, not a result list
+
+Every other retrieval interface in this system answers with rows. An agent cannot use rows. It
+has a budget measured in tokens, and turning twenty results into two thousand tokens worth having
+means dropping the restatements, deciding what fits, keeping the provenance and formatting the
+rest — work that requires the scores and the vectors, which are on the daemon's side of the
+boundary and not the agent's.
+
+So the memory answers with a *pack*: budgeted, deduplicated, attributed, addressable. Four
+properties, each present because omitting it is a known failure. The budget is in measured tokens
+rather than characters over four, because that estimate is wrong by up to 40 % on code and on
+German and the direction of the error decides between wasting money and truncating a system
+prompt mid-structure. Preferences are included unconditionally, because they are tiny and their
+entire value is being present. Diversification happens before truncation, because restatement is
+the specific failure mode of embedding retrieval over a store that people and agents write to.
+And every item carries its basis, because a memory an agent cannot attribute is a memory it
+cannot argue with — and an agent that cannot argue with its memory will follow it off a cliff.
 
 ---
 
@@ -720,11 +773,30 @@ arrival time.
 
 ---
 
-## 10. Four defects that reasoning did not find
-## 10. Four defects that reasoning did not find
+## 10. Defects that reasoning did not find
 
 We report these because the failure modes are general and the mechanisms that caught them are
 transferable.
+
+### 10.0 A component that is set, stored, printed and never added up
+
+The salience model gained a term for what a memory has *earned* from outcome reports. The field
+was added to the input, the weight to the configuration, the component to the breakdown; the
+value was computed, written to the database and displayed in the interface. `Components::sum()`
+lists its fields by hand, and the new one was not among them.
+
+Nothing failed. The term contributed exactly zero, and the symptom was two memories with entirely
+different histories scoring identically to sixteen decimal places — which is only suspicious if
+something happens to compare them, and nothing routinely does. The guard now assigns each
+component a distinct power of two and asserts the total, so a missing term is not merely detected
+but *named* by the difference. **The general lesson: a sum written by hand over a struct is a
+place where adding a field is a silent no-op, and the only cheap defence is a test that makes the
+absence arithmetically identifiable.**
+
+Immediately behind it was a second one of the same family. Making memories participate in the
+scoring pass meant the pass now held identifiers for nodes that the memory housekeeping was about
+to delete, and the write failed the entire consolidation on a foreign key. The order of the steps
+in a pass is part of its specification.
 
 ### 10.1 Immutable logs and referential integrity are in tension
 
@@ -928,7 +1000,7 @@ Each of these is instrumented or instrumentable today. None has been run.
 
 The companion document `BUILD-PROMPT.md` in this directory specifies the complete system in
 buildable form: milestones with executable acceptance criteria, the schema, the mathematics with
-its failure modes, the hard rules, and the four defects above as regression tests to write before
+its failure modes, the hard rules, and the defects above as regression tests to write before
 the code that would contain them.
 
 It is written to be handed to a competent implementer — human or agent — who has not read this
