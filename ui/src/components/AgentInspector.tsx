@@ -158,7 +158,11 @@ export function AgentInspector({ open, onClose, tab, onTab, visible }: AgentInsp
     // one refusal must not blank the three that still answer. Switching it off is exactly when
     // somebody wants to look at what happened before they did.
     const [s, a, r, st] = await Promise.allSettled([
-      ipc.agentSessions(50),
+      // Twenty rather than fifty: the counts inside a session change constantly, so this one
+      // cannot be cursored the way the audit log can — every poll re-reads whatever it asks
+      // for. What a live view needs is the sessions somebody might still be watching, and
+      // `cortex sessions` is where the rest of them live.
+      ipc.agentSessions(20),
       ipc.auditRecent(80, false, seen.current.all),
       ipc.auditRecent(80, true, seen.current.refused),
       ipc.agentStatus(),
