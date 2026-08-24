@@ -252,22 +252,7 @@ impl Store {
         conn: &rusqlite::Connection,
         targets: &[NodeId],
     ) -> Result<serde_json::Value> {
-        let mut out = Vec::new();
-        for target in targets {
-            let row: Option<(String, String, String)> = conn
-                .query_row(
-                    "SELECT scope, kind, text FROM memories WHERE node_id = ?1",
-                    params![target.0],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-                )
-                .optional()?;
-            if let Some((scope, kind, text)) = row {
-                out.push(serde_json::json!({
-                    "scope": scope, "kind": kind, "text": text,
-                }));
-            }
-        }
-        Ok(serde_json::Value::Array(out))
+        memory_keys_on(conn, targets)
     }
 
     fn exact_memory(
@@ -707,6 +692,10 @@ impl Store {
         }
 
         let mut applied = OutcomeApplied::default();
+        // What this report took back, so a replay can take it back too. A human correcting an
+        // agent reverses the agent's contribution, and an episode that recorded only the new
+        // verdict would rebuild into a state where both had been counted.
+        let mut reversals: Vec<serde_json::Value> = Vec::new();
 
         for (nodes, verdict) in [(helped, Verdict::Helped), (noise, Verdict::Noise)] {
             for node in nodes {
@@ -760,6 +749,12 @@ impl Store {
                     // so the human's verdict is what stands whether they agree or not.
                     Some((Reporter::Agent, was_verdict)) if reporter == Reporter::Human => {
                         apply_report(&tx, pack_id, *node, reporter, verdict, Some(was_verdict))?;
+                        let mut key = memory_keys_on(&tx, std::slice::from_ref(node))?;
+                        if let Some(entry) = key.as_array_mut().and_then(|a| a.first_mut()) {
+                            entry["verdict"] = serde_json::json!(was_verdict.as_str());
+                            entry["reporter"] = serde_json::json!(Reporter::Agent.as_str());
+                            reversals.push(entry.clone());
+                        }
                         applied.count(verdict);
                     }
                     // An agent contradicting a human. Ignored: the human already looked.
@@ -777,11 +772,21 @@ impl Store {
             }
         }
 
+        // The episode names the memories by what they *say*, not by their ids — the same rule
+        // every other assertion here follows, and for the same reason: a rebuild renumbers, and
+        // an id in an old episode points at nothing or, worse, at something else.
+        //
+        // This is what makes `usefulness` survive a rebuild. It is derived, and everything
+        // derived has to be reconstructible from the log or R10 is a slogan: without this an
+        // agent's whole record of what has been useful would silently reset the first time
+        // somebody ran `cortex rebuild`, and nothing would have failed.
         let metadata = serde_json::json!({
+            "assertion": "outcome",
             "pack": pack_id,
             "reporter": reporter.as_str(),
-            "helped": helped.iter().map(|n| n.0).collect::<Vec<_>>(),
-            "noise": noise.iter().map(|n| n.0).collect::<Vec<_>>(),
+            "helped": memory_keys_on(&tx, helped)?,
+            "noise": memory_keys_on(&tx, noise)?,
+            "reversed": reversals,
         });
         tx.execute(
             "INSERT INTO episodes (ts, actor, action, node_id, metadata_json)
@@ -812,6 +817,29 @@ impl Store {
         )?;
         Ok(changed)
     }
+}
+
+/// Name memories by what they say, for an episode that has to outlive their ids.
+fn memory_keys_on(
+    conn: &rusqlite::Connection,
+    targets: &[NodeId],
+) -> Result<serde_json::Value> {
+    let mut out = Vec::new();
+    for target in targets {
+        let row: Option<(String, String, String)> = conn
+            .query_row(
+                "SELECT scope, kind, text FROM memories WHERE node_id = ?1",
+                params![target.0],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?;
+        if let Some((scope, kind, text)) = row {
+            out.push(serde_json::json!({
+                "scope": scope, "kind": kind, "text": text,
+            }));
+        }
+    }
+    Ok(serde_json::Value::Array(out))
 }
 
 /// Which way a report went.
@@ -1230,7 +1258,7 @@ impl Store {
             let conn = self.conn();
             let mut stmt = conn.prepare(
                 "SELECT id, ts, actor, action, metadata_json, session_id FROM episodes
-                 WHERE action IN ('remember', 'supersede', 'forget_memory')
+                 WHERE action IN ('remember', 'supersede', 'forget_memory', 'outcome')
                  ORDER BY id",
             )?;
             let rows = stmt.query_map([], |r| {
@@ -1349,6 +1377,86 @@ impl Store {
                     }
                     conn.execute("DELETE FROM nodes WHERE id = ?1", params![node.0])?;
                     replayed += 1;
+                }
+                "outcome" => {
+                    // What a memory has earned is derived, and this is where it is derived
+                    // *from*. Applied in episode order, so a human's correction of an agent
+                    // lands after the agent's report exactly as it did the first time.
+                    let reporter = value
+                        .get("reporter")
+                        .and_then(|v| v.as_str())
+                        .and_then(Reporter::parse)
+                        .unwrap_or(Reporter::Agent);
+                    let mut applied_any = false;
+                    // Reversals first, in the same order the live call applied them.
+                    if let Some(entries) = value.get("reversed").and_then(|v| v.as_array()) {
+                        for entry in entries {
+                            let (Some(node), Some(verdict), Some(was)) = (
+                                self.memory_by_content(entry)?,
+                                entry
+                                    .get("verdict")
+                                    .and_then(|v| v.as_str())
+                                    .and_then(Verdict::parse),
+                                entry
+                                    .get("reporter")
+                                    .and_then(|v| v.as_str())
+                                    .and_then(Reporter::parse),
+                            ) else {
+                                continue;
+                            };
+                            let conn = self.conn();
+                            let column = verdict.column();
+                            conn.execute(
+                                &format!(
+                                    "UPDATE memories
+                                     SET usefulness = usefulness - ?2,
+                                         {column} = max(0, {column} - 1)
+                                     WHERE node_id = ?1"
+                                ),
+                                params![node.0, verdict.delta() * was.weight()],
+                            )?;
+                            applied_any = true;
+                        }
+                    }
+                    for (field, verdict) in
+                        [("helped", Verdict::Helped), ("noise", Verdict::Noise)]
+                    {
+                        let Some(entries) = value.get(field).and_then(|v| v.as_array()) else {
+                            continue;
+                        };
+                        for entry in entries {
+                            let Some(node) = self.memory_by_content(entry)? else {
+                                continue;
+                            };
+                            let conn = self.conn();
+                            // The pack itself is gone — packs are bookkeeping and are pruned —
+                            // so the score is applied directly rather than through the pack
+                            // guard. That guard exists to stop a *client* voting twice; a
+                            // replay of the log cannot, because the log holds each report once.
+                            let column = verdict.column();
+                            conn.execute(
+                                &format!(
+                                    "UPDATE memories
+                                     SET usefulness = usefulness + ?2,
+                                         {column} = {column} + 1,
+                                         human_confirmed = max(human_confirmed, ?3)
+                                     WHERE node_id = ?1"
+                                ),
+                                params![
+                                    node.0,
+                                    verdict.delta() * reporter.weight(),
+                                    (reporter == Reporter::Human && verdict == Verdict::Helped)
+                                        as i64
+                                ],
+                            )?;
+                            applied_any = true;
+                        }
+                    }
+                    if applied_any {
+                        replayed += 1;
+                    } else {
+                        skipped += 1;
+                    }
                 }
                 _ => skipped += 1,
             }
@@ -1987,9 +2095,14 @@ mod tests {
 
         let after = store.canonical_dump().unwrap();
 
-        // Usefulness is derived from outcome reports, which the replay does not apply — the
-        // packs are gone with the derived data. Everything else has to match exactly, and the
-        // dump is compared line by line so that a failure names the row rather than the file.
+        // `retrieved_count` is the one column that legitimately does not come back, and it is
+        // worth saying why rather than quietly excluding it: it counts how often a memory was
+        // put into a *pack*, packs are bookkeeping that `prune_packs` deletes on purpose, and a
+        // number that could be reconstructed from a table this system throws away would be a
+        // reason not to throw it away. Everything a memory has *earned* survives, because an
+        // outcome report is an episode like every other assertion here.
+        //
+        // Compared line by line, so a failure names the row rather than the file.
         let strip = |dump: &str| -> Vec<String> {
             dump.lines()
                 .map(|line| {
@@ -1997,15 +2110,29 @@ mod tests {
                         return line.to_string();
                     }
                     let mut fields: Vec<&str> = line.split('\t').collect();
-                    // usefulness, helped, noise, retrieved, human_confirmed
-                    for index in [5, 6, 7, 8, 9] {
-                        fields[index] = "-";
-                    }
+                    fields[8] = "-"; // retrieved_count
                     fields.join("\t")
                 })
                 .collect()
         };
         assert_eq!(strip(&before), strip(&after));
+
+        // And the earned columns are actually non-zero on both sides, or the comparison above
+        // would be comparing two rows of zeroes and passing for the wrong reason.
+        let earned = |dump: &str| {
+            dump.lines()
+                .filter(|line| line.starts_with("memory\t"))
+                .any(|line| {
+                    let fields: Vec<&str> = line.split('\t').collect();
+                    fields[5].parse::<f64>().unwrap_or(0.0) != 0.0
+                })
+        };
+        assert!(earned(&before), "the fixture earned nothing to compare");
+        assert!(
+            earned(&after),
+            "usefulness did not survive the rebuild; an agent's whole record of what has been \
+             useful would reset on `cortex rebuild`"
+        );
 
         // And the deletion did not come back.
         let texts: Vec<String> = store
@@ -2019,6 +2146,46 @@ mod tests {
             "a deleted memory returned on the rebuild; the delete button was a lie"
         );
         assert!(texts.iter().any(|t| t == "the old number"), "history was lost");
+    }
+
+    /// The subtle half of replaying outcomes: a correction has to be replayed as a correction.
+    ///
+    /// An episode that recorded only the human's new verdict would rebuild into a state where
+    /// both the agent's report and the human's had been counted — which is not what the live
+    /// call produced, and is a state no sequence of real reports could reach.
+    #[test]
+    fn a_humans_correction_survives_a_rebuild_as_a_correction() {
+        let store = store();
+        let contested = remember(&store, MemoryScope::Global, MemoryKind::Fact, "contested");
+        pack_with(&store, "p1", &[contested]);
+        store
+            .report_outcome("p1", &[contested], &[], Reporter::Agent, &agent("a"), 200)
+            .unwrap();
+        store
+            .report_outcome("p1", &[], &[contested], Reporter::Human, &Actor::Human, 201)
+            .unwrap();
+
+        let live = store.memory(contested).unwrap().unwrap();
+        assert!(live.usefulness < 0.0);
+        assert_eq!(live.helped_count, 0);
+        assert_eq!(live.noise_count, 1);
+
+        store.clear_derived(true).unwrap();
+        store.replay_memories().unwrap();
+
+        let rebuilt = store
+            .list_memories(&MemoryFilter::everything(300))
+            .unwrap()
+            .into_iter()
+            .find(|m| m.text == "contested")
+            .expect("the memory came back");
+        assert_eq!(
+            (rebuilt.usefulness * 1e6).round(),
+            (live.usefulness * 1e6).round(),
+            "the rebuild counted the agent's report the human had already overruled"
+        );
+        assert_eq!(rebuilt.helped_count, 0);
+        assert_eq!(rebuilt.noise_count, 1);
     }
 
     #[test]

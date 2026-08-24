@@ -816,8 +816,16 @@ deterministic (D66) — live means new data, not a jittering scene.
    extended).
 2. **R10 holds over the memory layer.** `cortex rebuild` on an index containing 1 000 memories
    across every scope and kind reproduces a byte-identical canonical dump, including
-   supersession chains and usefulness. The dump is the assertion; a passing rebuild that lost a
-   column is the failure this criterion exists to catch.
+   supersession chains, deletions, and everything a memory has earned. The dump is the
+   assertion; a passing rebuild that lost a column is the failure this criterion exists to
+   catch.
+
+   **One column is exempt and the exemption is named here rather than discovered later:**
+   `retrieved_count` counts how often a memory was put into a *pack*, packs are bookkeeping
+   that `prune_packs` deletes on purpose, and a number that could only be reconstructed from a
+   table this system throws away would be a reason not to throw it away. Everything a memory
+   has *earned* — usefulness, the helped and noise counts, human confirmation — is derived from
+   `outcome` episodes and must come back.
 3. **The budget is honoured.** `brain.context(budget_tokens = N)` returns a pack whose token
    count is ≤ N for every N in {512, 2048, 8192} against a store of 5 000 memories, and never
    truncates an item mid-structure. The count is a **structural estimate, biased upwards, and

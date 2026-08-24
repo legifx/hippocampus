@@ -2162,7 +2162,14 @@ Three guards, because a feedback signal that can be gamed will be:
    — and the Inspector does not go on showing a "helped" the human has already contradicted.
 2. **A negative report is not a delete.** It lowers a component. Forgetting stays with the decay
    engine, so one bad session cannot erase a year, and a pin still beats everything.
-3. **`helped` and `noise` are counted separately, not netted.** A memory that is strongly useful
+3. **An outcome is an episode, so what a memory has earned survives a rebuild.** This was
+   nearly missed. `usefulness` is derived, everything derived has to be reconstructible from
+   the log or R10 is a slogan, and the first implementation wrote the report's node ids into
+   the episode — which a rebuild renumbers. An agent's entire record of what has been useful
+   would have reset the first time somebody ran `cortex rebuild`, and nothing would have
+   failed. Reports name their memories by what they say, like every other assertion here, and
+   a human's correction records what it took back so that the replay takes it back too.
+4. **`helped` and `noise` are counted separately, not netted.** A memory that is strongly useful
    in one context and noise in another is a memory that needs splitting, and netting to zero
    hides that. The Inspector shows both counts.
 
