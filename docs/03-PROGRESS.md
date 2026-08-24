@@ -10,8 +10,8 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | **M11 — The Agent Brain** (added at the owner's request 2026-08-23, D74). M8 and M5 as below. |
-| **Status** | **Two of M6's mandatory items landed on 2026-08-24: archives (`fs.extract`, D81/D82) and thumbnails in the list (D83). What is left of that list is network locations. 979 Rust tests, 60 vitest, 150 browser tests.** **M11 is ten of its twelve criteria in — see its own scorecard below before anything else, and every benchmark gate is green including the new one.** M4 complete. M6 in progress — its mandatory list is down to network locations. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **A note on counting, kept because it cost a session:** this file once said 399 tests and accused the previous entry's 812 of being unreproducible. The 399 was wrong — the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Count by summing every `test result:` line. Check the measuring tool before disbelieving the measurement; this file already says that about latency, and it applies to counting. |
-| **Last updated** | 2026-08-24 (M6: thumbnails in the list, D83 — after archives, D81/D82) |
+| **Status** | **M6's mandatory list is complete as of 2026-08-24: archives (`fs.extract`, D81/D82), thumbnails in the list (D83) and network locations (D84, staged — what is mounted is offered, mounting is not built). What is left of M6 is its own §3, a week of exclusive use by the owner. 990 Rust tests, 60 vitest, 154 browser tests.** **M11 is ten of its twelve criteria in — see its own scorecard below before anything else, and every benchmark gate is green including the new one.** M4 complete. M6's mandatory list is done; its acceptance now needs a week of use rather than more code. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **A note on counting, kept because it cost a session:** this file once said 399 tests and accused the previous entry's 812 of being unreproducible. The 399 was wrong — the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Count by summing every `test result:` line. Check the measuring tool before disbelieving the measurement; this file already says that about latency, and it applies to counting. |
+| **Last updated** | 2026-08-24 (M6: network locations, D84 — the mandatory list is complete) |
 | **Blocked on** | nothing |
 
 ## Start here
@@ -260,9 +260,11 @@ convenience is actually a statement about architecture — **a directory is one 
 several, not the ground truth of the view.** Following it gives concepts, the working set and the
 cold tier the same navigation directories already have, in four shippable steps.
 
-**It waits behind M6's mandatory list.** Archives are in as of 2026-08-24; drag-and-drop out of
-the window, network locations and thumbnails in the list are still missing, and the largest scope
-risk in this project is that the memory features are more interesting to build than those are.
+**It waited behind M6's mandatory list, and that list is now done** (2026-08-24: archives,
+thumbnails, network locations). What is still open there is one built-but-unverified thing —
+dragging a row *out* of the window — and M6's own §3, a week of exclusive use. The largest scope
+risk in this project was that the memory features are more interesting to build than the file
+manager's basics are; the basics went in.
 `docs/paper/EXPLORER-KICKOFF-PROMPT.md` is the session prompt when it is time.
 
 ### What to do next here
@@ -493,7 +495,17 @@ unmount or eject anything at all. D60 has the reasoning.
 
 ### What M6 still needs
 
-1. **Network locations**, which may be staged.
+**Nothing from the mandatory list.** Archives, thumbnails and network locations all landed on
+2026-08-24; what is left of M6 is its Definition of Done §3 — a week of exclusive daily use by the
+owner — and two things that need a person rather than more code: whether the clipboard survives
+the window being hidden, and whether a drag *out* of the window reaches another application.
+
+**Network locations are staged, and the stage boundary is deliberate** (D84). What is mounted —
+by the desktop's gvfs or by `/etc/fstab` — is offered as its own section, browsable and
+searchable. **Mounting one is not built**, because it means credentials, and a headless daemon
+that stored them would be a second, worse keyring. `fs.list` knocks on a share with a two-second
+deadline before reading it, so a server that has gone produces a sentence rather than a frozen
+window, and the indexer stops at a network mount point rather than crawling somebody else's disk.
 
 **Thumbnails in the list are done** (2026-08-24). The previewer answers `thumbnails(paths)` for a
 whole viewport out of the shared XDG cache and renders nothing; the list renders the misses one
@@ -779,6 +791,44 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
+
+### 2026-08-24 — M6: network locations, and the calls that do not come back
+
+The last item on M6's mandatory list. Shares that something has already mounted are their own
+section of the places screen, browsable and searchable; nothing here mounts one, and D84 says
+where that line is and why.
+
+**990 Rust tests** against 979 — 5 new in `cortex-agent::places`, 3 in the new
+`cortex-core::mounts`, 1 in `cortex-ingest::reconcile` — **60 vitest**, **154 browser tests**
+(4 new in `ui/tests/network.spec.ts`). Green.
+
+**The whole feature is one fact and three consequences.** What is behind the mount point is on
+another machine, over a network that can be gone without anything saying so. So: the places
+screen never calls `statvfs` on a share (it blocks); `fs.list` knocks once with a two-second
+deadline on a thread it is willing to abandon; and the indexer stops at a network mount point
+without even stat-ing it, counting what it did not enter in `network_skipped`.
+
+**`/proc/mounts` moved to `cortex-core::mounts`.** Two crates now need the same answer for
+opposite reasons — the places screen to offer a share, the indexer to avoid one — and two parsers
+would be two opinions about what a share is. The octal-escape handling and its test moved with
+it, which is the part that would have been reimplemented slightly differently.
+
+**Two things that were nearly wrong.**
+
+- **A share under `/mnt` was offered twice.** `/mnt` is one of the roots where anything mounted
+  counts as removable media, so a CIFS mount there appeared as a drive *and* as a network
+  location — with a capacity bar, which means the screen would have called `statvfs` on it after
+  all. `is_place` refuses network filesystems first now, and there is a test.
+- **A thirty-second test.** The first version of "a wedged gvfs costs the screen nothing" slept
+  thirty seconds in an injected closure to prove it. It passed, and it would have added half a
+  minute to every run for a property that `answers_within`'s own test already asserts in eighty
+  milliseconds. Replaced with a test about the listing's order, which is what that layer actually
+  decides.
+
+**A note on measuring, again.** The Playwright perf suite failed once during this session on
+"a keystroke reaches a painted row well inside 80 ms" — while `cargo test --workspace` was using
+every core in the background. On an idle machine the full run is 154/154. A performance gate
+measured against a busy machine measures the machine.
 
 ### 2026-08-24 — M6: thumbnails in the list, and the queue that is not slowness
 

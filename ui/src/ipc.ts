@@ -236,7 +236,8 @@ export type PlaceKind =
   | "trash"
   | "drive"
   | "filesystem"
-  | "bookmark";
+  | "bookmark"
+  | "network";
 
 export type Capacity = {
   total_bytes: number;

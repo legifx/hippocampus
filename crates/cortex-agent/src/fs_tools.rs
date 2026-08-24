@@ -178,6 +178,31 @@ impl Surface<'_> {
             Err(r) => return self.refuse(tool, &args, r),
         };
 
+        // A share whose server has gone does not answer slowly — it does not answer, and the
+        // `read_dir` below would hold this thread until the mount's own timeout expires, which
+        // for a default NFS mount is minutes. So a path on a network mount is knocked on first,
+        // once, with a deadline. A local path is not: the probe costs a thread, and the whole
+        // point is that it is paid only where something can hang.
+        if let Some(mount) = self.network_mount_of(&root) {
+            let probe = root.clone();
+            if cortex_core::mounts::answers_within(cortex_core::mounts::PROBE, move || {
+                std::fs::symlink_metadata(&probe).is_ok()
+            })
+            .is_none()
+            {
+                let message = format!(
+                    "{} did not answer within {} ms — the share may be gone",
+                    mount.device,
+                    cortex_core::mounts::PROBE.as_millis()
+                );
+                self.auditor.allowed(self.now, tool, &args, &message);
+                return Err(ToolError::Io {
+                    path: root,
+                    message,
+                });
+            }
+        }
+
         let limit = params.limit.unwrap_or(DEFAULT_LIST_LIMIT);
         let depth = params.depth.unwrap_or(1).max(1);
         let mut entries = Vec::new();
@@ -243,6 +268,17 @@ impl Surface<'_> {
             truncated,
             hidden,
         })
+    }
+
+    /// The network mount a path is on, if it is on one.
+    ///
+    /// The mount table is re-read per listing rather than cached. It is a few kilobytes out of
+    /// procfs against a call that is about to read a directory, and the alternative — a cached
+    /// table — would be wrong exactly when it matters: at the moment somebody plugs in, mounts
+    /// or loses a share.
+    fn network_mount_of(&self, path: &Path) -> Option<cortex_core::mounts::Mount> {
+        let mounts = cortex_core::mounts::read(Path::new(cortex_core::mounts::PROC_MOUNTS));
+        cortex_core::mounts::network_mount_for(path, &mounts).cloned()
     }
 
     pub fn read(&self, params: &FsReadParams) -> ToolResult<FsReadResult> {

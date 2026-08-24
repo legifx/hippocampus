@@ -364,6 +364,14 @@
   background: var(--hc-warning);
 }
 
+/* A share is a circle like a drive, and hollow: what is behind it is not here. Colour is never
+   the only signal (D15), which is why the shape carries it too. */
+.hc-place-mark[data-kind="network"] {
+  border-radius: 50%;
+  background: none;
+  border: 1px solid var(--hc-info);
+}
+
 .hc-place-mark[data-kind="filesystem"] {
   background: none;
   border: 1px solid var(--hc-text-faint);

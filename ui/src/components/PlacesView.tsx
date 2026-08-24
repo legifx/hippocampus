@@ -141,6 +141,16 @@ function PlaceRow({
         </span>
       )}
 
+      {/* Which machine it is on, for the case two shares are called the same thing — and as the
+          only visible difference between a folder and a folder that is somewhere else. No
+          capacity is shown for a share: measuring one means a call that can block, and the
+          daemon deliberately does not make it. */}
+      {place.kind === "network" && place.device && (
+        <span className="hc-place-space hc-meta">
+          <span className="hc-faint">{place.device}</span>
+        </span>
+      )}
+
       {place.capacity && (
         <span className="hc-place-space hc-meta">
           <span className="hc-place-bar" aria-hidden="true">

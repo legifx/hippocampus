@@ -6,14 +6,16 @@
 //! ever wanted, and it is `home`. Everything a person actually opens is four levels down.
 //!
 //! So this answers a different question: not "what is in this directory" but "where would you
-//! like to go". Four sections, and the technical half of the machine is one row in the last of
+//! like to go". Five sections, and the technical half of the machine is one row in the last of
 //! them:
 //!
 //! 1. **Persönlich** — the home directory and the XDG user directories that exist.
 //! 2. **Lesezeichen** — whatever the person bookmarked, read from the same file Nautilus and
 //!    Thunar use, so a bookmark made in either shows up in all three.
 //! 3. **Laufwerke** — mounted volumes, with a label and how full they are.
-//! 4. **System** — the filesystem root. One row. Everything above is still reachable through it,
+//! 4. **Netzwerk** — shares on other machines that something has already mounted. Nothing here
+//!    mounts one; see [`network_places`] for where that line is drawn and why.
+//! 5. **System** — the filesystem root. One row. Everything above is still reachable through it,
 //!    and nothing above is in the way of somebody looking for their Downloads.
 //!
 //! ## Why the daemon builds this and not the interface
@@ -54,13 +56,9 @@ const NOT_PLACES: &[&str] = &["/boot", "/var", "/snap", "/proc", "/sys", "/dev",
 /// behind it is as much a drive as an internal SSD.
 const REMOVABLE_ROOTS: &[&str] = &["/media", "/run/media", "/mnt"];
 
-/// One mounted filesystem, as `/proc/mounts` describes it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Mount {
-    pub device: String,
-    pub point: PathBuf,
-    pub fstype: String,
-}
+/// One mounted filesystem. The parser and the network-filesystem list live in `cortex-core`,
+/// because the indexer needs the same answer for the opposite reason — see [`cortex_core::mounts`].
+pub use cortex_core::mounts::Mount;
 
 /// The home directory, or `/` if the environment does not say.
 ///
@@ -101,6 +99,22 @@ pub fn build(
     idle: &[crate::volumes::Volume],
     measure: &dyn Fn(&Path) -> Option<Capacity>,
 ) -> Vec<PlaceSection> {
+    build_with(home, mounts, labels, idle, measure, &list_dir)
+}
+
+/// The same, with the directory listing injected.
+///
+/// gvfs publishes one mount whose *children* are the shares, so the only way to name them is to
+/// read that directory — and a test that had to create `smb-share:server=nas,share=fotos` on a
+/// real filesystem would be testing the tempdir rather than the naming.
+pub fn build_with(
+    home: &Path,
+    mounts: &[Mount],
+    labels: &HashMap<String, String>,
+    idle: &[crate::volumes::Volume],
+    measure: &dyn Fn(&Path) -> Option<Capacity>,
+    read_dir: &dyn Fn(&Path) -> Vec<String>,
+) -> Vec<PlaceSection> {
     let mut sections = Vec::new();
 
     let personal = personal_places(home);
@@ -124,6 +138,14 @@ pub fn build(
         sections.push(PlaceSection {
             title: "Laufwerke".to_string(),
             places: drives,
+        });
+    }
+
+    let network = network_places(mounts, read_dir);
+    if !network.is_empty() {
+        sections.push(PlaceSection {
+            title: "Netzwerk".to_string(),
+            places: network,
         });
     }
 
@@ -354,6 +376,190 @@ fn drive_places(
     places
 }
 
+// ---------------------------------------------------------------------------
+// Network locations.
+// ---------------------------------------------------------------------------
+
+/// Shares on other machines, as places.
+///
+/// **Nothing here is mounted by this program.** A share appears because the desktop mounted it
+/// (gvfs, from Nautilus or the portal) or because `/etc/fstab` did. That is the staged half M6
+/// allows, and the line is drawn where the credentials are: mounting an SMB share means asking
+/// for a password, storing it, and answering a re-authentication prompt hours later, and a
+/// headless daemon that did any of that would be a second, worse keyring. What this does is
+/// make what is already mounted reachable, browsable and searchable.
+///
+/// **No capacity is measured.** `statvfs` on a share whose server has gone is one of the calls
+/// that blocks, and the first screen is not a place to find that out. A drive shows how full it
+/// is; a share shows where it is.
+fn network_places(mounts: &[Mount], read_dir: &dyn Fn(&Path) -> Vec<String>) -> Vec<Place> {
+    let mut places = Vec::new();
+
+    for mount in mounts {
+        if !cortex_core::mounts::is_network(&mount.fstype) {
+            continue;
+        }
+
+        // gvfs is one mount with the shares underneath it. The mount itself is plumbing — a row
+        // called "gvfs" is a row nobody wants — so its children stand in for it.
+        if is_gvfs(&mount.fstype) {
+            for name in read_dir(&mount.point) {
+                places.push(Place {
+                    name: gvfs_name(&name),
+                    path: mount.point.join(&name),
+                    kind: PlaceKind::Network,
+                    capacity: None,
+                    // The address rather than the encoding: `smb://nas/fotos` is what somebody
+                    // typed to mount it, and `smb-share:server=nas,share=fotos` is how gvfs
+                    // chose to spell it in a directory name.
+                    device: Some(gvfs_address(&name)),
+                    volume: None,
+                });
+            }
+            continue;
+        }
+
+        places.push(Place {
+            name: network_name(&mount.device, &mount.point),
+            path: mount.point.clone(),
+            kind: PlaceKind::Network,
+            capacity: None,
+            device: Some(mount.device.clone()),
+            volume: None,
+        });
+    }
+
+    places
+}
+
+fn is_gvfs(fstype: &str) -> bool {
+    fstype == "fuse.gvfsd-fuse" || fstype == "fuse.gvfs-fuse-daemon"
+}
+
+/// The names of the entries in a directory, or nothing if it will not answer.
+///
+/// The deadline is here rather than around the whole screen because this is the one directory in
+/// it that is served by a daemon: gvfs answers out of its own state, which is fast until gvfsd
+/// is wedged, and a places screen that hangs because of that would be the first screen hanging.
+fn list_dir(path: &Path) -> Vec<String> {
+    let owned = path.to_path_buf();
+    let listed = cortex_core::mounts::answers_within(
+        std::time::Duration::from_millis(300),
+        move || {
+            let mut names = Vec::new();
+            if let Ok(entries) = std::fs::read_dir(&owned) {
+                for entry in entries.flatten() {
+                    names.push(entry.file_name().to_string_lossy().to_string());
+                }
+            }
+            names
+        },
+    );
+    let mut names = listed.unwrap_or_default();
+    names.sort();
+    names
+}
+
+/// What to call a share that was mounted the traditional way.
+///
+/// The device string is the only thing that says where it came from, and each protocol writes it
+/// differently: `//server/photos` for SMB, `server:/export` for NFS, `me@server:/srv` for sshfs.
+/// All three answer the same question — *what*, on *which machine* — so all three are read into
+/// the same sentence.
+fn network_name(device: &str, point: &Path) -> String {
+    let (host, share) = split_device(device);
+    match (host, share) {
+        (Some(host), Some(share)) if !share.is_empty() => format!("{share} auf {host}"),
+        (Some(host), _) => host.to_string(),
+        _ => folder_name(point).unwrap_or_else(|| device.to_string()),
+    }
+}
+
+/// `//server/photos` → (server, photos); `me@server:/srv/data` → (server, data).
+///
+/// Only the two forms `/proc/mounts` actually writes on Linux. A Windows UNC path with
+/// backslashes never appears in it, and a branch for one would be a branch no test could reach.
+fn split_device(device: &str) -> (Option<&str>, Option<&str>) {
+    if let Some(rest) = device.strip_prefix("//") {
+        let mut parts = rest.splitn(2, '/');
+        return (parts.next(), parts.next());
+    }
+    if let Some((left, path)) = device.split_once(':') {
+        // `user@host` — the user is authentication, not identity, and a row that says
+        // "data auf me@server" is a row with a login in it.
+        let host = left.rsplit('@').next().unwrap_or(left);
+        let last = path.trim_end_matches('/').rsplit('/').next().unwrap_or("");
+        return (Some(host), Some(last));
+    }
+    (None, None)
+}
+
+/// Decode one gvfs directory name.
+///
+/// gvfs encodes the whole mount into the name: `smb-share:server=nas,share=fotos`,
+/// `sftp:host=server,user=someone`, `dav:host=cloud,ssl=true`. It is a scheme, then
+/// comma-separated pairs — so it is read as one, rather than matched per protocol, and a scheme
+/// this build has never heard of still produces a row with a host in it.
+fn gvfs_name(entry: &str) -> String {
+    let (scheme, rest) = entry.split_once(':').unwrap_or((entry, ""));
+    let mut host = None;
+    let mut share = None;
+    for pair in rest.split(',') {
+        let Some((key, value)) = pair.split_once('=') else {
+            continue;
+        };
+        match key {
+            "server" | "host" => host = Some(value),
+            "share" => share = Some(value),
+            _ => {}
+        }
+    }
+
+    let protocol = match scheme {
+        "smb-share" | "smb" => "SMB",
+        "sftp" | "ssh" => "SFTP",
+        "dav" | "davs" => "WebDAV",
+        "ftp" | "ftps" => "FTP",
+        "nfs" => "NFS",
+        other => other,
+    };
+
+    match (host, share) {
+        (Some(host), Some(share)) => format!("{share} auf {host}"),
+        (Some(host), None) => format!("{host} ({protocol})"),
+        // Not a shape this build knows. The raw name is ugly and it is *true*, which is the
+        // right trade for a row somebody has to click on.
+        _ => entry.to_string(),
+    }
+}
+
+/// The address a gvfs mount was made from, rebuilt from the name it was given.
+///
+/// `smb-share:server=nas,share=fotos` → `smb://nas/fotos`. Not round-tripped through anything
+/// that mounts: nothing here mounts. It is the line under the name in the sidebar, for telling
+/// two shares called `fotos` apart.
+fn gvfs_address(entry: &str) -> String {
+    let (scheme, rest) = entry.split_once(':').unwrap_or((entry, ""));
+    let mut host = None;
+    let mut share = None;
+    for pair in rest.split(',') {
+        let Some((key, value)) = pair.split_once('=') else {
+            continue;
+        };
+        match key {
+            "server" | "host" => host = Some(value),
+            "share" => share = Some(value),
+            _ => {}
+        }
+    }
+    let scheme = if scheme == "smb-share" { "smb" } else { scheme };
+    match (host, share) {
+        (Some(host), Some(share)) => format!("{scheme}://{host}/{share}"),
+        (Some(host), None) => format!("{scheme}://{host}"),
+        _ => entry.to_string(),
+    }
+}
+
 /// What is known about the device behind a mount, when it is one of the volumes scanned.
 ///
 /// A mounted drive carries the same facts as an unmounted one — how big it is, whether it can be
@@ -377,6 +583,12 @@ fn volume_of(
 fn is_place(mount: &Mount) -> bool {
     // The root is a place, but it is *the* place, and it gets its own section.
     if mount.point == Path::new("/") {
+        return false;
+    }
+    // A share has its own section. Mounting one under `/mnt` is ordinary — the removable-media
+    // rule below would otherwise offer it a second time, as a drive, with a capacity nobody
+    // should be measuring.
+    if cortex_core::mounts::is_network(&mount.fstype) {
         return false;
     }
     if under_any(&mount.point, REMOVABLE_ROOTS) {
@@ -427,50 +639,11 @@ fn root_device(mounts: &[Mount]) -> Option<String> {
 /// is why a stick called `My Stick` mounts at `/media/user/My\040Stick` and a naive split gives
 /// six fields and a wrong answer.
 pub fn read_mounts(path: &Path) -> Vec<Mount> {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return Vec::new();
-    };
-    parse_mounts(&text)
+    cortex_core::mounts::read(path)
 }
 
 pub fn parse_mounts(text: &str) -> Vec<Mount> {
-    let mut mounts = Vec::new();
-    for line in text.lines() {
-        let mut fields = line.split(' ');
-        let (Some(device), Some(point), Some(fstype)) = (fields.next(), fields.next(), fields.next())
-        else {
-            continue;
-        };
-        mounts.push(Mount {
-            device: unescape_octal(device),
-            point: PathBuf::from(unescape_octal(point)),
-            fstype: fstype.to_string(),
-        });
-    }
-    mounts
-}
-
-/// `\040` → a space. The kernel escapes space, tab, newline and backslash this way.
-fn unescape_octal(text: &str) -> String {
-    if !text.contains('\\') {
-        return text.to_string();
-    }
-    let bytes = text.as_bytes();
-    let mut out = String::with_capacity(text.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'\\' && i + 3 < bytes.len() {
-            let digits = &text[i + 1..i + 4];
-            if let Ok(byte) = u8::from_str_radix(digits, 8) {
-                out.push(byte as char);
-                i += 4;
-                continue;
-            }
-        }
-        out.push(bytes[i] as char);
-        i += 1;
-    }
-    out
+    cortex_core::mounts::parse(text)
 }
 
 /// Read `/dev/disk/by-label`, which is a directory of symlinks from label to device.
@@ -1002,5 +1175,141 @@ mod tests {
         );
         assert_eq!(local_path("smb://server/share"), None);
         assert_eq!(local_path("file://server/share"), None);
+    }
+}
+
+#[cfg(test)]
+mod network_tests {
+    use super::*;
+
+    fn mount(device: &str, point: &str, fstype: &str) -> Mount {
+        Mount {
+            device: device.to_string(),
+            point: PathBuf::from(point),
+            fstype: fstype.to_string(),
+        }
+    }
+
+    fn nothing(_: &Path) -> Option<Capacity> {
+        None
+    }
+
+    #[test]
+    fn a_share_says_what_it_is_and_which_machine_it_is_on() {
+        assert_eq!(
+            network_name("//nas/fotos", Path::new("/mnt/fotos")),
+            "fotos auf nas"
+        );
+        assert_eq!(
+            network_name("server:/export/backup", Path::new("/mnt/backup")),
+            "backup auf server"
+        );
+        // A login is authentication, not identity: nobody wants a row called "data auf me@nas".
+        assert_eq!(
+            network_name("me@nas:/srv/data", Path::new("/mnt/data")),
+            "data auf nas"
+        );
+        // Nothing recognisable: the mount point's own name, which is at least true.
+        assert_eq!(
+            network_name("something-odd", Path::new("/mnt/irgendwas")),
+            "irgendwas"
+        );
+    }
+
+    #[test]
+    fn a_gvfs_mount_is_read_as_a_scheme_and_its_pairs() {
+        assert_eq!(gvfs_name("smb-share:server=nas,share=fotos"), "fotos auf nas");
+        assert_eq!(gvfs_name("sftp:host=server,user=someone"), "server (SFTP)");
+        assert_eq!(gvfs_name("dav:host=cloud,ssl=true"), "cloud (WebDAV)");
+        // A scheme this build has never seen still produces a row with a machine in it.
+        assert_eq!(gvfs_name("wombat:host=elsewhere"), "elsewhere (wombat)");
+        // And something that is not the shape at all keeps its name rather than being guessed at.
+        assert_eq!(gvfs_name("mtp-volume"), "mtp-volume");
+    }
+
+    #[test]
+    fn gvfs_shares_are_rows_and_the_gvfs_mount_itself_is_not() {
+        let mounts = vec![
+            mount("gvfsd-fuse", "/run/user/1000/gvfs", "fuse.gvfsd-fuse"),
+            mount("//nas/fotos", "/mnt/fotos", "cifs"),
+        ];
+        let listing = |path: &Path| -> Vec<String> {
+            if path == Path::new("/run/user/1000/gvfs") {
+                vec![
+                    "smb-share:server=nas,share=dokumente".to_string(),
+                    "sftp:host=server,user=someone".to_string(),
+                ]
+            } else {
+                Vec::new()
+            }
+        };
+
+        let places = network_places(&mounts, &listing);
+        let names: Vec<&str> = places.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["dokumente auf nas", "server (SFTP)", "fotos auf nas"],
+            "the gvfs mount itself must not be a row called gvfs"
+        );
+
+        // Every one of them: no capacity, and a path a client can actually open.
+        for place in &places {
+            assert_eq!(place.kind, PlaceKind::Network);
+            assert!(
+                place.capacity.is_none(),
+                "statvfs on a share is one of the calls that blocks; the first screen must not \
+                 make it"
+            );
+            assert!(place.path.is_absolute());
+        }
+        assert_eq!(
+            places[0].path,
+            PathBuf::from("/run/user/1000/gvfs/smb-share:server=nas,share=dokumente")
+        );
+        // The address under the name is the one somebody would recognise, not gvfs's spelling.
+        assert_eq!(places[0].device.as_deref(), Some("smb://nas/dokumente"));
+        assert_eq!(places[1].device.as_deref(), Some("sftp://server"));
+    }
+
+    #[test]
+    fn a_share_under_mnt_is_not_also_offered_as_a_drive() {
+        let home = tempfile::tempdir().unwrap();
+        let mounts = vec![
+            mount("/dev/nvme0n1p2", "/", "ext4"),
+            // Mounting a share under /mnt is ordinary, and /mnt is where removable media is
+            // *also* offered from — which is exactly how it appeared twice.
+            mount("//nas/fotos", "/mnt/fotos", "cifs"),
+        ];
+
+        let sections = build(home.path(), &mounts, &HashMap::new(), &[], &nothing);
+        let network = sections
+            .iter()
+            .find(|s| s.title == "Netzwerk")
+            .expect("a share is a network location");
+        assert_eq!(network.places.len(), 1);
+        assert!(
+            sections.iter().all(|s| s.title != "Laufwerke"),
+            "the share was offered as a drive as well"
+        );
+    }
+
+    /// The listing behind the gvfs rows: sorted, and it is the one call on this screen with a
+    /// deadline on it (`answers_within`, whose own test covers what a stuck call costs).
+    #[test]
+    fn the_shares_are_listed_in_a_stable_order() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["sftp:host=zeta", "smb-share:server=alpha,share=x"] {
+            std::fs::create_dir(dir.path().join(name)).unwrap();
+        }
+        assert_eq!(
+            list_dir(dir.path()),
+            vec![
+                "sftp:host=zeta".to_string(),
+                "smb-share:server=alpha,share=x".to_string()
+            ],
+            "read_dir returns whatever order the filesystem feels like; two runs of one screen              must not disagree"
+        );
+        // A directory that is not there is an empty screen rather than an error.
+        assert!(list_dir(&dir.path().join("nope")).is_empty());
     }
 }

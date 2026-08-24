@@ -53,6 +53,16 @@ setTransport({
         return { hits: query ? ALL : [], mode: "auto", elapsed_ms: 3, partial: false } as T;
       }
       case "list": {
+        // A share whose server has gone: the daemon knocks with a deadline and answers with
+        // this rather than hanging. `?deadshare=1` is how a test asks for that machine.
+        if (
+          params.get("deadshare") === "1" &&
+          String(args?.path ?? "").startsWith("/mnt/backup")
+        ) {
+          throw new Error(
+            "server:/export/backup did not answer within 2000 ms — the share may be gone",
+          );
+        }
         // A directory the layout tests can navigate: two folders, three files, and names long
         // enough to threaten a 400 px column.
         const at = String(args?.path ?? "/");
@@ -188,6 +198,26 @@ setTransport({
                   kind: "drive",
                   device: "/dev/sdb1",
                   volume: { mounted: false, fstype: "vfat", size_bytes: 31_400_000_000, removable: true },
+                },
+              ],
+            },
+            {
+              // Shares the desktop mounted, as the daemon reports them: no capacity, because
+              // measuring one means a call that can block, and an address rather than a
+              // mount path.
+              title: "Netzwerk",
+              places: [
+                {
+                  path: "/run/user/1000/gvfs/smb-share:server=nas,share=fotos",
+                  name: "fotos auf nas",
+                  kind: "network",
+                  device: "smb://nas/fotos",
+                },
+                {
+                  path: "/mnt/backup",
+                  name: "backup auf server",
+                  kind: "network",
+                  device: "server:/export/backup",
                 },
               ],
             },

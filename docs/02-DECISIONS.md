@@ -2453,3 +2453,49 @@ Three consequences worth stating:
 **And it stops when nobody is looking.** The hook takes the window's visibility and asks for
 nothing while the overlay is hidden — the same rule D59 arrived at the expensive way, applied
 before it could be measured again.
+
+### D84 — A share is somebody else's disk, and everything follows from that
+
+**Status:** accepted · 2026-08-24 · M6
+
+Network locations are in, and the shape of them is decided by one fact: what is behind the mount
+point is on another machine, reached over a network that can be gone without anything saying so.
+
+**What this does not do: mount one.** A share appears in the places screen because the desktop
+mounted it (gvfs, from any file manager or the portal) or because `/etc/fstab` did. M6 allows
+this item to be staged and this is the stage boundary, drawn where the credentials are: mounting
+an SMB share means asking for a password, storing it, and answering a re-authentication prompt
+hours later in a process with no window. A daemon that did that would be a second, worse keyring
+— and R5 says no secrets in this repository, which a credential store would immediately test.
+What is built is the half that has no such problem: what is already mounted is offered, browsable
+and searchable.
+
+**Three places the difference shows, and what each one does about it.**
+
+1. **The places screen never measures a share.** `statvfs` on a mount whose server has gone
+   blocks in the kernel, and the first screen is not where somebody should discover that. A drive
+   shows how full it is; a share shows its address — `smb://nas/fotos`, rebuilt from the name
+   gvfs gave the mount, because two shares called `fotos` are otherwise the same row twice.
+2. **`fs.list` knocks first.** A path on a network mount gets one `stat` on a thread of its own
+   with a two-second deadline; if it does not answer, the call returns *"…did not answer within
+   2000 ms — the share may be gone"* instead of holding a thread until the mount's own timeout
+   expires, which for a default NFS mount is minutes. The probe is per call, not per row, and it
+   is skipped entirely for local paths — the cost is a thread, and it is paid only where
+   something can hang. **The stuck thread is left behind**: nothing in user space can cancel a
+   blocked syscall, so it holds one stack until the kernel gives up and then ends. That is the
+   honest cost, and it is smaller than a frozen file manager.
+3. **The indexer stops at the mount point.** Not even a `stat` on it — the root of a dead share
+   blocks like everything inside it. A share inside an indexed home directory would otherwise
+   turn "index my files" into days of traffic against a server nobody mentioned. A root that *is*
+   on a share is indexed anyway: configuring one is saying so on purpose, and a tool that refused
+   would be overruling its owner. `ReconcileReport::network_skipped` counts what was not entered,
+   because a number that is silently zero is how this gets broken later.
+
+**What counts as a network filesystem is a list of types, not a pattern.** `fuse.sshfs` and
+`fuse.gvfsd-fuse` are network filesystems; `fuse.exfat` on a stick in this machine's own USB port
+is not. A rule like "anything with fuse in it" would refuse to index a memory card, which is the
+kind of near-miss that only shows up on somebody else's machine.
+
+**Where the parsing lives.** `/proc/mounts` is now read in `cortex-core::mounts`, because two
+crates need the same answer for opposite reasons — the places screen to *offer* a share, the
+indexer to *avoid* one — and two parsers would be two opinions about what a share is.

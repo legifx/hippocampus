@@ -43,6 +43,11 @@ pub struct ReconcileReport {
     pub unchanged: u64,
     /// Skipped by the deny-list or as a bulky subtree.
     pub skipped: u64,
+    /// Directories not entered because they are somebody else's disk on the other end of a
+    /// network. Counted separately from `skipped`, because "I did not index this" and "I did not
+    /// index this *and it is not local*" are different facts about an index — and a number that
+    /// is silently zero is how a share gets crawled without anybody noticing.
+    pub network_skipped: u64,
 }
 
 impl ReconcileReport {
@@ -304,7 +309,28 @@ fn record_episode(store: &Store, action: Action, node: Option<NodeId>, now: i64,
 }
 
 /// Walk the tree with `stat`, applying the deny-list. No file is ever opened.
+///
+/// **The walk stops at a network mount.** A share inside an indexed directory is somebody else's
+/// disk reached over somebody else's network: walking into it turns "index my home directory"
+/// into days of traffic against a server nobody mentioned, and every `stat` in it can block for
+/// as long as the mount takes to admit the server is gone. A root that *is* on a share is
+/// indexed anyway — configuring one is saying so on purpose, and the barrier is for the ones
+/// nobody chose.
 fn scan_disk(root: &Path, extra_deny: &[String], report: &mut ReconcileReport) -> Vec<OnDisk> {
+    scan_disk_within(root, extra_deny, &network_barriers(root), report)
+}
+
+/// The walk itself, with the barriers handed to it.
+///
+/// Split out so that "the walk stops at a share" can be tested against a directory rather than
+/// against a mount table — a test that needed a real SMB server to prove the indexer stays off
+/// one would never be run.
+fn scan_disk_within(
+    root: &Path,
+    extra_deny: &[String],
+    barriers: &[PathBuf],
+    report: &mut ReconcileReport,
+) -> Vec<OnDisk> {
     let mut out = Vec::new();
     let mut queue = vec![root.to_path_buf()];
 
@@ -326,6 +352,10 @@ fn scan_disk(root: &Path, extra_deny: &[String], report: &mut ReconcileReport) -
                     report.skipped += 1;
                     continue;
                 }
+                if barriers.contains(&path) {
+                    report.network_skipped += 1;
+                    continue;
+                }
                 queue.push(path);
             } else if let Some(entry) = stat_entry(&path, extra_deny, report) {
                 out.push(entry);
@@ -334,6 +364,16 @@ fn scan_disk(root: &Path, extra_deny: &[String], report: &mut ReconcileReport) -
     }
 
     out
+}
+
+/// The network mount points this walk must not cross.
+///
+/// Read once per root rather than per directory. A mount that appears halfway through a long
+/// scan is picked up by the next one, which is the same freshness every other fact in a walk
+/// has — a directory listed at the start is equally out of date by the end.
+pub(crate) fn network_barriers(root: &Path) -> Vec<PathBuf> {
+    let mounts = cortex_core::mounts::read(Path::new(cortex_core::mounts::PROC_MOUNTS));
+    cortex_core::mounts::barriers_for(root, &mounts)
 }
 
 fn stat_entry(path: &Path, extra_deny: &[String], report: &mut ReconcileReport) -> Option<OnDisk> {
@@ -632,5 +672,42 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let report = reconcile(&store, Path::new("/definitely/not/here"), &[], 100);
         assert_eq!(report.added, 0);
+    }
+
+    /// R3's neighbour: the index is allowed to be incomplete, and it is not allowed to reach
+    /// across a network to complete itself.
+    #[test]
+    fn the_walk_stops_at_a_share_and_says_how_many_it_did_not_enter() {
+        let root = tempfile::tempdir().unwrap();
+        let local = root.path().join("lokal");
+        let share = root.path().join("nas");
+        std::fs::create_dir_all(&local).unwrap();
+        std::fs::create_dir_all(share.join("tief")).unwrap();
+        std::fs::write(local.join("hier.txt"), b"local").unwrap();
+        std::fs::write(share.join("drueben.txt"), b"remote").unwrap();
+        std::fs::write(share.join("tief/tiefer.txt"), b"remote").unwrap();
+
+        let mut report = ReconcileReport::default();
+        let found = scan_disk_within(root.path(), &[], &[share.clone()], &mut report);
+
+        let paths: Vec<String> = found.iter().map(|e| e.path.display().to_string()).collect();
+        assert!(paths.iter().any(|p| p.ends_with("lokal/hier.txt")));
+        assert!(
+            !paths.iter().any(|p| p.contains("/nas/")),
+            "the walk went into the share: {paths:?}"
+        );
+        // Not even the mount point is stat-ed, and that is deliberate rather than an oversight:
+        // `stat` on the root of a dead share blocks exactly like a read inside it does. The
+        // share is still browsable — `fs.list` knocks first, with a deadline — it is simply not
+        // in the index.
+        assert_eq!(report.network_skipped, 1);
+        assert!(!paths.iter().any(|p| p.ends_with("/nas")));
+
+        // And without the barrier the same tree is walked whole, which is what makes the
+        // assertion above about the barrier rather than about the fixture.
+        let mut everything = ReconcileReport::default();
+        let all = scan_disk_within(root.path(), &[], &[], &mut everything);
+        assert!(all.len() > found.len());
+        assert_eq!(everything.network_skipped, 0);
     }
 }

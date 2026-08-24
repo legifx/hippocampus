@@ -160,7 +160,11 @@ impl Watcher {
     /// Skipping is what makes the watch count affordable: a source tree with `node_modules`,
     /// `.git` and `target` contains an order of magnitude more directories than the part
     /// anybody wants to find.
+    /// **The walk stops at a network mount**, for the same reason the reconcile walk does: a
+    /// share is somebody else's disk, and an inotify watch on a FUSE mount watches nothing
+    /// anyway — the kernel has no events to give for a change that happened on another machine.
     pub fn watch_tree(&mut self, root: &Path) -> Result<usize, WatchError> {
+        let barriers = crate::reconcile::network_barriers(root);
         let mut added = 0;
         let mut queue = vec![root.to_path_buf()];
 
@@ -180,7 +184,11 @@ impl Watcher {
                 if denylist::should_skip_subtree(&name.to_string_lossy()) {
                     continue;
                 }
-                queue.push(entry.path());
+                let path = entry.path();
+                if barriers.contains(&path) {
+                    continue;
+                }
+                queue.push(path);
             }
         }
 

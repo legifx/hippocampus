@@ -224,7 +224,7 @@ test.describe("the places screen", () => {
     await openAtPlaces(page);
 
     const headings = page.locator(".hc-places-title");
-    await expect(headings).toHaveText(["Persönlich", "Laufwerke", "System"]);
+    await expect(headings).toHaveText(["Persönlich", "Laufwerke", "Netzwerk", "System"]);
 
     // The whole point: one row called what it is, rather than sixteen in the way.
     const system = page.locator(".hc-places-section").last().locator(".hc-place");

@@ -847,6 +847,11 @@ pub enum PlaceKind {
     Filesystem,
     /// Somewhere the person marked. Shared with the rest of the desktop.
     Bookmark,
+    /// A share on another machine, mounted by the desktop or by `/etc/fstab`. Its own kind
+    /// rather than a `Drive`, because everything about it differs where it matters: it has no
+    /// capacity worth measuring, it is not indexed, and it can stop answering while somebody is
+    /// looking at it.
+    Network,
 }
 
 /// How full a volume is. `None` for anything that is not one.
