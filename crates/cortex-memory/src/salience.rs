@@ -358,6 +358,45 @@ pub fn noise_score(path: &str) -> f64 {
 #[cfg(test)]
 mod tests {
 
+    /// Adding the memory layer's component did not move a single file's score.
+    ///
+    /// `usefulness` is zero for everything that is not a memory — a file cannot be reported
+    /// useful — so every file's total is what it was before `w8` existed. Worth an assertion
+    /// rather than an argument, because the recorded goldset numbers depend on file ranking
+    /// being stable, and "it should be zero" is how a ranking quietly moves.
+    #[test]
+    fn a_file_scores_exactly_what_it_scored_before_the_memory_component_existed() {
+        let w = Weights::default();
+        let mut input = Inputs {
+            access_count: 4.0,
+            edit_count: 2.0,
+            last_access: 1_000_000,
+            first_seen: 900_000,
+            now: 1_000_600,
+            degree: 12,
+            degree_reference: 20,
+            pinned: false,
+            in_active_project: true,
+            noise: 0.0,
+            usefulness: 0.0,
+        };
+        let before = score(&input, &w);
+        assert_eq!(before.usefulness, 0.0);
+        assert_eq!(before.total, before.sum());
+
+        // The same node with the component's weight set to anything at all, still zero, because
+        // the *input* is zero and a file's input always is.
+        let heavier = Weights {
+            usefulness: 100.0,
+            ..w
+        };
+        assert_eq!(score(&input, &heavier).total, before.total);
+
+        // And a memory with the same history and one earned report scores strictly higher.
+        input.usefulness = 1.0;
+        assert!(score(&input, &w).total > before.total);
+    }
+
     /// Every component reaches the total.
     ///
     /// `Components::sum()` lists its fields by hand, so adding a component and forgetting the
