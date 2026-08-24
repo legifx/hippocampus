@@ -790,6 +790,16 @@ impl Store {
         // derived has to be reconstructible from the log or R10 is a slogan: without this an
         // agent's whole record of what has been useful would silently reset the first time
         // somebody ran `cortex rebuild`, and nothing would have failed.
+        // Memories that were useful *for the same task* belong together, and this is the only
+        // moment anything knows that. Not "appeared in the same pack" — that is the ranking's
+        // opinion about them, and linking on it would let the graph confirm whatever the
+        // ranking already believed, which is the loop D76 is about. Being reported helpful
+        // together is a judgement from outside it.
+        //
+        // The memory layer's answer to co-access, and sparser than co-access on purpose: a
+        // pack shows a dozen things and a report names two or three.
+        link_recalled_together(&tx, helped, now)?;
+
         let metadata = serde_json::json!({
             "assertion": "outcome",
             "pack": pack_id,
@@ -967,6 +977,57 @@ impl OutcomeApplied {
         }
     }
 }
+
+/// Associate memories that one report called useful together.
+///
+/// Shared by the live call and the replay, because two implementations of "what a report means"
+/// would give a rebuilt index a different graph from the one it replaced — and nothing would
+/// notice, since the canonical dump does not walk edges.
+fn link_recalled_together(
+    conn: &rusqlite::Connection,
+    helped: &[NodeId],
+    now: i64,
+) -> Result<()> {
+    if helped.len() < 2 || helped.len() > MAX_RECALLED_TOGETHER {
+        return Ok(());
+    }
+    for (index, first) in helped.iter().enumerate() {
+        for second in helped.iter().skip(index + 1) {
+            if first == second {
+                continue;
+            }
+            // Lowest id first, so one pair is one edge however the report ordered it.
+            let (src, dst) = if first.0 <= second.0 {
+                (first.0, second.0)
+            } else {
+                (second.0, first.0)
+            };
+            conn.execute(
+                "INSERT INTO edges (src, dst, type, weight, created_at, source)
+                 VALUES (?1, ?2, 'recalled_with', 1.0, ?3, 'observed')
+                 ON CONFLICT(src, dst, type)
+                     DO UPDATE SET weight = min(edges.weight + 1.0, ?4)",
+                params![src, dst, now, MAX_RECALLED_WEIGHT],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// The largest `helped` list that produces association edges.
+///
+/// A report that names eight memories as useful is a report; one that names thirty is a client
+/// ticking every box, and linking all four hundred and thirty-five pairs from it would bury the
+/// ones that mean something. Above this the report still counts — every memory still earns its
+/// usefulness — and only the edges are skipped.
+const MAX_RECALLED_TOGETHER: usize = 8;
+
+/// The most weight repeated co-usefulness can accumulate on one edge.
+///
+/// Bounded for the same reason salience is: an unbounded edge weight turns a traversal into a
+/// list of favourites, and two memories that have been useful together twenty times are not
+/// twenty times more related than two that have managed it four times.
+const MAX_RECALLED_WEIGHT: f64 = 5.0;
 
 /// How long a context pack's record is kept.
 ///
@@ -1405,6 +1466,7 @@ impl Store {
                         .and_then(Reporter::parse)
                         .unwrap_or(Reporter::Agent);
                     let mut applied_any = false;
+                    let mut helped_nodes: Vec<NodeId> = Vec::new();
                     // Reversals first, in the same order the live call applied them.
                     if let Some(entries) = value.get("reversed").and_then(|v| v.as_array()) {
                         for entry in entries {
@@ -1445,6 +1507,9 @@ impl Store {
                             let Some(node) = self.memory_by_content(entry)? else {
                                 continue;
                             };
+                            if verdict == Verdict::Helped {
+                                helped_nodes.push(node);
+                            }
                             let conn = self.conn();
                             // The pack itself is gone — packs are bookkeeping and are pruned —
                             // so the score is applied directly rather than through the pack
@@ -1469,6 +1534,10 @@ impl Store {
                             applied_any = true;
                         }
                     }
+                    // The associations this report produced, rebuilt from the same function the
+                    // live call uses. A rebuilt index with a different graph from the one it
+                    // replaced would pass the canonical dump, which does not walk edges.
+                    link_recalled_together(&self.conn(), &helped_nodes, ts)?;
                     if applied_any {
                         replayed += 1;
                     } else {
@@ -2007,6 +2076,81 @@ mod tests {
         assert_eq!(store.memory(settled).unwrap().unwrap().usefulness, before);
     }
 
+    /// Memories useful for the same task become associated — the memory layer's co-access.
+    ///
+    /// On being reported helpful *together*, not on appearing in the same pack. Appearing
+    /// together is the ranking's own opinion, and building a graph from it would let the graph
+    /// confirm whatever the ranking already believed. Being useful together is a judgement from
+    /// outside the loop, which is the only kind D76 accepts.
+    #[test]
+    fn two_memories_useful_for_the_same_task_become_associated() {
+        use cortex_core::model::EdgeType;
+
+        let store = store();
+        let one = remember(&store, MemoryScope::Global, MemoryKind::Fact, "the first");
+        let two = remember(&store, MemoryScope::Global, MemoryKind::Procedure, "the second");
+        let bystander = remember(&store, MemoryScope::Global, MemoryKind::Fact, "along for the ride");
+        pack_with(&store, "p1", &[one, two, bystander]);
+
+        // All three were shown; two were useful.
+        store
+            .report_outcome("p1", &[one, two], &[], Reporter::Human, &Actor::Human, 200)
+            .unwrap();
+
+        let neighbours = store
+            .neighbors(one, &[EdgeType::RecalledWith], 1, 10)
+            .unwrap();
+        let reached: Vec<i64> = neighbours.iter().map(|n| n.node_id).collect();
+        assert!(reached.contains(&two.0), "the two useful ones are not associated");
+        assert!(
+            !reached.contains(&bystander.0),
+            "a memory that was merely shown became associated, which would let the graph \
+             confirm whatever the ranking already believed"
+        );
+
+        // And the text comes with it, because a traversal that answers with an id is a
+        // traversal the caller has to follow up on.
+        let edge = neighbours
+            .iter()
+            .find(|n| n.node_id == two.0)
+            .expect("the edge is there");
+        assert_eq!(edge.note.as_deref(), Some("the second"));
+    }
+
+    #[test]
+    fn a_report_that_names_everything_says_nothing_and_builds_no_edges() {
+        let store = store();
+        let all: Vec<NodeId> = (0..MAX_RECALLED_TOGETHER + 1)
+            .map(|index| {
+                remember(
+                    &store,
+                    MemoryScope::Global,
+                    MemoryKind::Fact,
+                    &format!("memory {index}"),
+                )
+            })
+            .collect();
+        pack_with(&store, "p1", &all);
+        store
+            .report_outcome("p1", &all, &[], Reporter::Human, &Actor::Human, 200)
+            .unwrap();
+
+        let edges: i64 = store
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM edges WHERE type = 'recalled_with'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            edges, 0,
+            "a client ticking every box produced an association for every pair"
+        );
+        // The usefulness still lands; only the edges are skipped.
+        assert!(store.memory(all[0]).unwrap().unwrap().usefulness > 0.0);
+    }
+
     #[test]
     fn an_outcome_naming_something_the_pack_never_held_is_ignored_not_applied() {
         let store = store();
@@ -2177,6 +2321,21 @@ mod tests {
             )
             .unwrap();
 
+        // Two memories reported useful in the same report, so there is an association to lose.
+        pack_with(&store, "p-pair", &[old, new]);
+        store
+            .report_outcome("p-pair", &[old, new], &[], Reporter::Human, &Actor::Human, 171)
+            .unwrap();
+        let edges_before = store
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM edges WHERE type = 'recalled_with'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert!(edges_before > 0, "the fixture built no association to lose");
+
         let before = store.canonical_dump().unwrap();
         assert!(before.contains("memory\tglobal\tpreference\tGerman first"));
 
@@ -2228,6 +2387,25 @@ mod tests {
             earned(&after),
             "usefulness did not survive the rebuild; an agent's whole record of what has been \
              useful would reset on `cortex rebuild`"
+        );
+
+        // The associations an outcome produced are edges, and the canonical dump does not walk
+        // edges — so they are checked directly. A rebuilt index whose graph differs from the
+        // one it replaced would otherwise compare equal and be wrong.
+        let associations = |store: &Store| -> i64 {
+            store
+                .conn()
+                .query_row(
+                    "SELECT count(*) FROM edges WHERE type = 'recalled_with'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(
+            associations(&store),
+            edges_before,
+            "the associations between memories reported useful together did not survive"
         );
 
         // And the deletion did not come back.

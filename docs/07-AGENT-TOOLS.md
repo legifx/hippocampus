@@ -30,6 +30,8 @@ session the same effort. A `fact`, a `preference`, a `procedure`, a `decision`, 
 `observation`. Say which; `observation` is the default *and* the kind that decays first.
 
 **`brain_outcome(pack_id, helped[], noise[])`** — the one that is easy to skip and shouldn't be.
+Naming two memories as useful in the same report also associates them, which is how this memory
+learns that two things belong to the same kind of problem.
 It is the only signal that teaches this memory what is worth keeping, and it has a property no
 recency-and-frequency model has: **a memory that keeps arriving in your context and is never
 reported useful decays faster than one that is never retrieved at all.** Reporting honestly that

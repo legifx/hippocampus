@@ -137,7 +137,11 @@ nodes(id, kind, path, parent_id, mime, size, mtime, ctime, inode, dev,
 -- The hippocampal index: associative connections
 edges(src, dst, type, weight, created_at, source)
       -- type: contains | co_access | imports | similar_to | derived_from | annotates
-      --     | supersedes | recalled_with                                    (M11)
+      --     | supersedes                                                (M11)
+      --     | recalled_with  — two memories one report called useful together.
+      --                        Not "shown together": that is the ranking's own
+      --                        opinion, and a graph built from it confirms
+      --                        whatever the ranking already believed (D76).
       -- source: observed | inferred | explicit
 
 -- Episodic memory: append-only, never mutated
