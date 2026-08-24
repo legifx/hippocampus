@@ -345,11 +345,19 @@ impl PackArm {
 /// Why one item is in the pack.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Basis {
+    /// Which arm found it.
+    ///
+    /// Not sent: [`PackItem::arm`] beside it says the same thing, and it said it fifteen times
+    /// in a pack of fifteen.
+    #[serde(skip)]
     pub arm: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lexical_rank: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub semantic_rank: Option<u32>,
+    /// Zero for anything that did not come through fusion — a preference, a working-set entry,
+    /// a file reached from a memory — and omitted when it is.
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub fused: f64,
     // Everything below is omitted when it is zero, and absent means zero. A memory nobody has
     // reported on yet — which on a fresh install is every memory — carried five fields saying
@@ -359,6 +367,9 @@ pub struct Basis {
     pub salience: f64,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub usefulness: f64,
+    /// The writer's own claim, omitted at its default of one half — which is what a writer that
+    /// did not say means, and saying "no opinion" fifteen times is not an opinion.
+    #[serde(default = "half", skip_serializing_if = "is_half")]
     pub confidence: f64,
     /// Who wrote it, and when. A memory an agent cannot attribute is one it cannot argue with.
     pub actor: String,
@@ -375,6 +386,14 @@ pub struct Basis {
 
 fn is_zero(value: &f64) -> bool {
     *value == 0.0
+}
+
+fn half() -> f64 {
+    0.5
+}
+
+fn is_half(value: &f64) -> bool {
+    *value == 0.5
 }
 
 fn is_zero_count(value: &i64) -> bool {

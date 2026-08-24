@@ -203,16 +203,20 @@ async fn handle(client: &mut Client, method_name: &str, params: Value) -> Result
             // is told "outside the allow-list" can ask the user to widen it, whereas a
             // transport error tells it only that something went wrong.
             match client.call::<_, Value>(tool.method, arguments).await {
-                Ok(result) => {
-                    // The text block is the whole answer pretty-printed, unless the tool names
-                    // a field that already *is* what a model should read. See `Tool::text_field`
-                    // — one tool sets it, and it is the one whose answer is measured in tokens.
-                    let text = tool
-                        .text_field
-                        .and_then(|field| result.get(field))
-                        .and_then(|value| value.as_str())
-                        .map(str::to_string)
-                        .unwrap_or_else(|| pretty(&result));
+                Ok(mut result) => {
+                    // The text block is the whole answer pretty-printed, unless the tool names a
+                    // field that already *is* what a model should read — in which case that
+                    // field is **moved** into the block rather than copied, so the structured
+                    // content beside it does not repeat it. See `Tool::text_field`.
+                    let named = tool.text_field.and_then(|field| {
+                        let value = result.get_mut(field)?;
+                        let text = value.as_str()?.to_string();
+                        // Taken out, not left behind: leaving it would send a pack's whole text
+                        // twice, which for this tool is its entire token budget again.
+                        *value = Value::Null;
+                        Some(text)
+                    });
+                    let text = named.unwrap_or_else(|| pretty(&result));
                     Ok(Some(json!({
                         "content": [{ "type": "text", "text": text }],
                         "structuredContent": result,

@@ -16,7 +16,8 @@ pub struct Tool {
     pub name: &'static str,
     pub method: &'static str,
     pub description: &'static str,
-    /// A field of the answer to send as the text block, instead of the whole thing.
+    /// A field of the answer that **becomes** the text block — and is removed from the
+    /// structured copy, rather than repeated in it.
     ///
     /// Exactly one tool sets it, and it is the one that would otherwise be worst served by the
     /// default. An MCP result carries the answer twice — pretty-printed for a model to read,
@@ -26,8 +27,14 @@ pub struct Tool {
     /// pretty-printed copy of the whole answer is the difference between spending the budget
     /// once and spending it several times.
     ///
+    /// Moved rather than copied, which is the whole point. An MCP result carries the answer
+    /// twice by construction; for a tool that returns prose measured in tokens, the second copy
+    /// is the entire budget again. With the field moved, a memory's text appears **once** in
+    /// what a client receives — in the block a model reads — and the structured content beside
+    /// it carries the ids and the basis a client needs to act on the pack.
+    ///
     /// This is a projection declared in the table, not logic in the bridge (D36): the bridge
-    /// still interprets nothing, it copies one named field.
+    /// still interprets nothing, it moves one named field.
     pub text_field: Option<&'static str>,
     /// True for anything that can change a file. Used only to describe the tool honestly — the
     /// enforcement is the daemon's, and a client that ignored this would still be refused.

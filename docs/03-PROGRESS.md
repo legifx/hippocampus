@@ -1731,6 +1731,49 @@ appear somewhere, the test that matters asserts the number where it appears — 
 `a_session_counts_the_calls_and_the_refusals_that_belong_to_it` now does, over a real socket,
 counting a real refusal.
 
+## The pack was spending its budget four times
+
+Found by reading what an MCP client actually receives, rather than what the daemon returns.
+
+An MCP result carries the answer **twice** by construction — pretty-printed as the text block a
+model reads, and verbatim as `structuredContent`. The pack carried its own text twice as well,
+in `rendered` and in an item beside it. So every memory's text reached an agent four times, and
+a 2 048-token budget cost something closer to eight thousand. Nothing failed anywhere; the
+feature simply did not do the one thing it exists to do.
+
+| | |
+|---|---|
+| A memory's text in one MCP answer | **4 copies → 1** |
+| A 2 266-byte pack, whole answer | 8 601 bytes → **5 756** |
+| Ratio, and it falls as a pack grows | **2.54**, gated below 3.0 |
+
+Four changes, each removing one copy or one repetition:
+
+- **`PackItem.text` is skipped on the wire.** What a caller needs per item is what it takes to
+  report an outcome and to argue with a memory: the id, the arm, the kind, the scope, the path,
+  the basis. The words are in the block.
+- **The MCP text block is the rendered pack, and the field is *moved* rather than copied** — so
+  `structuredContent` does not repeat it. Declared as a named field in the tool table, so the
+  bridge still interprets nothing (D36); it moves one field it was told the name of.
+- **The basis omits every count that is still zero**, and `arm`, which the item beside it
+  already carries. "helped 0, noise 0, retrieved 0" on every item of every pack on a fresh
+  install is the absence of an argument rather than one.
+- **An empty pack is not recorded at all**, and recording is idempotent on the pack id — which
+  is derived from the second, the actor and the task, so two identical requests inside one
+  second collide by construction and that is a retry.
+
+**What is left is the floor.** 2 266 bytes of pack and about 3 500 of per-item metadata for
+fifteen items, and that metadata does not grow with the budget — so the ratio falls as a pack
+gets bigger. The test asserts it stays under 3.0, because a rise means something started
+repeating again.
+
+**Two things this broke, both mine, and both worth the note.** A CLI that required
+`basis.salience`, which now goes missing when it is zero — *absent means zero* is a convention
+and a convention has to be written down, so it is, in the struct and in the two tests that read
+it. And a stale `target/debug/cortex`: `three_surfaces` drives real binaries and `cargo test`
+does not rebuild another package's, so a wire-format change passes the unit tests and fails an
+end-to-end one against yesterday's binary. `cargo build --workspace --bins` first.
+
 ## M11 — where its Definition of Done actually stands
 
 Twelve criteria. **Nine met, two partly, one waiting on the owner.** The two partial ones are

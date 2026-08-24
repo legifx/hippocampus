@@ -646,21 +646,42 @@ fn a_session_counts_the_calls_and_the_refusals_that_belong_to_it() {
 #[test]
 fn a_context_pack_does_not_send_its_text_four_times() {
     let daemon = Daemon::start();
-    for text in [
-        "the hygiene gate runs before every commit and must not be skipped",
-        "the reference corpus is generated from a seed and never checked in",
-        "the thumbnailer runs in its own process so a bad image cannot take the daemon down",
-    ] {
-        daemon.rpc("brain.remember", json!({ "text": text, "kind": "fact", "scope": "global" }));
+    // A pack of a realistic size rather than three sentences: the per-item metadata is a fixed
+    // cost and the text is not, so a tiny fixture measures the overhead at its very worst and
+    // says nothing about what an agent actually pays.
+    daemon.rpc(
+        "brain.remember",
+        json!({
+            "text": "the hygiene gate runs before every commit and must not be skipped",
+            "kind": "fact",
+            "scope": "global",
+        }),
+    );
+    for index in 0..14 {
+        daemon.rpc(
+            "brain.remember",
+            json!({
+                "text": format!(
+                    "commit {index}: a sentence of the length these are actually written at, \
+                     saying something particular about the pipeline and why it is that way",
+                ),
+                "kind": "fact",
+                "scope": "global",
+            }),
+        );
     }
 
     let raw = daemon.mcp_raw("brain_context", json!({ "task": "committing a change", "budget_tokens": 2048 }));
-    let rendered = raw["structuredContent"]["rendered"].as_str().unwrap_or("");
-    assert!(rendered.contains("hygiene gate"), "the fixture found nothing: {raw}");
 
-    // The text block is the rendered pack itself, not a pretty-printed copy of the whole answer.
-    let block = raw["content"][0]["text"].as_str().unwrap_or("");
-    assert_eq!(block, rendered, "the text block is not the pack the daemon composed");
+    // The rendered pack *is* the text block, and is not repeated in the structured copy beside
+    // it: the bridge moves that field rather than copying it, because for this tool the second
+    // copy is the entire token budget again.
+    let rendered = raw["content"][0]["text"].as_str().unwrap_or("");
+    assert!(rendered.contains("hygiene gate"), "the fixture found nothing: {raw}");
+    assert!(
+        raw["structuredContent"]["rendered"].is_null(),
+        "the pack's text is in the structured content as well as in the block"
+    );
 
     // And no item repeats what `rendered` already says.
     let items = raw["structuredContent"]["items"].as_array().unwrap();
@@ -679,11 +700,24 @@ fn a_context_pack_does_not_send_its_text_four_times() {
     // happen to be: one memory's text appears **twice** in the whole answer — once in the block
     // a model reads, once in the structured copy a client can act on — and not four times.
     let whole = serde_json::to_string(&raw).unwrap();
+    let ratio = whole.len() as f64 / rendered.len() as f64;
+    eprintln!(
+        "pack {} bytes, whole MCP answer {} bytes, ratio {ratio:.2}",
+        rendered.len(),
+        whole.len(),
+    );
+    // A gate rather than a print. The remainder above the pack itself is per-item metadata,
+    // which does not grow with the budget — so this ratio falls as a pack gets bigger, and a
+    // rise in it means something started being repeated again.
+    assert!(
+        ratio < 3.0,
+        "an MCP answer is {ratio:.2} times the pack it carries; something is repeating"
+    );
     let occurrences = whole.matches("hygiene gate").count();
     assert_eq!(
-        occurrences, 2,
+        occurrences, 1,
         "a memory's text appears {occurrences} times in one answer; it should appear in the \
-         text block and in the structured copy, and nowhere else"
+         block a model reads, and nowhere else"
     );
 }
 
