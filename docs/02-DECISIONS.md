@@ -2232,6 +2232,14 @@ episode with `actor = human`, which is what makes it survive a rebuild — repla
 must replay the deletion too, or the memory returns the first time the index is rebuilt and the
 human has no reason to believe the button did anything.
 
+**Three verbs, and the panel shipped with two.** "Supersede it, correct it, or delete it" was
+written here and the first version of the Inspector could supersede with a memory that already
+existed and could delete. *Correcting* one means writing the replacement, and there was nowhere
+in the window to write anything — which also meant the human could not state a preference at
+all, and a preference is the kind whose author is a person rather than a machine and which every
+context pack carries unconditionally. There is a compose row in the Memory tab now, and the
+per-row button that fills it in with what is being replaced.
+
 **Revisit when:** the memory count makes a flat list useless. Then it needs the same treatment as
 the result list — the daemon decides the order, the window renders it.
 

@@ -83,6 +83,37 @@ async fn memories(
         .await
 }
 
+/// Write a memory, as the human.
+///
+/// The window has no agent identity, so the scope resolves to `global` — which is right for the
+/// case this exists for: a person stating a preference or correcting something an agent
+/// concluded states it for everything, not for one machine.
+///
+/// It is the completion of D78 rather than a convenience. That decision says a person may
+/// supersede, correct or delete what a machine believes, and the panel could do two of the
+/// three: it could pick an existing memory as a replacement and it could delete. Authoring the
+/// replacement — which is what "correct it" means — had nowhere to happen.
+#[tauri::command]
+async fn remember(
+    state: tauri::State<'_, AppState>,
+    text: String,
+    kind: Option<String>,
+    supersedes: Option<Vec<i64>>,
+) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(
+            cortex_rpc::protocol::method::BRAIN_REMEMBER,
+            json!({
+                "text": text,
+                "kind": kind.unwrap_or_else(|| "preference".to_string()),
+                "scope": "global",
+                "supersedes": supersedes.unwrap_or_default(),
+            }),
+        )
+        .await
+}
+
 /// Delete a memory. Writes a `forget_memory` episode, so it stays deleted through a rebuild.
 #[tauri::command]
 async fn forget_memory(
@@ -1114,6 +1145,7 @@ pub fn run() {
             startup_report,
             agent_sessions,
             memories,
+            remember,
             forget_memory,
             supersede_memory,
             agent_status,

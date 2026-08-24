@@ -103,3 +103,53 @@ test.describe("the Agent Inspector without a mouse", () => {
     expect(calls).toContain("agent_set_enabled");
   });
 });
+
+
+/**
+ * D78's third verb. The panel could supersede with something that already existed and it could
+ * delete; writing the corrected version — which is what "correct it" means — had nowhere to
+ * happen.
+ */
+test.describe("the human can write a memory and correct one", () => {
+  async function openMemoryTab(page: import("@playwright/test").Page) {
+    await page.setViewportSize({ width: 1000, height: 700 });
+    await page.goto("/harness.html?at=/&hits=20");
+    await page.keyboard.press("Control+Shift+A");
+    await page.getByRole("tab", { name: "Gedächtnis" }).click();
+    await page.waitForSelector(".hc-compose");
+  }
+
+  test("states a preference outright", async ({ page }) => {
+    await openMemoryTab(page);
+    await page.locator("#hc-compose-text").fill("auf Deutsch antworten");
+    await page.getByRole("button", { name: "Merken" }).click();
+
+    const call = await page.evaluate(() =>
+      ((window as unknown as { __hcCalls?: { command: string; args: Record<string, unknown> }[] })
+        .__hcCalls ?? []
+      ).find((c) => c.command === "remember"),
+    );
+    expect(call?.args.text).toBe("auf Deutsch antworten");
+    expect(call?.args.kind).toBe("preference");
+    // Nothing is superseded by a memory stated on its own.
+    expect(call?.args.supersedes).toEqual([]);
+  });
+
+  test("correcting one carries the memory it replaces", async ({ page }) => {
+    await openMemoryTab(page);
+    await page.getByRole("button", { name: "Korrigieren" }).first().click();
+    // The label changes, so it is visible that this is a replacement and not a second opinion.
+    await expect(page.locator(".hc-compose label")).toHaveText("Korrigierte Fassung");
+
+    await page.locator("#hc-compose-text").fill("die bessere Fassung");
+    await page.getByRole("button", { name: "Merken" }).click();
+
+    const call = await page.evaluate(() =>
+      ((window as unknown as { __hcCalls?: { command: string; args: Record<string, unknown> }[] })
+        .__hcCalls ?? []
+      ).find((c) => c.command === "remember"),
+    );
+    expect(call?.args.text).toBe("die bessere Fassung");
+    expect((call?.args.supersedes as number[]).length).toBe(1);
+  });
+});

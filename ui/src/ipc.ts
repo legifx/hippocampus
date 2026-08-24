@@ -713,6 +713,20 @@ export const ipc = {
       includeSuperseded: false,
     }),
 
+  /**
+   * Write a memory as the human.
+   *
+   * `global` scope, because the window has no agent identity and because a person stating a
+   * preference states it for everything. `supersedes` carries the memory being corrected, which
+   * is what makes this a correction rather than a second opinion sitting beside the first.
+   */
+  remember: (text: string, kind: string, supersedes: number[] = []) =>
+    transport.invoke<{ memory_id: number; scope: string }>("remember", {
+      text,
+      kind,
+      supersedes,
+    }),
+
   forgetMemory: (memoryId: number) =>
     transport.invoke<{ changed: boolean }>("forget_memory", { memoryId }),
 

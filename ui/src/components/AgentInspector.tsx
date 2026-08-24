@@ -174,6 +174,21 @@ export function AgentInspector({ open, onClose, tab, onTab }: AgentInspectorProp
     [fail, loadMemories],
   );
 
+  const write = useCallback(
+    async (text: string, kind: string, supersedes: number[]) => {
+      setBusy(true);
+      try {
+        await ipc.remember(text, kind, supersedes);
+        await loadMemories();
+      } catch (e) {
+        fail(e);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [fail, loadMemories],
+  );
+
   const supersede = useCallback(
     async (oldId: number, newId: number) => {
       setBusy(true);
@@ -304,6 +319,7 @@ export function AgentInspector({ open, onClose, tab, onTab }: AgentInspectorProp
             now={now}
             onForget={forget}
             onSupersede={supersede}
+            onWrite={write}
           />
         )}
         {tab === "policy" && <PolicyTab status={status} refused={refused} />}
@@ -402,6 +418,7 @@ function MemoryTab({
   now,
   onForget,
   onSupersede,
+  onWrite,
 }: {
   memories: Memory[];
   basis: string;
@@ -409,6 +426,7 @@ function MemoryTab({
   now: number;
   onForget: (memory: Memory) => void;
   onSupersede: (oldId: number, newId: number) => void;
+  onWrite: (text: string, kind: string, supersedes: number[]) => void;
 }) {
   const [confirming, setConfirming] = useState<number | null>(null);
   /**
@@ -419,6 +437,16 @@ function MemoryTab({
    * thing on this screen.
    */
   const [replacing, setReplacing] = useState<Memory | null>(null);
+  /**
+   * The memory being corrected, if one is.
+   *
+   * Distinct from `replacing`, which picks an existing memory as the replacement. This is the
+   * other half of the same verb: writing the replacement, which is what "correct it" means and
+   * what the panel could not do.
+   */
+  const [correcting, setCorrecting] = useState<Memory | null>(null);
+  const [draft, setDraft] = useState("");
+  const [draftKind, setDraftKind] = useState("preference");
   return (
     <div className="hc-inspector-pane">
       <h2 className="hc-meta">
@@ -426,6 +454,60 @@ function MemoryTab({
       </h2>
       {/* Every view states its own basis — what this list is, and what it is not. */}
       <p className="hc-faint hc-basis">{basis}</p>
+      {/*
+        * Writing a memory as the human. Two things arrive here: a preference stated outright —
+        * the highest-value kind, and the one whose author is a person rather than a machine —
+        * and the corrected version of something an agent concluded, which supersedes it.
+        */}
+      <form
+        className="hc-compose"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const text = draft.trim();
+          if (text === "") return;
+          onWrite(text, draftKind, correcting ? [correcting.node_id] : []);
+          setDraft("");
+          setCorrecting(null);
+        }}
+      >
+        <label className="hc-meta" htmlFor="hc-compose-text">
+          {correcting ? "Korrigierte Fassung" : "Selbst etwas merken"}
+        </label>
+        <input
+          id="hc-compose-text"
+          className="hc-name-input"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          placeholder={
+            correcting
+              ? `Ersetzt „${correcting.text.slice(0, 40)}…“`
+              : "z. B. auf Deutsch antworten, sofern nichts anderes gesagt wird"
+          }
+          spellCheck={false}
+          autoComplete="off"
+        />
+        <select
+          className="hc-pill"
+          aria-label="Art"
+          value={draftKind}
+          onChange={(event) => setDraftKind(event.target.value)}
+        >
+          {Object.entries(KIND_LABEL).map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+        <button type="submit" className="hc-pill" disabled={busy || draft.trim() === ""}>
+          Merken
+        </button>
+        {correcting && (
+          <button type="button" className="hc-pill" onClick={() => setCorrecting(null)}>
+            Doch nicht korrigieren
+          </button>
+        )}
+      </form>
+
       {replacing && (
         <p className="hc-banner" role="status">
           Welche Erinnerung ersetzt „{replacing.text.slice(0, 60)}…“? Die passende auswählen.{" "}
@@ -515,15 +597,30 @@ function MemoryTab({
                 <>
                   {" "}
                   {!memory.superseded_by && (
-                    <button
-                      type="button"
-                      className="hc-pill"
-                      disabled={busy || replacing !== null}
-                      title="Sie war einmal richtig und ist es nicht mehr: eine andere tritt an ihre Stelle, die Historie bleibt"
-                      onClick={() => setReplacing(memory)}
-                    >
-                      Ersetzen
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        className="hc-pill"
+                        disabled={busy || replacing !== null}
+                        title="Eine bessere Fassung schreiben; diese hier tritt in die Historie zurück"
+                        onClick={() => {
+                          setCorrecting(memory);
+                          setDraftKind(memory.kind);
+                          document.getElementById("hc-compose-text")?.focus();
+                        }}
+                      >
+                        Korrigieren
+                      </button>{" "}
+                      <button
+                        type="button"
+                        className="hc-pill"
+                        disabled={busy || replacing !== null}
+                        title="Eine andere, schon vorhandene Erinnerung tritt an ihre Stelle"
+                        onClick={() => setReplacing(memory)}
+                      >
+                        Ersetzen
+                      </button>
+                    </>
                   )}{" "}
                   <button
                     type="button"
