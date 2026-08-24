@@ -229,6 +229,8 @@ the system is complete without it.
 | M7 | Federation with a remote memory | |
 | M8 | Brain-state visualisation | |
 | M9 | Packaging and release | |
+| M10 | The explorer as a memory browser | |
+| M11 | The agent brain: memories, context packs, the learning signal, the Inspector | in progress |
 
 Details, including the executable definition of done for each milestone, are in
 `docs/01-BUILD-PROMPT.md`.
@@ -330,8 +332,70 @@ claude mcp add hippocampus -- /path/to/cortex-mcp --actor claude
 ```
 
 The server needs the daemon running; it is a bridge, not a second copy of the brain. What an
-agent gets is eighteen tools: search and recall, reading and listing, annotating and linking,
-and — gated — writing, moving and trashing.
+agent gets is search and recall, reading and listing, annotating and linking, a memory of its
+own, and — gated — writing, moving and trashing.
+
+### The agent's own memory
+
+An agent working here does not only *read* the memory. Everything it learns that is not in a
+file — that a build needs a flag, that an approach was tried and failed, that a directory called
+`research` is actually output — has somewhere to go, and comes back next session.
+
+**A memory is a node.** It has no path, it carries its own text, and every faculty the file
+memory already has applies to it unchanged: chunking, embedding, salience, decay, tiering,
+co-access, consolidation, `explain`, the graph, the audit log. There is no second store, and the
+reasoning for that is D74 in the decision log.
+
+Three tools carry the weight:
+
+```
+brain_context(task, budget_tokens)   what the memory knows that bears on this, fitted to a
+                                     context window: preferences that always apply, what the
+                                     human has open, the memories that match, and the files
+                                     they are about — each with who wrote it and why it is here
+brain_remember(text, kind, scope)    a fact, a preference, a procedure, a decision, a failure
+brain_outcome(pack_id, helped[],     which of that actually helped
+              noise[])
+```
+
+`brain_context` is the one to reach for first. Every other read tool answers with rows; an agent
+has a context window rather than rows, and turning twenty results into two thousand tokens worth
+having is work the daemon can do once with the scores in front of it, or every agent can do
+badly without them.
+
+`brain_outcome` is the one that is easy to skip and shouldn't be. It is the only signal that
+teaches the memory what is worth keeping, and it has a property no recency-and-frequency model
+has: **a memory that keeps arriving in context and is never reported useful decays faster than
+one that is never retrieved at all.** Retrieval without use is evidence *against* a memory,
+because the retrieval was chosen by the ranking being evaluated rather than by anybody. An agent
+reporting on its own success is an unreliable narrator, so it is discounted rather than trusted —
+a human's confirmation outweighs it.
+
+Memories have a **scope**: `session` expires with the task, `agent` is private to one identity,
+`project` is shared inside a zone, `global` is everyone and is never a default. A caller names
+the *kind* of scope it wants and the daemon resolves it against the caller's own identity, so
+one agent cannot read another's by spelling it correctly.
+
+From the command line:
+
+```bash
+cortex remember "the hygiene gate runs before every commit" --kind procedure
+cortex context "committing a change"          # what an agent would be handed
+cortex memories                                # what is in there, and what it has earned
+cortex memories forget 42                      # and it stays deleted through a rebuild
+cortex sessions                                # who has been working, and on what
+```
+
+### Seeing what the agents did
+
+`Ctrl+Shift+A` in the window opens the **Agent Inspector**: the sessions that are running and
+the calls they are making, every memory with its provenance and whether it has ever earned its
+place, the allow-list and the kill switch, the undo journal, and the brain drawn in three
+dimensions with the running agents' activity moving through it.
+
+It is read-only except in three places, and each is deliberate: the kill switch, undo, and
+deleting a memory. A system that lets a machine form durable beliefs about your work and does
+not let you read and correct them is a system keeping secrets.
 
 **Every mutation is planned before it happens.** A gated tool called without a plan id changes
 nothing and answers with what it *would* do; the agent calls again with that plan's id to apply
