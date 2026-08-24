@@ -853,6 +853,14 @@ function ArchitectureTab({ visible }: { visible: boolean }) {
   const frame = useRef<number | null>(null);
   /** Frames a second, as measured while drawing them. Zero means nothing is being drawn. */
   const [rate, setRate] = useState(0);
+  /**
+   * Whether anybody can see this. Read by the loop rather than closed over: the loop is created
+   * once, and a hidden window that keeps rendering is exactly the cost D59 measured.
+   */
+  const showing = useRef(visible);
+  showing.current = visible;
+  /** The rate last written to the panel, so the loop can avoid setting the same number twice. */
+  const shown = useRef(0);
 
   useEffect(() => {
     let disposed = false;
@@ -894,6 +902,11 @@ function ArchitectureTab({ visible }: { visible: boolean }) {
         const built = new BrainScene({
           container: host.current,
           snapshot: snapshot as never,
+          // No glow in the panel. This window is WebKitGTK with the dmabuf renderer disabled
+          // (D59) — software OpenGL — and the bloom pass over a full-size buffer costs more per
+          // frame than the whole scene. With it on, the first thing this loop did on the owner's
+          // machine was freeze the window.
+          bloom: false,
         });
         scene.current = built;
         setState("ready");
@@ -908,9 +921,33 @@ function ArchitectureTab({ visible }: { visible: boolean }) {
         // lesson with a GPU attached.
         let drawnFrames = 0;
         let since = 0;
-        const tick = (): void => {
+        let last = 0;
+        const tick = (now: number): void => {
           if (disposed || scene.current !== built) return;
           frame.current = requestAnimationFrame(tick);
+
+          // **Thirty frames a second, at most, and none at all while nobody is looking.**
+          //
+          // An unbounded loop is what a scene in its own window can afford; a panel inside a
+          // resident overlay cannot. Software OpenGL turns "as fast as possible" into "as slow
+          // as this frame takes", and the window stops answering the keyboard between frames —
+          // which is what happened the first time this loop existed. The rate is the ceiling
+          // this panel is allowed to spend, and D59's rule applies underneath it: nothing runs
+          // while the window is hidden.
+          if (!showing.current) {
+            // And it says so, once. A rate that kept its last value while nothing was being
+            // drawn would be the same lie as a black canvas with no number beside it.
+            if (shown.current !== 0) {
+              shown.current = 0;
+              setRate(0);
+            }
+            drawnFrames = 0;
+            since = 0;
+            return;
+          }
+          if (now - last < 33) return;
+          last = now;
+
           const dt = built.render();
           // A visible frame rate, twice a second at most. It is the diagnostic that would have
           // ended this bug in a minute rather than an evening: a tab that says "0 Bilder/s" is
@@ -918,7 +955,8 @@ function ArchitectureTab({ visible }: { visible: boolean }) {
           drawnFrames += 1;
           since += dt;
           if (since >= 0.5) {
-            setRate(Math.round(drawnFrames / since));
+            shown.current = Math.round(drawnFrames / since);
+            setRate(shown.current);
             drawnFrames = 0;
             since = 0;
           }

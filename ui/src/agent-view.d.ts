@@ -29,7 +29,12 @@ declare module "@agent-view/snapshot" {
 
 declare module "@agent-view/scene" {
   export class BrainScene {
-    constructor(options: { container: HTMLElement; snapshot: unknown });
+    constructor(options: {
+      container: HTMLElement;
+      snapshot: unknown;
+      /** Draw the glow pass. Off in this window: software OpenGL cannot afford it. */
+      bloom?: boolean;
+    });
     /**
      * Draw one frame, and return the seconds since the last one.
      *

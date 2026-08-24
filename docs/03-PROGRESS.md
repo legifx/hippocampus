@@ -11,7 +11,7 @@ If you finish work without editing this file, the next agent starts from nothing
 |---|---|
 | **Active milestone** | **M10 — the explorer restructure**, all four steps done (2026-08-24, D85–D88). M11, M8 and M5 as below. |
 | **Status** | **M10 landed in full on 2026-08-24 — all four steps: `view.open` with one row shape from every source (D85), the memory columns on every row — measured before they were built, and cheaper than the per-row queries they sit beside (D86) — and the places the index makes (D87). Step 2 is complete: its by-hand criterion was checked by the owner against their own index and the salience order held. M6's mandatory list is complete as of the same day: archives (`fs.extract`, D81/D82), thumbnails in the list (D83) and network locations (D84, staged — what is mounted is offered, mounting is not built). What is left of M6 is its own §3, a week of exclusive use by the owner. 1007 Rust tests, 60 vitest, 156 functional browser tests and 12 perf (run separately, on an idle machine — see the step 3 entry).** **M11 is ten of its twelve criteria in — see its own scorecard below before anything else, and every benchmark gate is green including the new one.** M4 complete. M6's mandatory list is done; its acceptance now needs a week of use rather than more code. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **A note on counting, kept because it cost a session:** this file once said 399 tests and accused the previous entry's 812 of being unreproducible. The 399 was wrong — the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Count by summing every `test result:` line. Check the measuring tool before disbelieving the measurement; this file already says that about latency, and it applies to counting. |
-| **Last updated** | 2026-08-24 (the 3D tab drew no frames — D91; controls D89, sizing D90) |
+| **Last updated** | 2026-08-25 (the 3D loop got a budget — D92; it drew no frames at all, D91) |
 | **Blocked on** | nothing |
 
 ## Start here
@@ -791,6 +791,27 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
+
+### 2026-08-25 — And then the loop froze the window
+
+The render loop from the entry below was right and unbudgeted, and the first thing it did on the
+owner's machine was hang the overlay. Nothing was spinning afterwards — both processes idle at
+0.1% — which fits a freeze that lasted while the Architektur tab was open and ended when it was
+closed.
+
+Three limits now, all from one fact: this window is WebKitGTK with the dmabuf renderer disabled
+(D59), so **software OpenGL**, where "as fast as possible" means "as slow as this frame takes"
+with the keyboard unanswered in between. No glow pass in the panel (the composer runs every pass
+it holds; the standalone view keeps its glow and its GPU); thirty frames a second as a ceiling;
+and nothing at all while the window is hidden. D92 has the reasoning.
+
+**The frame rate is on screen for the same reason it is in a test**: a black canvas says nothing,
+"0 Bilder/s — es wird nichts gezeichnet" says which half is broken.
+
+**Still unknown, and cheap to check now:** whether the picture appears at all under software GL.
+The panel says whether frames are being drawn, so the next report can distinguish "nothing is
+drawing" from "something is drawing and it is invisible" — and only the second one is about the
+renderer.
 
 ### 2026-08-24 — The 3D tab was black because nobody drew it
 

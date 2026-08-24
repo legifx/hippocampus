@@ -2766,3 +2766,34 @@ compiles shaders; five software renderers at once take long enough to produce a 
 "is anything being drawn" starts failing for reasons unrelated to the answer. Same config, same
 one-worker rule, same reasoning as D-the-perf-gate above: a test that measures time has to be the
 only thing using the machine.
+
+### D92 — A scene in a panel gets a budget; a scene in a window does not
+
+**Status:** accepted · 2026-08-25 · M11 §9
+
+The loop from D91 froze the owner's window the first time it ran. That is the correction, and it
+is not "undo the loop" — a scene that is never drawn is the bug D91 fixed. It is that **an
+embedded scene has to be paid for out of a budget, and a standalone one does not.**
+
+Three limits, all of them for the same reason: this window is WebKitGTK with the dmabuf renderer
+disabled (D59), which means **software OpenGL**, and "as fast as possible" there means "as slow as
+this frame takes" — with the keyboard unanswered in between.
+
+1. **No glow.** `UnrealBloomPass` over a full-size buffer costs more per frame than everything
+   else in the scene together, and the composer runs every pass it holds whether or not the pass
+   does anything. With bloom off, `render` goes straight to the renderer. The standalone view
+   keeps its glow; it has a GPU-accelerated context and a window to itself.
+2. **Thirty frames a second, at most.** A ceiling, not a target. What is on screen is a graph
+   that moves when somebody drags it; it does not need every frame the machine can produce, and
+   the frames it does not take are the ones the window uses to answer the keyboard.
+3. **Nothing while the window is hidden.** The overlay is resident and spends almost all of its
+   life put away. D59 measured what a running animation costs a hidden window; a three-dimensional
+   scene is that with a renderer attached. The loop reads the shell's own visibility signal, and
+   the panel's frame counter goes to zero and says so.
+
+**The rate is on screen because it is the diagnostic.** A black canvas says nothing. "0 Bilder/s
+— es wird nichts gezeichnet" says which half is broken, and a test reads the same line.
+
+**What is still not known** is whether the picture appears at all on WebKitGTK's software GL.
+That question is now cheap to answer — the panel says whether frames are being drawn — and it is
+the owner's to answer, because it needs their window.

@@ -95,6 +95,14 @@ const PULSE_VERTEX = /* glsl */ `
 export interface SceneOptions {
   container: HTMLElement;
   snapshot: GraphSnapshot;
+  /**
+   * Draw the glow pass. On by default, because it is what the standalone view looks like.
+   *
+   * Off inside the Agent Inspector: that window runs on WebKitGTK with the dmabuf renderer
+   * disabled (D59), which means software OpenGL, and a bloom pass over a full-size buffer there
+   * costs more per frame than everything else in the scene together.
+   */
+  bloom?: boolean;
 }
 
 export class BrainScene {
@@ -334,6 +342,7 @@ export class BrainScene {
       0.62,
     );
     this.composer.addPass(this.bloomPass);
+    if (options.bloom === false) this.setBloom(false);
 
     window.addEventListener("resize", this.onResize);
     // And the container's own size, which in the standalone view is the window's and inside the
@@ -590,7 +599,11 @@ export class BrainScene {
     this.selection.lookAt(this.camera.position);
     (this.pulses.material as THREE.ShaderMaterial).uniforms.now.value = this.elapsed;
     this.controls.update();
-    this.composer.render();
+    // The composer runs every pass it holds, whether or not they do anything. With the glow off
+    // there is nothing for it to do that the renderer cannot do directly, and on a software
+    // renderer the difference is the difference between a usable panel and a frozen one.
+    if (this.bloomEnabled) this.composer.render();
+    else this.renderer.render(this.scene, this.camera);
 
     this.frames++;
     this.fpsWindow += dt;

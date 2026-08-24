@@ -80,4 +80,30 @@ test.describe("the three-dimensional view inside the panel", () => {
     // And the legend, because brightness-is-tier is not guessable.
     await expect(pane).toContainText("Helligkeit ist die Stufe");
   });
+
+  test("it stops drawing when nobody can see the window", async ({ page }) => {
+    await page.setViewportSize({ width: 1400, height: 800 });
+    await page.goto("/harness.html?at=/&hits=20");
+    await page.waitForSelector(".hc-row");
+    await page.keyboard.press("Control+Shift+A");
+    await page.waitForSelector(".hc-inspector");
+    await page.getByRole("tab", { name: "Architektur" }).click();
+    await expect(page.locator(".hc-scene canvas")).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator(".hc-scene-rate")).not.toContainText("es wird nichts gezeichnet", {
+      timeout: 30_000,
+    });
+
+    // The overlay is resident: it spends almost all of its life hidden, and a three-dimensional
+    // scene rendering for nobody is D59's lesson with a GPU attached. The shell says when the
+    // window goes away; the loop reads it and stops.
+    await page.evaluate(() => {
+      (window as unknown as { __hcEmit?: (e: string, p?: unknown) => void }).__hcEmit?.(
+        "window:visible",
+        false,
+      );
+    });
+    await expect(page.locator(".hc-scene-rate")).toContainText("es wird nichts gezeichnet", {
+      timeout: 15_000,
+    });
+  });
 });
