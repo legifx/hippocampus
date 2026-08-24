@@ -483,6 +483,11 @@ impl Store {
                  this step non-deterministic and unrunnable offline (D68)"
                     .to_string(),
                 "promotion into the sync outbox is M7".to_string(),
+                "a memory is scored by the same weights as a file, with one component of its \
+                 own for what it has earned. Whether a decay curve tuned for files suits a \
+                 memory is not yet measured — it needs outcome reports that only use produces \
+                 (D76, D80)"
+                    .to_string(),
             ],
         };
 

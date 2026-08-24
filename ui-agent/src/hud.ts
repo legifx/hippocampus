@@ -35,6 +35,9 @@ function element<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
+/** Node kinds this view has a word for. Anything else prints the daemon's own. */
+const KNOWN_KINDS = new Set(["file", "dir", "concept", "memory"]);
+
 export class Hud {
   private root: HTMLElement;
   private statsBody = element("dl", "stats");
@@ -240,7 +243,20 @@ export class Hud {
       [t("node.tier"), t(`tier.${node.tier}` as Key)],
       [t("node.degree"), this.i18n.n(this.neighbourCounts.get(node.id) ?? 0)],
       [t("node.touches"), this.i18n.n(node.recent_touches)],
-      [t("node.size"), node.kind === "dir" ? "—" : this.i18n.bytes(node.size)],
+      // What a node *is* matters more once there is more than one kind of thing in the scene.
+      // A memory and a file are the same shape here and mean entirely different things.
+      // `t` falls back to printing the key itself for something it has no word for, which
+      // would show "kind.symlink" rather than "symlink". A node kind this view has never heard
+      // of should read as the daemon's own word for it.
+      [t("node.kind"), KNOWN_KINDS.has(node.kind) ? t(`kind.${node.kind}` as Key) : node.kind],
+      // A memory's "size" is the length of its own text, which is true and useless, and a
+      // directory has none at all.
+      [
+        t("node.size"),
+        node.kind === "dir" || node.kind === "memory" || node.kind === "concept"
+          ? "—"
+          : this.i18n.bytes(node.size),
+      ],
       [t("node.modified"), this.i18n.date(node.mtime)],
     ];
     if (node.pinned) rows.push([t("node.pinned"), "✓"]);
