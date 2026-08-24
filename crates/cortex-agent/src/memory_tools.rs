@@ -39,7 +39,7 @@ impl Surface<'_> {
             reader.agent = Some(name.clone());
         }
         if let Some(session) = session {
-            reader.session = Some(session.to_string());
+            reader = reader.with_session(session);
         }
         for path in project_paths {
             if let Some(zone) = self.zone_of(path) {
@@ -162,10 +162,12 @@ impl Surface<'_> {
             .remember(&new, &self.actor, self.now)
             .map_err(|e| ToolError::Store(e.to_string()))?;
 
-        // A global write by an agent is called out in the audit summary rather than looking
-        // like any other write, because it is the one that a person may want to review.
-        let summary = if matches!(scope, MemoryScope::Global) && matches!(self.actor, Actor::Agent(_))
-        {
+        // A write into a scope that nothing defaults to is called out in the audit summary
+        // rather than looking like any other write, because it is the one a person may want to
+        // review. Asking the scope whether it needed to be requested, rather than matching on
+        // `Global` here, keeps the rule in one place — a second scope that needed asking for
+        // would otherwise be audited as ordinary and nobody would notice.
+        let summary = if scope.needs_explicit_request() && matches!(self.actor, Actor::Agent(_)) {
             format!(
                 "memory {} written to the GLOBAL scope by an agent",
                 written.node_id.0
@@ -294,19 +296,19 @@ impl Surface<'_> {
                 self.reader_scope(params.session_id.as_deref(), &params.project_paths);
             let scopes = reader.visible_scopes();
             (
+                // `visible_to` builds the scope list and the live-only defaults; spelling them
+                // out again here is how the two drift, and the one that drifts is whichever
+                // the tests do not exercise.
                 MemoryFilter {
-                    scopes: Some(scopes.clone()),
                     kinds: kinds.clone(),
                     include_superseded: params.include_superseded,
-                    include_expired: false,
                     subject: params
                         .about
                         .as_ref()
                         .and_then(|p| self.store.node_by_path(p).ok().flatten())
                         .map(|n| n.id),
-                    session_id: None,
                     limit: params.limit.unwrap_or(DEFAULT_MEMORY_LIMIT),
-                    now: self.now,
+                    ..MemoryFilter::visible_to(&reader, self.now)
                 },
                 format!(
                     "memories visible to this caller: {}. Superseded {}.",

@@ -36,11 +36,6 @@
 /// carries is disproportionately paths, code and identifiers, which tokenise harder.
 pub const CHARS_PER_TOKEN: f64 = 3.5;
 
-/// Estimate the token cost of `text`.
-pub fn estimate(text: &str) -> usize {
-    estimate_with(text, CHARS_PER_TOKEN)
-}
-
 /// Estimate with a caller-supplied calibration.
 ///
 /// The knob exists so that somebody who has measured their own model against their own corpus
@@ -85,14 +80,16 @@ pub fn estimate_with(text: &str, chars_per_token: f64) -> usize {
     total
 }
 
-/// The number of tokens a budget has left after `used`, saturating at zero.
-pub fn remaining(budget: usize, used: usize) -> usize {
-    budget.saturating_sub(used)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The default calibration, for the tests. Not a public entry point: every caller in this
+    /// workspace has a calibration of its own to pass, and a convenience wrapper whose only
+    /// users are tests is the shape of dead code this project has now found five times.
+    fn estimate(text: &str) -> usize {
+        estimate_with(text, CHARS_PER_TOKEN)
+    }
 
     fn words(text: &str) -> usize {
         text.split_whitespace().count()

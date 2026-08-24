@@ -1712,6 +1712,16 @@ for f in $(grep -o "pub fn [a-z_]*" crates/cortex-store/src/memories.rs | sed 's
 done | sort -n | head
 ```
 
+Running that sweep over the whole of M11 afterwards found four more, and sorting them was the
+useful part. **The rule is not "delete everything with no production caller"** — a query helper
+whose only user is a test assertion is test infrastructure, not a bug. The rule is: *code whose
+purpose is to make something happen in production, and which production never calls, is a bug.*
+By that line `needs_explicit_request` and `MemoryFilter::visible_to` were duplication to be
+wired — the second was a filter `brain.memories` had spelled out by hand — and
+`Store::agent_session`, `Store::memory_chunk`, `Store::pack_items` and `tokens::estimate` were
+weight to be dropped, with their tests rewritten to assert behaviour instead. A pack that is
+still there is a pack an outcome can be reported against, which is the only thing a pack is for.
+
 The fourth was found by reading the panel. Where a function's *purpose* is to make a number
 appear somewhere, the test that matters asserts the number where it appears — which is what
 `a_session_counts_the_calls_and_the_refusals_that_belong_to_it` now does, over a real socket,

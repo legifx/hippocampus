@@ -297,19 +297,6 @@ impl Store {
             .optional()?)
     }
 
-    /// The chunk a memory's text lives in, which is what the embedder and the vector index key
-    /// off.
-    pub fn memory_chunk(&self, node: NodeId) -> Result<Option<ChunkId>> {
-        let conn = self.conn();
-        Ok(conn
-            .query_row(
-                "SELECT id FROM chunks WHERE node_id = ?1 AND ordinal = 0",
-                params![node.0],
-                |r| Ok(ChunkId(r.get(0)?)),
-            )
-            .optional()?)
-    }
-
     /// The memory a chunk belongs to, for turning a vector hit back into a memory.
     pub fn memory_for_chunk(&self, chunk: ChunkId) -> Result<Option<NodeId>> {
         let conn = self.conn();
@@ -1206,28 +1193,6 @@ impl Store {
         Ok(())
     }
 
-    /// What a pack contained, in rank order. For the Inspector, and for explaining a report.
-    pub fn pack_items(&self, pack_id: &str) -> Result<Vec<(PackItemRecord, Option<String>)>> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(
-            "SELECT node_id, rank, arm, score, reported FROM context_pack_items
-             WHERE pack_id = ?1 ORDER BY rank",
-        )?;
-        let rows = stmt.query_map(params![pack_id], |r| {
-            let arm: String = r.get(2)?;
-            Ok((
-                PackItemRecord {
-                    node_id: NodeId(r.get(0)?),
-                    rank: r.get::<_, i64>(1)? as usize,
-                    arm: PackArm::parse(&arm).unwrap_or(PackArm::Lexical),
-                    score: r.get(3)?,
-                },
-                r.get::<_, Option<String>>(4)?,
-            ))
-        })?;
-        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
-    }
-
     /// Drop packs older than `before`, and the items with them.
     ///
     /// Packs are bookkeeping, not memory: keeping every one forever would make the largest
@@ -1302,10 +1267,6 @@ impl Store {
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
-    }
-
-    pub fn agent_session(&self, id: &str) -> Result<Option<AgentSession>> {
-        Ok(self.agent_sessions(500)?.into_iter().find(|s| s.id == id))
     }
 
     /// Rebuild the memory layer from the episode log.
@@ -1667,10 +1628,7 @@ mod tests {
         assert_eq!(memory.kind, MemoryKind::Fact);
         assert_eq!(memory.scope, MemoryScope::Agent("a".into()));
         assert_eq!(memory.usefulness, 0.0, "usefulness is earned, not given");
-        assert_eq!(
-            store.memory_chunk(written.node_id).unwrap(),
-            Some(written.chunk_id)
-        );
+        // The chunk the write reported is the one the vector arm will find its way back from.
         assert_eq!(
             store.memory_for_chunk(written.chunk_id).unwrap(),
             Some(written.node_id)
@@ -1713,19 +1671,24 @@ mod tests {
             .record_pack("ancient", None, "long ago", 2048, 50, &[], old)
             .unwrap();
 
-        // A dry run counts and removes nothing.
+        // A dry run counts and removes nothing. Asserted behaviourally — a pack that is still
+        // there is a pack an outcome can be reported against, which is the only thing a pack is
+        // for and therefore the only property worth checking.
         store
             .consolidate(&ConsolidateParams {
                 dry_run: true,
                 ..ConsolidateParams::new(now)
             })
             .unwrap();
-        assert!(store.pack_items("recent").unwrap().len() == 1);
+        assert!(store
+            .report_outcome("ancient", &[node], &[], Reporter::Human, &Actor::Human, now)
+            .is_ok());
 
         store.consolidate(&ConsolidateParams::new(now)).unwrap();
-        assert_eq!(
-            store.pack_items("recent").unwrap().len(),
-            1,
+        assert!(
+            store
+                .report_outcome("recent", &[node], &[], Reporter::Agent, &agent("a"), now)
+                .is_ok(),
             "a pack inside the retention window was pruned"
         );
         assert!(
@@ -2240,7 +2203,15 @@ mod tests {
             )
             .unwrap();
 
-        let session = store.agent_session("s-1").unwrap().unwrap();
+        let only = |store: &Store| {
+            store
+                .agent_sessions(10)
+                .unwrap()
+                .into_iter()
+                .find(|s| s.id == "s-1")
+                .expect("the session is listed")
+        };
+        let session = only(&store);
         assert_eq!(session.calls, 3);
         assert_eq!(session.refusals, 1);
         assert_eq!(session.memories, 1);
@@ -2248,7 +2219,7 @@ mod tests {
 
         assert!(store.end_agent_session("s-1", 200).unwrap());
         assert!(!store.end_agent_session("s-1", 300).unwrap(), "closed twice");
-        assert_eq!(store.agent_session("s-1").unwrap().unwrap().ended_at, Some(200));
+        assert_eq!(only(&store).ended_at, Some(200));
     }
 
     // -----------------------------------------------------------------------
