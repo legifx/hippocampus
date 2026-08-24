@@ -2188,6 +2188,94 @@ mod tests {
         assert_eq!(rebuilt.noise_count, 1);
     }
 
+    /// Definition of Done §2 at the scale it names.
+    ///
+    /// The dozen-memory test above is about *shape*: every scope, every kind, a supersession, a
+    /// deletion, a correction. This one is about the claim actually being made — a thousand
+    /// memories, rebuilt, compared — and about the two things that only show up in numbers: how
+    /// long the replay takes, and whether anything in it is quadratic.
+    #[test]
+    fn a_thousand_memories_survive_a_rebuild() {
+        let store = store();
+        let actor = agent("a");
+
+        let scopes = [
+            MemoryScope::Global,
+            MemoryScope::Agent("a".into()),
+            MemoryScope::Agent("b".into()),
+            MemoryScope::Project(1),
+            MemoryScope::Session("s-1".into()),
+        ];
+        let kinds = MemoryKind::ALL;
+        let mut written = Vec::with_capacity(1_000);
+        for index in 0..1_000usize {
+            let scope = scopes[index % scopes.len()].clone();
+            let is_session = matches!(scope, MemoryScope::Session(_));
+            let memory = NewMemory {
+                // Far in the future, so the session memories are live for this test rather
+                // than being expired out from under the comparison.
+                expires_at: is_session.then_some(i64::MAX / 2),
+                confidence: (index % 100) as f64 / 100.0,
+                ..NewMemory::new(
+                    scope,
+                    kinds[index % kinds.len()],
+                    format!("memory number {index}, with something particular to say about it"),
+                )
+            };
+            written.push(store.remember(&memory, &actor, 100 + index as i64).unwrap().node_id);
+        }
+
+        // A supersession chain three deep, so the replay has to resolve one memory that is
+        // itself superseded.
+        store.supersede_memory(written[0], written[1], &actor, 2_000).unwrap();
+        store.supersede_memory(written[1], written[2], &actor, 2_001).unwrap();
+        // A deletion, which must stay deleted.
+        assert!(store.forget_memory(written[3], &Actor::Human, 2_002).unwrap());
+        // And something earned, including a correction.
+        pack_with(&store, "p1", &[written[4], written[5]]);
+        store
+            .report_outcome("p1", &[written[4]], &[written[5]], Reporter::Agent, &actor, 2_003)
+            .unwrap();
+        store
+            .report_outcome("p1", &[], &[written[4]], Reporter::Human, &Actor::Human, 2_004)
+            .unwrap();
+
+        let before = store.canonical_dump().unwrap();
+        assert_eq!(
+            before.lines().filter(|l| l.starts_with("memory\t")).count(),
+            999,
+            "the fixture is not the size this criterion is about"
+        );
+
+        store.clear_derived(true).unwrap();
+        let started = std::time::Instant::now();
+        let (replayed, _) = store.replay_memories().unwrap();
+        let elapsed = started.elapsed();
+        assert!(replayed >= 1_000);
+
+        let strip = |dump: &str| -> Vec<String> {
+            dump.lines()
+                .map(|line| {
+                    if !line.starts_with("memory\t") {
+                        return line.to_string();
+                    }
+                    let mut fields: Vec<&str> = line.split('\t').collect();
+                    fields[8] = "-"; // retrieved_count; see the note in the smaller test
+                    fields.join("\t")
+                })
+                .collect()
+        };
+        assert_eq!(strip(&before), strip(&store.canonical_dump().unwrap()));
+
+        // Not a gate — the build prompt gives the replay no budget — but recorded, because a
+        // replay that is quadratic in the memory count would be invisible at a dozen and
+        // ruinous at a hundred thousand. Ten seconds for a thousand would be that signal.
+        assert!(
+            elapsed < std::time::Duration::from_secs(10),
+            "replaying 1 000 memories took {elapsed:?}, which is the shape of a quadratic"
+        );
+    }
+
     #[test]
     fn replaying_twice_does_not_double_the_memory_layer() {
         let store = store();

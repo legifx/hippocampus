@@ -15,6 +15,7 @@ Hippocampus is a file manager for Linux/niri whose actual core is a headless mem
 | 4 | `docs/02-DECISIONS.md` | Why things are the way they are. Append-only ADR log. |
 | 5 | `docs/04-ARCHITECTURE.md` | Component map and data model. |
 | 6 | `docs/05-HARD-RULES.md` | Security, privacy and repo hygiene. Non-negotiable. |
+| 7 | `docs/07-AGENT-TOOLS.md` | The Agent Surface, tool by tool — and the three rules for adding one. |
 
 The source specification this project derives from is `docs/99-SOURCE-SPEC.md`.
 

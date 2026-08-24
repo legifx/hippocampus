@@ -1683,7 +1683,7 @@ partial in ways worth reading rather than in ways worth rounding up.
 | # | Criterion | State |
 |---|---|---|
 | 1 | A memory written once is returned by `brain.context` on all three surfaces, identically | **met** — `three_surfaces.rs`, against a real daemon and two real binaries |
-| 2 | `rebuild` reproduces a byte-identical dump including supersession, deletion and what a memory earned | **met in shape, not at the stated scale** — see below |
+| 2 | `rebuild` reproduces a byte-identical dump including supersession, deletion and what a memory earned | **met**, at the thousand the criterion names |
 | 3 | The budget is honoured at 512, 2 048 and 8 192 tokens over 5 000 memories | **met** — asserted inside the benchmark loop, not only in its report |
 | 4 | `brain.context` P95 under 120 ms | **met** — 8.97 ms, a factor of thirteen |
 | 5 | MMR at λ 0.7 beats λ 1.0 on duplicates without losing distinct facts | **met** — 4 restatements and 1 distinct fact at λ 1.0, against 2 and 3 at λ 0.7 |
@@ -1695,11 +1695,16 @@ partial in ways worth reading rather than in ways worth rounding up.
 | 11 | A human's deletion is immediate and survives a rebuild | **met**, live as well as in a test |
 | 12 | A real task, twice, by a human, measurably better the second time | **not done — this one needs the owner** |
 
-**§2's scale.** The criterion says a thousand memories; the round trip runs on a dozen in a test
-and on six against a live daemon. What the test is for is the *shape* — every scope, every kind,
-a supersession chain, a deletion, and earned usefulness including a correction — and a column
-that is lost is lost at any scale. A thousand would measure the rebuild's cost, which is a
-different question and does not have a budget yet.
+**§2, at scale.** Two tests, and they are about different things. The dozen-memory one is about
+*shape*: every scope, every kind, a supersession, a deletion, a correction. The thousand-memory
+one is the criterion as written — a thousand across five scopes and six kinds, a supersession
+chain three deep so the replay has to resolve a memory that is itself superseded, a deletion, and
+an earned score including a human overruling an agent. Rebuilt, dumped, compared.
+
+**It replays in 0.55 seconds**, which is not a gate — the build prompt gives the replay no
+budget — and is recorded because it is the number that would say the replay had gone quadratic.
+A thousand memories taking ten seconds would be invisible at a dozen and ruinous at a hundred
+thousand, and the test fails at ten seconds for exactly that reason.
 
 **§5's numbers, now recorded.** On a seeded store of five restatements of one fact and three
 distinct facts, at a 200-token budget:
