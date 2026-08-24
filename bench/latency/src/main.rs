@@ -12,9 +12,12 @@ use cortex_core::ids::{ChunkId, NodeId};
 use cortex_core::model::QueryMode;
 use cortex_embed::{Embedder, Input};
 use cortex_extract::pipeline;
+use cortex_core::memory::{MemoryKind, MemoryScope, ReaderScope};
+use cortex_query::context;
 use cortex_query::fusion::{self, Arm, Ranking};
 use cortex_query::{lexical, search, PathIndex};
 use cortex_store::chunks::ChunkWrite;
+use cortex_store::memories::NewMemory;
 use cortex_store::queries::NodeUpsert;
 use cortex_store::vectors::VectorIndex;
 use cortex_store::Store;
@@ -462,6 +465,88 @@ fn main() {
         println!("  (the M4 keystroke budget is 80 ms; not gated until then)");
     }
 
+    // ---- The context pack (M11) ----------------------------------------------------------
+    //
+    // Seeded into a store of its own rather than into the cached corpus index, and that is not
+    // only tidiness. `brain.context` never touches the file chunk index: the memory arm is a
+    // second collection (D75), so the only things the file corpus contributes are the working
+    // set and the resolution of a memory's subject. Measuring it beside a hundred thousand file
+    // chunks would have produced the same number and implied a dependency that is not there —
+    // which is the whole argument for the second collection, and it is worth having as a
+    // measurement rather than as a claim.
+    {
+        let temporary = tempfile::tempdir().expect("a temporary directory");
+        let store = Store::open(&temporary.path().join("context.db"))
+            .expect("could not open the context store");
+        seed_memories(&store, CONTEXT_MEMORIES);
+
+        let reader = ReaderScope::for_agent("bench");
+        // Drawn from the seeded vocabulary, and asserted to match: a task that finds nothing
+        // measures an empty store rather than a fast one.
+        let tasks = [
+            "why does the watcher miss a rename",
+            "the budget for the keystroke path",
+            "how the consolidation pass scores a node",
+            "what the deny list does before extraction",
+            "where the vector index lives and how it is rebuilt",
+            "warum der Index nach einem Neuaufbau leer wirkt",
+        ];
+        for task in &tasks {
+            let pack = context::build(
+                context::ContextParams::new(&store, &reader, task, 2048, NOW),
+                "assert",
+            );
+            assert!(
+                !pack.items.is_empty(),
+                "benchmark task {task:?} matched no memory — it would measure an empty store"
+            );
+        }
+
+        for budget in [512usize, 2048, 8192] {
+            let (c50, c95, c99) = measure(&tasks, args.reps.min(40), |task| {
+                let pack = context::build(
+                    context::ContextParams::new(&store, &reader, task, budget, NOW),
+                    "bench",
+                );
+                // Asserted inside the loop, not only in the report: a pack that silently
+                // exceeded its budget would still be fast, and fast is not the claim.
+                assert!(
+                    pack.used_tokens <= budget,
+                    "a {budget}-token budget produced {} tokens",
+                    pack.used_tokens
+                );
+                std::hint::black_box(pack.items.len());
+            });
+            if budget == 2048 {
+                gates.push(Gate {
+                    name: "context pack, 2 048-token budget, 5 000 memories",
+                    budget: Duration::from_millis(120),
+                    measured: c95,
+                    detail: format!("P50 {c50:?}, P95 {c95:?}, P99 {c99:?}"),
+                });
+            } else {
+                println!(
+                    "context pack, {budget}-token budget: P50 {c50:?}, P95 {c95:?}, P99 {c99:?}"
+                );
+            }
+        }
+
+        // Diversification is the expensive half — it is quadratic in the candidate count — so
+        // the cost of switching it off is reported. If the gate is ever missed, this is the
+        // number that says whether MMR is the reason.
+        let (g50, g95, _) = measure(&tasks, args.reps.min(40), |task| {
+            let pack = context::build(
+                context::ContextParams {
+                    mmr_lambda: 1.0,
+                    ..context::ContextParams::new(&store, &reader, task, 2048, NOW)
+                },
+                "bench",
+            );
+            std::hint::black_box(pack.items.len());
+        });
+        println!("context pack without diversification: P50 {g50:?}, P95 {g95:?}");
+    }
+
     // ---- Memory -------------------------------------------------------------------------
     let index_mib = index.memory_bytes() as f64 / (1024.0 * 1024.0);
     println!();
@@ -513,6 +598,79 @@ fn measure(queries: &[&str], reps: usize, mut f: impl FnMut(&str)) -> (Duration,
 
     let at = |p: f64| samples[((samples.len() as f64 * p) as usize).min(samples.len() - 1)];
     (at(0.50), at(0.95), at(0.99))
+}
+
+/// How many memories the context-pack gate is measured against.
+const CONTEXT_MEMORIES: usize = 5_000;
+
+/// A fixed clock for the context gate, so two runs seed and query the same thing.
+const NOW: i64 = 1_800_000_000;
+
+/// Seed a store with `count` memories drawn from a small, realistic vocabulary.
+///
+/// Realistic matters for the same reason it does for the corpus (D23): a store in which every
+/// memory contains every term makes the lexical arm measure a full scan rather than retrieval,
+/// and the number that comes out is meaningless in the safe direction.
+fn seed_memories(store: &Store, count: usize) {
+    use cortex_core::model::Actor;
+
+    let subjects = [
+        "the watcher", "the chunker", "the embedder", "the consolidation pass",
+        "the deny list", "the vector index", "the keystroke path", "the trash",
+        "the zone colours", "the undo journal", "the audit log", "the outbox",
+    ];
+    let claims = [
+        "debounces for three hundred milliseconds before acting",
+        "must never be given a path outside the configured roots",
+        "is rebuildable from the table without the model",
+        "was measured at well under its budget on the reference corpus",
+        "fails loudly rather than quietly when its input disagrees",
+        "is checked before anything opens a file, not afterwards",
+        "keeps its inverse so that the change can be taken back",
+        "runs only while the daemon has something to do",
+    ];
+    let kinds = [
+        MemoryKind::Fact,
+        MemoryKind::Procedure,
+        MemoryKind::Decision,
+        MemoryKind::Failure,
+        MemoryKind::Observation,
+    ];
+    // A handful of German memories, because the interface is German and a store that is
+    // entirely English would not measure the tokenisation this system actually meets.
+    let german = [
+        "der Index wirkt nach einem Neuaufbau leer, bis die Chunks wieder da sind",
+        "die Vorschau läuft in einem eigenen Prozess und darf abstürzen",
+        "warum der Watcher eine Umbenennung nicht als Löschen zählt",
+    ];
+
+    let actor = Actor::Agent("bench".into());
+    for index in 0..count {
+        let text = if index % 37 == 0 {
+            format!("{} ({index})", german[index / 37 % german.len()])
+        } else {
+            format!(
+                "{} {} ({index})",
+                subjects[index % subjects.len()],
+                claims[(index / subjects.len()) % claims.len()]
+            )
+        };
+        let scope = match index % 10 {
+            0 => MemoryScope::Global,
+            1 => MemoryScope::Project(1),
+            _ => MemoryScope::Agent("bench".into()),
+        };
+        let kind = if index % 53 == 0 {
+            // A few preferences, which every pack carries unconditionally and which therefore
+            // have to be in the measurement.
+            MemoryKind::Preference
+        } else {
+            kinds[index % kinds.len()]
+        };
+        store
+            .remember(&NewMemory::new(scope, kind, text), &actor, NOW - 1000)
+            .expect("seeding a memory");
+    }
 }
 
 /// Dimensions of the vectors used for the ANN gate. The real model's width (D6), because the

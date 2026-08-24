@@ -137,6 +137,18 @@ pub fn records(pack: &ContextPack) -> Vec<PackItemRecord> {
 pub fn build(params: ContextParams<'_>, pack_id: &str) -> ContextPack {
     let mut notes: Vec<String> = Vec::new();
     let visible = params.reader.visible_scopes();
+
+    // The budget is against the *rendered block*, because that is what the caller pays for —
+    // and the rendered block carries a title, a heading per section and a bullet per item that
+    // no per-item count knows about. Fitting the items to the budget and then rendering them
+    // produced a 540-token block for a 512-token budget, which the benchmark caught and no
+    // unit test would have: the overshoot is proportional to the number of sections, so it only
+    // appears once a pack is full enough to have several.
+    //
+    // So the furniture is reserved before anything is chosen. Over-reserving costs a line of
+    // the pack; under-reserving breaks the promise the budget makes.
+    let furniture = furniture_cost(params.task, params.chars_per_token);
+    let available = params.budget_tokens.saturating_sub(furniture);
     let mut used = 0usize;
     let mut items: Vec<PackItem> = Vec::new();
     let mut taken: HashSet<i64> = HashSet::new();
@@ -147,7 +159,7 @@ pub fn build(params: ContextParams<'_>, pack_id: &str) -> ContextPack {
     let mut unconditional_dropped = 0usize;
     for memory in unconditional {
         let item = memory_item(&memory, PackArm::Unconditional, 0.0, None, None, params.chars_per_token);
-        if used + item.tokens > params.budget_tokens {
+        if used + item.tokens > available {
             unconditional_dropped += 1;
             dropped += 1;
             continue;
@@ -167,7 +179,7 @@ pub fn build(params: ContextParams<'_>, pack_id: &str) -> ContextPack {
     // ---- 2. The working set ---------------------------------------------------------------
     let working = working_set_items(&params);
     for item in working {
-        if used + item.tokens > params.budget_tokens {
+        if used + item.tokens > available {
             dropped += 1;
             continue;
         }
@@ -195,7 +207,7 @@ pub fn build(params: ContextParams<'_>, pack_id: &str) -> ContextPack {
             scored.semantic_rank,
             params.chars_per_token,
         );
-        if used + item.tokens > params.budget_tokens {
+        if used + item.tokens > available {
             dropped += 1;
             continue;
         }
@@ -207,7 +219,7 @@ pub fn build(params: ContextParams<'_>, pack_id: &str) -> ContextPack {
     // ---- 4. The files those memories are about --------------------------------------------
     if params.include_files {
         for item in subject_items(&params, &items, &taken) {
-            if used + item.tokens > params.budget_tokens {
+            if used + item.tokens > available {
                 dropped += 1;
                 continue;
             }
@@ -217,11 +229,28 @@ pub fn build(params: ContextParams<'_>, pack_id: &str) -> ContextPack {
         }
     }
 
-    let rendered = render(params.task, &items);
-    // The rendered block carries headings and separators that the per-item counts do not, and
-    // the caller pays for those too. Counting the block is the honest number; the per-item
-    // counts stay because they are what the truncation decision was made on.
-    let used_tokens = tokens::estimate_with(&rendered, params.chars_per_token);
+    // The reservation above should make this exact, and "should" is not a guarantee anybody can
+    // rely on. So the block is measured and trimmed from the end until it fits — which makes
+    // the promise true by construction rather than by arithmetic that a later change can drift
+    // away from. In practice this loop runs zero times; the cost of it running is one render of
+    // a pack that is at most a few dozen lines.
+    let mut rendered = render(params.task, &items);
+    let mut used_tokens = tokens::estimate_with(&rendered, params.chars_per_token);
+    while used_tokens > params.budget_tokens && !items.is_empty() {
+        items.pop();
+        dropped += 1;
+        rendered = render(params.task, &items);
+        used_tokens = tokens::estimate_with(&rendered, params.chars_per_token);
+    }
+    if items.is_empty() && used_tokens > params.budget_tokens {
+        // Not even the title fits. Answer with nothing rather than with something over budget.
+        rendered = String::new();
+        used_tokens = 0;
+        notes.push(format!(
+            "a budget of {} tokens is too small for any pack at all",
+            params.budget_tokens
+        ));
+    }
 
     ContextPack {
         pack_id: pack_id.to_string(),
@@ -424,6 +453,19 @@ fn memory_candidates(
 /// The similarity is the embedding when there is one and character trigrams when there is not.
 /// The fallback is genuinely worse and the pack says so, but it is much better than nothing:
 /// two phrasings of one sentence overlap heavily as character trigrams too.
+///
+/// ## Two things about the cost, both of which the benchmark had to find
+///
+/// MMR is quadratic in the candidate count, and the first version made that much worse than it
+/// had to be: it built both trigram sets *inside* the comparison, so a hundred and twenty
+/// candidates meant fourteen thousand set constructions over the same sixty strings. The gate
+/// measured 163 ms against a budget of 120, and the same pack with diversification switched off
+/// measured 7 ms — which is what said the problem was here and not in retrieval. The sets are
+/// built once per candidate now.
+///
+/// The second is that ranking every candidate is pointless when a dozen will fit. The loop
+/// stops after [`MMR_PICKS`] and the remainder keeps its fused order, which is the order it
+/// would have been dropped in anyway.
 fn diversify(params: &ContextParams<'_>, candidates: Vec<Candidate>) -> Vec<Candidate> {
     if candidates.len() < 2 {
         return candidates;
@@ -433,7 +475,9 @@ fn diversify(params: &ContextParams<'_>, candidates: Vec<Candidate>) -> Vec<Cand
         return candidates;
     }
 
-    let vectors: HashMap<i64, Vec<f32>> = match params.semantic {
+    // Embeddings for the candidates, when there is a model. Absent is normal: a fresh install
+    // has no model (R5), and the trigram fallback below is what makes this work anyway.
+    let vectors: Vec<Option<Vec<f32>>> = match params.semantic {
         Some(sem) => {
             let chunks: Vec<ChunkId> = candidates.iter().filter_map(|c| c.chunk).collect();
             let by_chunk = params
@@ -442,14 +486,17 @@ fn diversify(params: &ContextParams<'_>, candidates: Vec<Candidate>) -> Vec<Cand
                 .unwrap_or_default();
             candidates
                 .iter()
-                .filter_map(|c| {
-                    let chunk = c.chunk?;
-                    Some((c.memory.node_id, by_chunk.get(&chunk)?.clone()))
-                })
+                .map(|c| c.chunk.and_then(|chunk| by_chunk.get(&chunk).cloned()))
                 .collect()
         }
-        None => HashMap::new(),
+        None => vec![None; candidates.len()],
     };
+    // Built once per candidate rather than once per comparison. This is the difference between
+    // 163 ms and single digits.
+    let trigrams: Vec<HashSet<[char; 3]>> = candidates
+        .iter()
+        .map(|c| trigrams_of(&c.memory.text))
+        .collect();
 
     // The best fused score, to put relevance and similarity on the same scale. Without it λ
     // means nothing: RRF scores are around 1/60 and cosine similarity is around 1.
@@ -459,38 +506,54 @@ fn diversify(params: &ContextParams<'_>, candidates: Vec<Candidate>) -> Vec<Cand
         .fold(f64::MIN, f64::max)
         .max(f64::MIN_POSITIVE);
 
-    let mut remaining: Vec<Candidate> = candidates;
-    let mut chosen: Vec<Candidate> = Vec::with_capacity(remaining.len());
+    let picks = MMR_PICKS.min(candidates.len());
+    let mut remaining: Vec<usize> = (0..candidates.len()).collect();
+    let mut order: Vec<usize> = Vec::with_capacity(candidates.len());
+    // The highest similarity each remaining candidate has to anything already chosen, carried
+    // forward instead of recomputed: one pass per pick rather than one per pick per choice.
+    let mut redundancy = vec![0.0f64; candidates.len()];
 
-    while !remaining.is_empty() {
-        let mut best_index = 0;
+    for _ in 0..picks {
+        let mut best_at = 0usize;
         let mut best_score = f64::MIN;
-        for (index, candidate) in remaining.iter().enumerate() {
-            let relevance = candidate.fused / best;
-            let redundancy = chosen
-                .iter()
-                .map(|picked| similarity(candidate, picked, &vectors))
-                .fold(0.0_f64, f64::max);
-            let score = lambda * relevance - (1.0 - lambda) * redundancy;
+        for (position, &index) in remaining.iter().enumerate() {
+            let relevance = candidates[index].fused / best;
+            let score = lambda * relevance - (1.0 - lambda) * redundancy[index];
             if score > best_score {
                 best_score = score;
-                best_index = index;
+                best_at = position;
             }
         }
-        chosen.push(remaining.remove(best_index));
+        let chosen = remaining.remove(best_at);
+        order.push(chosen);
+        for &index in &remaining {
+            let similarity = match (&vectors[index], &vectors[chosen]) {
+                (Some(left), Some(right)) => cosine(left, right),
+                _ => jaccard(&trigrams[index], &trigrams[chosen]),
+            };
+            if similarity > redundancy[index] {
+                redundancy[index] = similarity;
+            }
+        }
     }
-    chosen
+    // Whatever was not ranked keeps the order fusion gave it. These are the candidates that
+    // will not fit; putting them in a defined order costs nothing and makes the pack's tail
+    // reproducible.
+    order.extend(remaining);
+
+    let mut taken: Vec<Option<Candidate>> = candidates.into_iter().map(Some).collect();
+    order
+        .into_iter()
+        .filter_map(|index| taken[index].take())
+        .collect()
 }
 
-fn similarity(a: &Candidate, b: &Candidate, vectors: &HashMap<i64, Vec<f32>>) -> f64 {
-    match (
-        vectors.get(&a.memory.node_id),
-        vectors.get(&b.memory.node_id),
-    ) {
-        (Some(left), Some(right)) => cosine(left, right),
-        _ => trigram_similarity(&a.memory.text, &b.memory.text),
-    }
-}
+/// How many candidates the diversification actually ranks.
+///
+/// Forty: comfortably more than any budget this system has fits, and small enough that the
+/// quadratic term is forty times forty rather than a hundred and twenty times a hundred and
+/// twenty. Beyond it the fused order is kept, because those candidates are being dropped.
+const MMR_PICKS: usize = 40;
 
 fn cosine(a: &[f32], b: &[f32]) -> f64 {
     if a.len() != b.len() || a.is_empty() {
@@ -510,20 +573,35 @@ fn cosine(a: &[f32], b: &[f32]) -> f64 {
     (dot / (left.sqrt() * right.sqrt())).clamp(-1.0, 1.0)
 }
 
-fn trigram_similarity(a: &str, b: &str) -> f64 {
-    fn trigrams(s: &str) -> HashSet<[char; 3]> {
-        let chars: Vec<char> = s
-            .to_lowercase()
-            .chars()
-            .filter(|c| !c.is_whitespace())
-            .collect();
-        chars.windows(3).map(|w| [w[0], w[1], w[2]]).collect()
-    }
-    let (left, right) = (trigrams(a), trigrams(b));
+fn trigrams_of(text: &str) -> HashSet<[char; 3]> {
+    let chars: Vec<char> = text
+        .to_lowercase()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    chars.windows(3).map(|w| [w[0], w[1], w[2]]).collect()
+}
+
+/// Jaccard overlap of two trigram sets: shared over union.
+///
+/// The union is computed from the two sizes and the intersection rather than by building a
+/// third set, which is the whole reason the sets are precomputed.
+fn jaccard(left: &HashSet<[char; 3]>, right: &HashSet<[char; 3]>) -> f64 {
     if left.is_empty() || right.is_empty() {
         return 0.0;
     }
-    left.intersection(&right).count() as f64 / left.union(&right).count() as f64
+    // Intersect the smaller against the larger: the cost is the size of the one being walked.
+    let (small, large) = if left.len() <= right.len() {
+        (left, right)
+    } else {
+        (right, left)
+    };
+    let shared = small.iter().filter(|t| large.contains(*t)).count() as f64;
+    let union = (left.len() + right.len()) as f64 - shared;
+    if union == 0.0 {
+        return 0.0;
+    }
+    shared / union
 }
 
 fn subject_items(
@@ -617,6 +695,30 @@ fn memory_item(
 
 /// What one rendered line costs beyond its text: the bullet, the kind label and the newline.
 const PER_ITEM_OVERHEAD: usize = 6;
+
+/// The headings and the title, which every pack pays for before it holds anything.
+///
+/// Every section is reserved whether or not it appears. The alternative is circular — which
+/// headings appear depends on which items fit, which depends on the reservation — and paying
+/// for four headings that turn out to be empty costs a line of the pack, while the circularity
+/// costs the promise the budget makes.
+fn furniture_cost(task: &str, chars_per_token: f64) -> usize {
+    let mut sample = String::from("# What the memory knows about: ");
+    sample.push_str(task);
+    sample.push('\n');
+    for heading in [
+        "Always",
+        "Open right now",
+        "Relevant",
+        "Related",
+        "Files these are about",
+    ] {
+        sample.push_str("\n## ");
+        sample.push_str(heading);
+        sample.push('\n');
+    }
+    tokens::estimate_with(&sample, chars_per_token)
+}
 
 /// Format the pack.
 ///
@@ -848,7 +950,10 @@ mod tests {
         }
 
         let reader = ReaderScope::for_agent("a");
-        let budget = 90;
+        // Big enough that the greedy pack has room for several restatements — the whole point
+        // is what it spends the room on. A budget that fits one item measures nothing, which is
+        // what this test did before the furniture was reserved out of the budget.
+        let budget = 200;
         let greedy = build(
             ContextParams {
                 mmr_lambda: 1.0,

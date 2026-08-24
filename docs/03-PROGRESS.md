@@ -820,8 +820,8 @@ under. Both build prompts are amended.
 
 - **The Agent Inspector** (M11 §8) — the button, the panel, the five tabs. Nothing of it exists.
 - **The live 3D view** (M11 §9) — `ui-agent` still eats a static `graph.json`.
-- **The benchmark** for `brain.context` against its 120 ms gate. The gate is in the table and
-  nothing measures it yet, which by this project's own rule means the milestone is not done.
+- ~~**The benchmark** for `brain.context`~~ Written, and it earned its keep twice within an hour
+  of existing. See the M11 benchmark note below.
 - **`brain.explain` over a memory.** It explains a file's ranking; a memory's `usefulness` and
   its counts are in the pack's basis but not in `explain`.
 - **Consolidation over memories.** They are nodes, so salience and tiering reach them for free,
@@ -1674,6 +1674,45 @@ and roughly thirty always-on services, while the workstation has a 16 GB RTX-cla
 direction is therefore reversed — embeddings and reranking stay local. Recorded as D6.
 
 ---
+
+## The M11 benchmark, and the two things it found
+
+Written after the implementation rather than before it, which is the wrong way round and is
+recorded as such. It found two defects in the first run, both of which a unit test could not
+have.
+
+**A 512-token budget produced a 540-token pack.** The items were fitted to the budget and the
+block was rendered afterwards, and the block carries a title, a heading per section and a bullet
+per item that no per-item count knows about. The overshoot is proportional to the number of
+sections, so it only appears once a pack is full enough to have several — which is why every
+unit test passed. The furniture is reserved out of the budget before anything is chosen now, and
+the block is measured and trimmed from the end until it fits, so the promise is true by
+construction rather than by arithmetic that a later change can drift away from.
+
+**The gate failed at 163 ms against 120, and the extra line in the benchmark said where.** The
+same pack with diversification switched off measured 7 ms. MMR is quadratic in the candidate
+count and the first version made that far worse than it had to be: it built both trigram sets
+*inside* the comparison, so a hundred and twenty candidates meant fourteen thousand set
+constructions over the same sixty strings. The sets are built once per candidate now, the
+running redundancy is carried forward instead of recomputed, and the ranking stops after forty
+picks because a dozen will fit.
+
+| | before | after |
+|---|---|---|
+| context pack, 2 048-token budget, 5 000 memories, P95 | 163.41 ms | **8.97 ms** |
+| the same with `λ = 1.0` (no diversification), P95 | 7.08 ms | 7.96 ms |
+| the `cortex-query` unit tests | 10.35 s | 0.32 s |
+
+So diversification costs about one millisecond, against a budget of a hundred and twenty. The
+last row is not a benchmark result and is worth having anyway: a test suite that takes ten
+seconds to run is a test suite somebody stops running.
+
+**One measurement that is a design claim rather than a number.** The context gate seeds a store
+of its own instead of writing into the cached corpus index, because `brain.context` never
+touches the file chunk index at all — the memory arm is a second collection (D75). Measuring it
+beside a hundred thousand file chunks would have produced the same number while implying a
+dependency that is not there. That the two do not interact is the whole argument for the second
+collection, and it is now a property of the benchmark rather than a claim in a decision log.
 
 ## Benchmark results
 

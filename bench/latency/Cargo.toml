@@ -18,4 +18,6 @@ cortex-extract.workspace = true
 cortex-embed.workspace = true
 cortex-query.workspace = true
 cortex-store.workspace = true
+# The context-pack gate seeds a store of its own rather than writing into the cached corpus.
+tempfile.workspace = true
 clap.workspace = true
