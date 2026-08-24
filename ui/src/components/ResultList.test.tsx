@@ -8,24 +8,26 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ResultList } from "./ResultList";
-import { rowFromHit, type Row } from "../row";
-import type { SearchHit } from "../ipc";
+import { rowFromView, type Row } from "../row";
+import type { ViewRow } from "../ipc";
 
 const ROW = 28;
 const VIEWPORT = 560;
 
 /** The rows a search of `count` results would produce. */
 function sampleRows(count: number): Row[] {
-  return hits(count).map(rowFromHit);
+  // A query view: rows come from everywhere, so each one says where it lives.
+  return hits(count).map((row) => rowFromView(row, null));
 }
 
-function hits(count: number): SearchHit[] {
+function hits(count: number): ViewRow[] {
   return Array.from({ length: count }, (_, i) => ({
     node_id: i + 1,
     path: `/home/user/Projects/thing-${i}/notes-${i}.md`,
-    kind: "file",
+    kind: "file" as const,
     size: 1024 * (i + 1),
     mtime: 1_700_000_000 - i * 60,
+    indexed: true,
     zone_id: i % 3 === 0 ? 1 : null,
     tier: i % 97 === 0 ? "cold" : "stm",
     score: { path_rank: 1, lexical_rank: null, vector_rank: 2, fused: 0.5, salience_boost: 1, rerank: null, final_score: 0.5 },

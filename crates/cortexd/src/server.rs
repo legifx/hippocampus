@@ -502,7 +502,7 @@ async fn handle_connection(
             let permit = concurrency.clone().acquire_owned().await;
 
             tokio::spawn(async move {
-                let mut refinable: Option<search::Outcome> = None;
+                let mut refinable: Option<(search::Outcome, Refinement)> = None;
                 let outcome = dispatch(&daemon, &method, params, &mut refinable, &mut ctx).await;
                 let Some(id) = id else { return };
 
@@ -513,8 +513,8 @@ async fn handle_connection(
                 let _ = respond(&writer, serde_json::to_value(&id).unwrap_or_default(), response)
                     .await;
 
-                if let Some(outcome) = refinable {
-                    spawn_rerank(daemon.clone(), writer.clone(), id, outcome);
+                if let Some((outcome, shape)) = refinable {
+                    spawn_rerank(daemon.clone(), writer.clone(), id, outcome, shape);
                 }
                 drop(permit);
             });
@@ -523,7 +523,7 @@ async fn handle_connection(
 
 // A search keeps its outcome here so the reranker can reuse it. Re-running the search in
         // the background task would be simpler and would double every query's retrieval work.
-        let mut refinable: Option<search::Outcome> = None;
+        let mut refinable: Option<(search::Outcome, Refinement)> = None;
         let outcome = dispatch(&daemon, &method, request.params, &mut refinable, &mut ctx).await;
 
         // A request without an id is a notification: the caller expects no answer, and sending
@@ -537,8 +537,8 @@ async fn handle_connection(
         respond(&writer, serde_json::to_value(&id).unwrap_or_default(), response).await?;
 
         // The answer is out. Anything better than it arrives separately.
-        if let Some(outcome) = refinable {
-            spawn_rerank(daemon.clone(), writer.clone(), id, outcome);
+        if let Some((outcome, shape)) = refinable {
+            spawn_rerank(daemon.clone(), writer.clone(), id, outcome, shape);
         }
     }
 }
@@ -548,11 +548,23 @@ async fn handle_connection(
 /// Everything about this is deliberately after the fact: the reranker is a second model, it reads
 /// each candidate together with the query, and it takes long enough that waiting for it would
 /// undo the point of having fast retrieval at all (D7).
+/// Which shape a reordering is sent in.
+///
+/// The same reranker serves `search` and `view.open`, and their clients read different things:
+/// one wants hits, the other wants rows and should never have to know what a hit is. So the
+/// answer's shape is decided where the request was, and carried here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refinement {
+    Search,
+    View,
+}
+
 fn spawn_rerank(
     daemon: Arc<Daemon>,
     writer: Arc<tokio::sync::Mutex<tokio::io::WriteHalf<UnixStream>>>,
     id: serde_json::Value,
     outcome: search::Outcome,
+    shape: Refinement,
 ) {
     let Some(reranker) = daemon.semantics.reranker() else {
         return;
@@ -579,16 +591,29 @@ fn spawn_rerank(
         let Ok(Some((hits, model))) = reranked else {
             return;
         };
-        let notification = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": method::SEARCH_UPDATE,
-            "params": SearchUpdateParams {
-                request_id: id,
-                hits,
-                elapsed_ms: started.elapsed().as_millis() as u64,
-                model,
-            },
-        });
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let notification = match shape {
+            Refinement::Search => serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": method::SEARCH_UPDATE,
+                "params": SearchUpdateParams {
+                    request_id: id,
+                    hits,
+                    elapsed_ms,
+                    model,
+                },
+            }),
+            Refinement::View => serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": method::VIEW_UPDATE,
+                "params": cortex_core::view::ViewUpdate {
+                    request_id: id.as_i64().unwrap_or(0),
+                    rows: hits.into_iter().map(cortex_core::view::ViewRow::from_hit).collect(),
+                    elapsed_ms,
+                    model: Some(model),
+                },
+            }),
+        };
 
         let mut guard = writer.lock().await;
         // The client may have gone; that is not an error worth logging loudly.
@@ -620,7 +645,7 @@ async fn dispatch(
     daemon: &Arc<Daemon>,
     method: &str,
     params: Option<serde_json::Value>,
-    refinable: &mut Option<search::Outcome>,
+    refinable: &mut Option<(search::Outcome, Refinement)>,
     ctx: &mut ConnCtx,
 ) -> Result<serde_json::Value, RpcError> {
     let answer = dispatch_inner(daemon, method, params, refinable, ctx).await;
@@ -644,7 +669,7 @@ async fn dispatch_inner(
     daemon: &Arc<Daemon>,
     method: &str,
     params: Option<serde_json::Value>,
-    refinable: &mut Option<search::Outcome>,
+    refinable: &mut Option<(search::Outcome, Refinement)>,
     ctx: &mut ConnCtx,
 ) -> Result<serde_json::Value, RpcError> {
     match method {
@@ -713,7 +738,7 @@ async fn dispatch_inner(
                 partial: refining,
             };
             if refining {
-                *refinable = Some(outcome);
+                *refinable = Some((outcome, Refinement::Search));
             }
             json(result)
         }
@@ -1779,6 +1804,122 @@ async fn dispatch_inner(
             });
 
             json(answer)
+        }
+
+        method::VIEW_OPEN => {
+            use cortex_core::view::{self, Order, Source, View, ViewRow};
+            let params: cortex_rpc::protocol::ViewOpenParams = parse(params)?;
+            let started = Instant::now();
+            let origin = params.source.clone();
+
+            match params.source {
+                // A directory is one query among several, and this is the one that has to keep
+                // proving it: the same `Surface::list` answers it, with the same deny-list, the
+                // same ordering and the same audit entry as `fs.list`. Nothing here is a second
+                // implementation of listing a directory.
+                Source::Dir { path } => {
+                    let order = params.order.unwrap_or(Order::Name);
+                    let sort = match order {
+                        Order::Name => cortex_core::tools::SortBy::Name,
+                        Order::Size => cortex_core::tools::SortBy::Size,
+                        Order::Modified => cortex_core::tools::SortBy::Modified,
+                        Order::None => cortex_core::tools::SortBy::None,
+                    };
+                    let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+                    let listed = surface(daemon, &ctx.actor, &auditor)
+                        .list(&cortex_core::tools::FsListParams {
+                            path,
+                            glob: None,
+                            depth: Some(1),
+                            limit: params.limit,
+                            sort,
+                            reverse: params.reverse,
+                        })
+                        .map_err(tool_error)?;
+
+                    let hidden = listed.hidden as u64;
+                    let truncated = listed.truncated;
+                    let rows: Vec<ViewRow> =
+                        listed.entries.into_iter().map(ViewRow::from_entry).collect();
+                    let total = rows.len() as u64;
+
+                    json(View {
+                        basis: view::basis_for_dir(rows.len(), total, hidden, truncated),
+                        rows,
+                        origin: Source::Dir {
+                            path: listed.path,
+                        },
+                        order,
+                        total,
+                        truncated,
+                        hidden,
+                        refining: false,
+                        elapsed_ms: started.elapsed().as_millis() as u64,
+                        cursor: None,
+                    })
+                }
+
+                Source::Query { text } => {
+                    // Everything `search` does, because it *is* `search`: the same activity
+                    // ping, the same episode — "what was I looking for on Tuesday" must not
+                    // depend on which client asked — and the same reranking, delivered in the
+                    // shape this caller reads.
+                    daemon.activity.ping();
+                    let search_params = SearchParams {
+                        query: text.clone(),
+                        mode: Default::default(),
+                        limit: params.limit,
+                        prefix: None,
+                        rerank: params.rerank,
+                    };
+                    let outcome = daemon.run_search(&search_params);
+
+                    let _ = daemon.store.append_episode(
+                        indexer::unix_now(),
+                        &Actor::Human,
+                        Action::Search,
+                        None,
+                        None,
+                        &serde_json::json!({
+                            "query": outcome.query,
+                            "mode": outcome.mode,
+                            "hits": outcome.hits.len(),
+                            "via": "view.open",
+                        }),
+                    );
+
+                    let refining = params.rerank.unwrap_or(daemon.config.search.rerank)
+                        && daemon.semantics.reranker().is_some()
+                        && !outcome.hits.is_empty();
+
+                    let mode = format!("{:?}", outcome.mode).to_lowercase();
+                    let rows: Vec<ViewRow> = outcome
+                        .hits
+                        .iter()
+                        .cloned()
+                        .map(ViewRow::from_hit)
+                        .collect();
+                    let total = rows.len() as u64;
+                    let answer = View {
+                        basis: view::basis_for_query(&text, &mode, total, refining),
+                        rows,
+                        origin,
+                        // Relevance, kept. Re-sorting a ranked list by name would throw away the
+                        // answer and leave the question.
+                        order: Order::None,
+                        total,
+                        truncated: false,
+                        hidden: 0,
+                        refining,
+                        elapsed_ms: started.elapsed().as_millis() as u64,
+                        cursor: None,
+                    };
+                    if refining {
+                        *refinable = Some((outcome, Refinement::View));
+                    }
+                    json(answer)
+                }
+            }
         }
 
         method::FS_EXTRACT => {

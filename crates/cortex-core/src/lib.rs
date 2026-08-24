@@ -15,6 +15,7 @@ pub mod paths;
 pub mod tokens;
 pub mod tools;
 pub mod uri;
+pub mod view;
 pub mod zones;
 
 pub use error::{Error, Result};

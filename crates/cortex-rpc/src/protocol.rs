@@ -217,6 +217,13 @@ pub mod method {
     /// Unpack an archive. Answers with a handle like `fs.transfer`, and reports on the same
     /// two notifications, because it is the same kind of thing to whoever started it.
     pub const FS_EXTRACT: &str = "fs.extract";
+
+    // The view layer (M10). One row stream, several sources: a directory is one query among
+    // them rather than the ground truth the other calls are measured against.
+    /// Open a view over a source, and answer with rows in one shape whatever produced them.
+    pub const VIEW_OPEN: &str = "view.open";
+    /// A better order for a view already answered, once the reranker has run. Never called.
+    pub const VIEW_UPDATE: &str = "view.update";
     pub const FS_MKDIR: &str = "fs.mkdir";
     pub const FS_RENAME: &str = "fs.rename";
     pub const OPERATION_CANCEL: &str = "operation.cancel";
@@ -315,6 +322,9 @@ pub mod method {
                 | BRAIN_REPORT
                 | AUDIT_RECENT
                 | FS_LIST
+                // `view.open` reads exactly what `search` and `fs.list` read, through the same
+                // code, and answers a question that does not depend on its neighbours.
+                | VIEW_OPEN
                 | FS_PLACES
                 | FS_READ
                 | FS_STAT
@@ -369,6 +379,7 @@ pub mod method {
         FS_TRASH,
         FS_TRANSFER,
         FS_EXTRACT,
+        VIEW_OPEN,
         FS_MKDIR,
         FS_RENAME,
         FS_MOUNT,
@@ -500,6 +511,28 @@ pub struct StatusResult {
     pub index_memory_bytes: usize,
     pub watcher: Option<WatchStatusResult>,
     pub methods: Vec<String>,
+}
+
+/// What `view.open` takes.
+///
+/// One method for every kind of place. The source decides what is read; `order` and `limit` mean
+/// the same thing whatever it is, which is the point — a client that can open a directory can
+/// open a concept without learning a second call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ViewOpenParams {
+    pub source: cortex_core::view::Source,
+    /// How to order it. Absent means the source's own default: names for a directory, relevance
+    /// for a query.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order: Option<cortex_core::view::Order>,
+    #[serde(default)]
+    pub reverse: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    /// Follow up with a reranked order as a `view.update`. Query sources only; defaults to the
+    /// daemon's configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rerank: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -27,11 +27,10 @@ import { usePlaces, PLACES } from "./hooks/usePlaces";
 import { useVisibility } from "./hooks/useVisibility";
 import { PreviewPane } from "./components/PreviewPane";
 import { ResultList } from "./components/ResultList";
-import { useBrowse } from "./hooks/useBrowse";
 import { useOperations } from "./hooks/useOperations";
 import { useSelection } from "./hooks/useSelection";
+import { useView } from "./hooks/useView";
 import { throttled, useDeferred } from "./hooks/useDeferred";
-import { useSearch } from "./hooks/useSearch";
 import { useViewport } from "./hooks/useViewport";
 import {
   ipc,
@@ -42,7 +41,7 @@ import {
   type SearchHit,
   type SortBy,
 } from "./ipc";
-import { isArchive, rowFromEntry, rowFromHit, type Row } from "./row";
+import { isArchive, type Row } from "./row";
 import { codeOf, messageOf } from "./format";
 
 const ROW_HEIGHT_COMPACT = 28;
@@ -116,9 +115,11 @@ export type AppProps = {
 const NO_APPLICATIONS: Application[] = [];
 
 export function App({ startPath = START_PATH }: AppProps = {}) {
-  const { state, run } = useSearch();
-  const browse = useBrowse(startPath);
-  const [query, setQuery] = useState("");
+  // One hook, one row stream, whatever the source (M10 step 1). `view.state.searching` is a
+  // fact about the window — which of the two held views is showing — and nothing downstream of
+  // `view.rows` knows the difference.
+  const browse = useView(startPath);
+  const { query, setQuery } = browse;
   const [pane, setPane] = useState<Pane>("preview");
   const [paletteOpen, setPaletteOpen] = useState(false);
   // The Agent Inspector. Which tab is held here rather than inside it, so that closing the
@@ -146,7 +147,7 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
   const rowHeight = comfortable ? ROW_HEIGHT_COMFORTABLE : ROW_HEIGHT_COMPACT;
 
   // Two modes, one list: a directory when nothing is typed, results when something is (M6).
-  const searching = query.trim() !== "";
+  const searching = browse.state.searching;
   // Nothing periodic runs while nobody is looking. See `useVisibility` for what that was
   // costing before it was measured.
   const visible = useVisibility();
@@ -156,10 +157,9 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
   const atPlaces = !searching && browse.state.path === PLACES;
   const places = usePlaces(atPlaces);
   const flatPlaces = useFlatPlaces(places.sections);
-  const rows: Row[] = useMemo(
-    () => (searching ? state.hits.map(rowFromHit) : browse.state.entries.map(rowFromEntry)),
-    [searching, state.hits, browse.state.entries],
-  );
+  // Already rows, already one shape. The mapping that used to happen here — with a branch on
+  // which call had produced the list — is now one function in `row.ts` fed by one method.
+  const rows: Row[] = browse.rows;
   // The selection resets whenever the list underneath it changes: a different directory, or a
   // different query. Otherwise "delete the three selected" would delete whatever landed in
   // those three positions.
@@ -183,17 +183,18 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
   // a score and a tier, so a browsed row is given the shape with those left honestly empty.
   const hit: SearchHit | null = useMemo(() => {
     if (!current) return null;
-    const fromSearch = searching ? state.hits[selected] : undefined;
-    if (fromSearch) return fromSearch;
+    // Built from the row rather than from whichever call produced it. Every field the panes
+    // read is on the row now, including the ones only a ranked source fills — so there is no
+    // "was this a search result" question left to ask here.
     return {
-      node_id: -1,
+      node_id: current.nodeId ?? -1,
       path: current.path,
       kind: current.isDir ? "dir" : "file",
       size: current.size,
       mtime: current.mtime,
       zone_id: current.zoneId,
       tier: current.tier ?? "stm",
-      score: {
+      score: current.score ?? {
         path_rank: null,
         lexical_rank: null,
         vector_rank: null,
@@ -202,9 +203,9 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
         rerank: null,
         final_score: 0,
       },
-      snippet: null,
+      snippet: current.snippet,
     };
-  }, [current, searching, state.hits, selected]);
+  }, [current]);
 
   // The list follows the arrow key; the panes follow the list once it stops. Holding a key
   // otherwise fires one `brain.neighbors` and one preview render per row passed over, and
@@ -233,7 +234,6 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
         if (disposed) return;
         setQuery("");
         setPaletteOpen(false);
-        run("");
         input.current?.focus();
       })
       .then((off) => (disposed ? off() : (unlisten = off)))
@@ -243,7 +243,7 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
       disposed = true;
       unlisten?.();
     };
-  }, [run]);
+  }, [setQuery]);
 
   useEffect(() => {
     let disposed = false;
@@ -302,27 +302,27 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
   const onQuery = useCallback(
     (next: string) => {
       setQuery(next);
-      run(next);
       // A person typing here is the clearest evidence a human is present, which is what the
       // daemon's duty cycle keys off (D22) — but the first keystroke establishes that, and the
       // next forty repeat it at the cost of forty round trips.
       pingSometimes(() => void ipc.activityPing().catch(() => {}));
     },
-    [run],
+    [setQuery],
   );
 
   /// Enter, and a double click: descend into a directory, hand a file to the desktop.
   const activate = useCallback(
     (row: Row) => {
       if (row.isDir) {
+        // Opening a directory closes the overlay: the query was how you found it, and the place
+        // is where you now are.
         setQuery("");
-        run("");
         browse.goTo(row.path);
         return;
       }
       ipc.openPath(row.path).catch(() => {});
     },
-    [browse, run],
+    [browse, setQuery],
   );
 
   const openSelected = useCallback(() => {
@@ -455,7 +455,7 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
             id: `sort-${order}`,
             label: `Sortieren: ${SORT_LABELS[order]}`,
             binding: "—",
-            detail: browse.state.sort === order ? "nochmal wählen kehrt um" : undefined,
+            detail: browse.state.order === order ? "nochmal wählen kehrt um" : undefined,
             run: () => browse.orderBy(order),
           }))),
       ...(current && isArchive(current.name)
@@ -831,14 +831,13 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
           aria-label="Suche"
         />
         <span className="hc-meta hc-status">
-          {state.error || browse.state.error ? (
-            <span className="hc-error">{state.error ?? browse.state.error}</span>
+          {browse.state.error ? (
+            <span className="hc-error">{browse.state.error}</span>
           ) : searching ? (
             <>
               <span className="hc-num">{rows.length}</span>
-              <span className="hc-num">{state.elapsedMs} ms</span>
-              <span>{state.mode}</span>
-              {state.refining && <span className="hc-faint">…</span>}
+              <span className="hc-num">{browse.state.elapsedMs} ms</span>
+              {browse.state.refining && <span className="hc-faint">…</span>}
             </>
           ) : (
             <>
@@ -847,7 +846,7 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
                   ? `${selection.state.indices.size}/${rows.length}`
                   : rows.length}
               </span>
-              <span>{browse.state.sort}</span>
+              <span>{browse.state.order}</span>
               {operations.clipboard && (
                 <span className="hc-pill" title="Ctrl+V fügt hier ein">
                   {operations.clipboard.mode === "move" ? "ausgeschnitten" : "kopiert"}{" "}
@@ -986,7 +985,7 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
             rowHeight={rowHeight}
             visible={visible}
             zoneHues={zoneHues}
-            emptyMessage={emptyMessage(searching, state.loading, browse.state)}
+            emptyMessage={emptyMessage(searching, browse.state.loading, browse.state)}
             selectedPaths={targets}
           />
           )}

@@ -8,11 +8,11 @@
  */
 
 import { describe, expect, it } from "vitest";
-import type { FsEntry } from "./ipc";
+import type { ViewRow } from "./ipc";
 import { fileUri } from "./format";
-import { formatMode, formatOwner, rowFromEntry } from "./row";
+import { formatMode, formatOwner, rowFromView } from "./row";
 
-function entry(overrides: Partial<FsEntry> = {}): FsEntry {
+function entry(overrides: Partial<ViewRow> = {}): ViewRow {
   return {
     path: "/home/user/notes.txt",
     kind: "file",
@@ -22,6 +22,9 @@ function entry(overrides: Partial<FsEntry> = {}): FsEntry {
     ...overrides,
   };
 }
+
+/** One mapper now, whatever the source. The directory of the fixture, so names come out bare. */
+const row = (entry: ViewRow) => rowFromView(entry, "/home/user/");
 
 describe("permissions", () => {
   it("prints the triplets the way every Unix tool does", () => {
@@ -66,51 +69,51 @@ describe("ownership", () => {
 
 describe("symbolic links", () => {
   it("stays a link and shows where it points", () => {
-    const row = rowFromEntry(
+    const mapped = row(
       entry({ path: "/home/user/link", kind: "symlink", target: "/home/user/notes.txt" }),
     );
-    expect(row.linkTarget).toBe("/home/user/notes.txt");
-    expect(row.broken).toBe(false);
-    expect(row.isDir).toBe(false);
+    expect(mapped.linkTarget).toBe("/home/user/notes.txt");
+    expect(mapped.broken).toBe(false);
+    expect(mapped.isDir).toBe(false);
   });
 
   it("opens like a directory when it points at one", () => {
     // Without this the row renders as a file, and Enter tries to preview a directory instead
     // of descending into it.
-    const row = rowFromEntry(
+    const mapped = row(
       entry({ path: "/home/user/shortcut", kind: "symlink", target: "/data", target_kind: "dir" }),
     );
-    expect(row.isDir).toBe(true);
-    expect(row.linkTarget).toBe("/data");
+    expect(mapped.isDir).toBe(true);
+    expect(mapped.linkTarget).toBe("/data");
   });
 
   it("marks a link whose target is gone", () => {
-    const row = rowFromEntry(
+    const mapped = row(
       entry({ path: "/home/user/dangling", kind: "symlink", target: "/gone", broken: true }),
     );
-    expect(row.broken).toBe(true);
-    expect(row.linkTarget).toBe("/gone");
+    expect(mapped.broken).toBe(true);
+    expect(mapped.linkTarget).toBe("/gone");
   });
 
   it("leaves everything that is not a link without a target", () => {
-    expect(rowFromEntry(entry()).linkTarget).toBeNull();
-    expect(rowFromEntry(entry({ kind: "dir" })).linkTarget).toBeNull();
+    expect(row(entry()).linkTarget).toBeNull();
+    expect(row(entry({ kind: "dir" })).linkTarget).toBeNull();
   });
 });
 
 describe("a browsed row", () => {
   it("carries the stat facts through", () => {
-    const row = rowFromEntry(
+    const mapped = row(
       entry({ mode: 0o100640, owner: { id: 1000, name: "someone" }, group: { id: 1000, name: "someone" } }),
     );
-    expect(row.mode).toBe("-rw-r-----");
-    expect(row.owner).toBe("someone:someone");
+    expect(mapped.mode).toBe("-rw-r-----");
+    expect(mapped.owner).toBe("someone:someone");
   });
 
   it("has none of them when the daemon sent none", () => {
-    const row = rowFromEntry(entry());
-    expect(row.mode).toBeNull();
-    expect(row.owner).toBeNull();
+    const mapped = row(entry());
+    expect(mapped.mode).toBeNull();
+    expect(mapped.owner).toBeNull();
   });
 });
 

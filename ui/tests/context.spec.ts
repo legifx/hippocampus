@@ -114,7 +114,14 @@ test.describe("the human can write a memory and correct one", () => {
   async function openMemoryTab(page: import("@playwright/test").Page) {
     await page.setViewportSize({ width: 1000, height: 700 });
     await page.goto("/harness.html?at=/&hits=20");
+    // Wait for the application before pressing a key at it. Without this the press can land
+    // before React has attached its keydown listener, the panel never opens, and the failure
+    // shows up thirty seconds later as "waiting for tab Gedächtnis" — which reads like a broken
+    // tab strip and is a lost keystroke. It failed three times in one session on a machine that
+    // was also compiling, and never on an idle one.
+    await page.waitForSelector(".hc-row");
     await page.keyboard.press("Control+Shift+A");
+    await page.waitForSelector(".hc-inspector");
     await page.getByRole("tab", { name: "Gedächtnis" }).click();
     await page.waitForSelector(".hc-compose");
   }

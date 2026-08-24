@@ -2499,3 +2499,49 @@ kind of near-miss that only shows up on somebody else's machine.
 **Where the parsing lives.** `/proc/mounts` is now read in `cortex-core::mounts`, because two
 crates need the same answer for opposite reasons — the places screen to *offer* a share, the
 indexer to *avoid* one — and two parsers would be two opinions about what a share is.
+
+### D85 — One row stream, and what "no branch" honestly means
+
+**Status:** accepted · 2026-08-24 · M10 step 1
+
+`view.open(source, order?, limit?)` answers with a `View` — rows, the origin echoed back, the
+order the daemon chose, a basis in words, and the counts. Two sources ship in step 1, `dir` and
+`query`, and they are the same two calls underneath: a directory view is `Surface::list` with the
+same deny-list, the same ordering and the same audit entry, and a query view is `run_search` with
+the same activity ping, the same episode and the same reranking. Nothing about listing a
+directory or running a search was reimplemented; what changed is that both answer in one shape.
+
+**Why this was worth doing at all.** The window had two row-producing calls with different shapes
+and a mapper per call — `rowFromHit` and `rowFromEntry` — plus a component that chose between
+them. That mapping *is* the frontend deciding what a row is, which is the decision D4 keeps on
+the daemon's side, and the visible consequence was that a file's memory (its tier, its zone, its
+score) existed in one list and not the other. There is now one mapper, `rowFromView`, fed by one
+method.
+
+**What "the frontend contains no branch on browsing or searching" means, precisely.** The row
+path has none: `rows` is a single array, mapped once, rendered by a component that cannot tell
+where they came from. What remains — and what the paper does not ask to be removed — is
+window-state: whether a drop has a directory to land in, whether "new folder" makes sense,
+whether the breadcrumb is showing, and which of the two held views is on screen. Those are
+questions about *this window*, not about what a row is, and calling them the same thing would be
+overclaiming.
+
+**Both views are held at once, on purpose.** M6 asks for search that replaces the list live and
+gives the directory back the moment the query is cleared — instantly, not after a round trip. So
+`useView` keeps the place and the overlay, and clearing the query shows the place again from
+cache. A single-view hook would have made "clear the search" a network call, which is the
+behaviour M6 explicitly rejected.
+
+**The reranked order needed a second notification.** `search.update` carries hits; a client of
+the view layer must never have to know what a hit is. `view.update` carries rows, and which of
+the two the daemon sends is decided where the request arrived rather than by the reranker, which
+is the same for both.
+
+**The basis is in German.** It is a sentence composed by the daemon for display in a window whose
+default locale is de-DE, and the places screen already sets that precedent ("Persönlich",
+"Laufwerke"). The alternative — an English sentence in a German window, as `brain.graph`'s basis
+currently is — is the inconsistency this chooses against.
+
+**Revisit when:** step 3 adds sources that are neither spatial nor a query (`concept`,
+`working_set`, `tier`). If `useView`'s two slots — a place and an overlay — cannot hold them,
+the stack of views the paper describes in §4.2 replaces them, and this entry is where to say so.

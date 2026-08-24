@@ -9,7 +9,7 @@
  * show. The daemon did that.
  */
 
-import type { FsEntry, FsKind, SearchHit } from "./ipc";
+import type { FsKind, Owner, ScoreBreakdown, ViewRow } from "./ipc";
 import { splitPath } from "./format";
 
 export type Row = {
@@ -38,54 +38,52 @@ export type Row = {
   linkTarget: string | null;
   /** A link whose target is not there. */
   broken: boolean;
+  /** The node behind the row, when the index knows it. Null for a file it has never seen. */
+  nodeId: number | null;
+  /** Why this row is where it is, when something ranked it. */
+  score: ScoreBreakdown | null;
 };
 
-export function rowFromHit(hit: SearchHit): Row {
-  const { dir, name } = splitPath(hit.path);
+/**
+ * The one mapper, for the one row shape (M10 step 1).
+ *
+ * There used to be two — one per source — and they disagreed about what a row is: a browsed row
+ * had permissions and no tier, a search result had a tier and no permissions, and the renderer
+ * had to know which it was looking at. The daemon now answers in one shape and this turns it
+ * into the one the renderer draws. Nothing here decides anything; it formats.
+ *
+ * `commonDir` is the directory every row would otherwise repeat. A listing passes the directory
+ * it is showing and gets bare names; a query passes null and every row says where it lives.
+ * That is a rule about repetition rather than about sources, which is why it survives the
+ * arrival of concepts and tiers as sources in step 3.
+ */
+export function rowFromView(row: ViewRow, commonDir: string | null): Row {
+  const { dir, name } = splitPath(row.path);
+  const target = row.target ?? null;
   return {
-    key: `n${hit.node_id}`,
-    path: hit.path,
+    // The node id where there is one, so a row keeps its identity across a reordering; the path
+    // otherwise, which is what a directory listing has.
+    key: row.node_id === null || row.node_id === undefined ? `p${row.path}` : `n${row.node_id}`,
+    path: row.path,
     name,
-    dir,
-    isDir: hit.kind === "dir",
-    size: hit.size,
-    mtime: hit.mtime,
-    snippet: hit.snippet,
-    tier: hit.tier,
-    zoneId: hit.zone_id,
-    indexed: true,
-    // A hit comes from the index, which stores what a file *is* rather than the permissions it
-    // had when it was indexed. Showing a stale mode would be worse than showing none.
-    mode: null,
-    owner: null,
-    linkTarget: null,
-    broken: false,
-  };
-}
-
-export function rowFromEntry(entry: FsEntry): Row {
-  const { name } = splitPath(entry.path);
-  return {
-    key: `p${entry.path}`,
-    path: entry.path,
-    name,
-    // Deliberately empty: in a listing every row is in the same directory, and printing it on
-    // each one is a column of identical text where the eye is looking for differences.
-    dir: "",
+    dir: commonDir !== null && dir === commonDir ? "" : dir,
     // A link to a directory opens like a directory. It is still drawn as a link — the arrow and
     // the target are right there — but Enter on it has to descend rather than try to preview a
     // directory, which is the whole practical difference the target kind makes.
-    isDir: entry.kind === "dir" || entry.target_kind === "dir",
-    size: entry.size,
-    mtime: entry.mtime,
-    snippet: null,
-    tier: null,
-    zoneId: null,
-    indexed: entry.indexed,
-    mode: entry.mode === null || entry.mode === undefined ? null : formatMode(entry.kind, entry.mode),
-    owner: formatOwner(entry),
-    linkTarget: entry.kind === "symlink" ? entry.target ?? "?" : null,
-    broken: entry.broken === true,
+    isDir: row.kind === "dir" || row.target_kind === "dir",
+    size: row.size,
+    mtime: row.mtime,
+    snippet: row.snippet ?? null,
+    tier: row.tier ?? null,
+    zoneId: row.zone_id ?? null,
+    indexed: row.indexed,
+    mode:
+      row.mode === null || row.mode === undefined ? null : formatMode(row.kind, row.mode),
+    owner: formatOwner({ owner: row.owner ?? null, group: row.group ?? null }),
+    linkTarget: row.kind === "symlink" ? target ?? "?" : null,
+    broken: row.broken === true,
+    nodeId: row.node_id ?? null,
+    score: row.score ?? null,
   };
 }
 
@@ -131,8 +129,8 @@ export function formatMode(kind: FsKind, mode: number): string {
 }
 
 /** `owner:group`, or as much of it as the daemon could name. */
-export function formatOwner(entry: FsEntry): string | null {
-  const label = (who: FsEntry["owner"]) =>
+export function formatOwner(entry: { owner?: Owner | null; group?: Owner | null }): string | null {
+  const label = (who: Owner | null | undefined) =>
     who === null || who === undefined ? null : who.name ?? String(who.id);
   const user = label(entry.owner);
   const group = label(entry.group);

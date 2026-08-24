@@ -461,6 +461,33 @@ async fn undo_last(state: tauri::State<'_, AppState>, last: Option<usize>) -> Re
         .await
 }
 
+/// Open a view over a source: a directory, a query, and in later steps a concept or a tier.
+///
+/// One command where there were two, because the answer is one shape whatever produced it
+/// (M10). The source is passed through as JSON rather than typed here — this is a bridge, and a
+/// second copy of the source enum in this file would be a second thing to keep in step.
+#[tauri::command]
+async fn view_open(
+    state: tauri::State<'_, AppState>,
+    source: Value,
+    order: Option<String>,
+    reverse: Option<bool>,
+    limit: Option<usize>,
+) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(
+            cortex_rpc::protocol::method::VIEW_OPEN,
+            json!({
+                "source": source,
+                "order": order,
+                "reverse": reverse.unwrap_or(false),
+                "limit": limit,
+            }),
+        )
+        .await
+}
+
 /// A capped slice of a file, for the preview pane.
 ///
 /// It goes through the daemon's `fs.read` rather than reading the file here, which looks like a
@@ -1170,6 +1197,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             search,
+            view_open,
             status,
             extract_status,
             neighbors,

@@ -76,8 +76,11 @@ test.describe("shares in the places screen", () => {
     const asked = (await page.evaluate(
       () => (window as unknown as { __hcCalls?: { command: string; args: Record<string, unknown> }[] }).__hcCalls ?? [],
     )) as { command: string; args: Record<string, unknown> }[];
-    const listed = asked.filter((c) => c.command === "list");
-    expect(String(listed[listed.length - 1]!.args.path)).toContain("smb-share:server=nas");
+    // The window opens a view over a directory source — one call for every kind of place (M10).
+    const opened = asked.filter((c) => c.command === "view_open");
+    const last = opened[opened.length - 1]!.args.source as { kind: string; path: string };
+    expect(last.kind).toBe("dir");
+    expect(last.path).toContain("smb-share:server=nas");
   });
 
   test("a share that has gone says so instead of hanging", async ({ page }) => {

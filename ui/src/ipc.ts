@@ -349,6 +349,66 @@ export type TransferAnswer =
   | { outcome: "planned"; total_files: number; total_bytes: number; conflicts: Conflict[] }
   | { outcome: "started"; operation: number; total_files: number; total_bytes: number };
 
+// ---------------------------------------------------------------------------
+// The view layer (M10). One row stream, several sources.
+// ---------------------------------------------------------------------------
+
+/** Where a view's rows come from. More sources arrive in step 3; the shape does not change. */
+export type Source =
+  | { kind: "dir"; path: string }
+  | { kind: "query"; text: string };
+
+/** What the daemon sorted by. The frontend never sorts (D4). */
+export type Order = "name" | "size" | "modified" | "none";
+
+/**
+ * One row, from any source.
+ *
+ * Every field only one source can fill is optional, and a renderer that draws an absent field as
+ * nothing needs no branch on where the row came from. That is the whole of M10 step 1.
+ */
+export type ViewRow = {
+  path: string;
+  kind: FsKind;
+  size: number;
+  mtime: number;
+  indexed: boolean;
+  node_id?: number | null;
+  zone_id?: number | null;
+  tier?: string | null;
+  snippet?: string | null;
+  score?: ScoreBreakdown | null;
+  mode?: number | null;
+  owner?: Owner | null;
+  group?: Owner | null;
+  target?: string | null;
+  target_kind?: FsKind | null;
+  broken?: boolean;
+};
+
+export type View = {
+  rows: ViewRow[];
+  /** Echoed back, so a history stack can hold what it asked for. */
+  origin: Source;
+  order: Order;
+  /** What this list is and is not, in words. */
+  basis: string;
+  total: number;
+  truncated: boolean;
+  hidden: number;
+  /** True while a better order is expected as a `view:update`. */
+  refining: boolean;
+  elapsed_ms: number;
+  cursor?: string | null;
+};
+
+export type ViewUpdate = {
+  request_id: number;
+  rows: ViewRow[];
+  elapsed_ms: number;
+  model?: string | null;
+};
+
 /** What the shared thumbnail cache holds for a viewport's worth of rows. */
 export type ThumbnailsAnswer = {
   found: { path: string; png: string; width: number; height: number; size: string }[];
@@ -564,6 +624,27 @@ export const ipc = {
       conflict,
       dryRun,
     }),
+
+  /**
+   * Open a view over a source.
+   *
+   * The one call that produces rows. `fs.list` and `search` are still there for the CLI and for
+   * agents; this is what the window asks, and it answers in one shape whatever the source was.
+   */
+  viewOpen: (
+    source: Source,
+    options: { order?: Order; reverse?: boolean; limit?: number } = {},
+  ) =>
+    transport.invoke<View>("view_open", {
+      source,
+      order: options.order ?? null,
+      reverse: options.reverse ?? false,
+      limit: options.limit ?? null,
+    }),
+
+  /** A better order for a view already on screen, once the reranker has run. */
+  onViewUpdate: (handler: (update: ViewUpdate) => void) =>
+    transport.listen("view:update", (payload) => handler(payload as ViewUpdate)),
 
   /**
    * Which of these rows already have a thumbnail on the disk, and which could have one.

@@ -12,16 +12,17 @@
 
 import { createRoot } from "react-dom/client";
 import { App } from "../App";
-import { setTransport, type SearchHit } from "../ipc";
+import { setTransport, type Source, type ViewRow } from "../ipc";
 import "../tokens.css";
 import "../app.css";
 
 const params = new URLSearchParams(location.search);
 const HIT_COUNT = Number(params.get("hits") ?? "10000");
 
-function hits(count: number): SearchHit[] {
+function hits(count: number): ViewRow[] {
   return Array.from({ length: count }, (_, i) => ({
     node_id: i + 1,
+    indexed: true,
     // Long enough to overflow a 400 px column if anything forgets to elide.
     path: `/home/user/Projects/some-rather-long-project-name-${i}/src/deeply/nested/module-${i}.ts`,
     kind: "file",
@@ -36,6 +37,80 @@ function hits(count: number): SearchHit[] {
 
 const ALL = hits(HIT_COUNT);
 
+/**
+ * The directory the browsing tests navigate: two folders, three files, and names long enough to
+ * threaten a 400 px column.
+ *
+ * A function rather than a case, because two methods answer from it — and because a share that
+ * has gone has to be able to refuse from the same place, whichever of them asked.
+ */
+function listOf(at: string): { entries: ViewRow[]; error?: string } {
+  // `?deadshare=1` is how a test asks for a machine whose server has gone: the daemon knocks
+  // with a deadline and answers with this rather than hanging.
+  if (params.get("deadshare") === "1" && at.startsWith("/mnt/backup")) {
+    return {
+      entries: [],
+      error: "server:/export/backup did not answer within 2000 ms — the share may be gone",
+    };
+  }
+
+  const base = at === "/" ? "" : at.replace(/\/$/, "");
+  const entry = (name: string, kind: string, size: number, i: number): ViewRow =>
+    ({
+      path: `${base}/${name}`,
+      kind,
+      size,
+      mtime: 1_700_000_000 - i * 86_400,
+      indexed: i % 3 !== 0,
+      // Every real listing carries these, so the fixture does too — a permissions column that
+      // only ever appeared against a live daemon would be a column nothing tests.
+      mode: kind === "dir" ? 0o040755 : 0o100644,
+      owner: { id: 1000, name: "someone" },
+      group: { id: 1000, name: "someone" },
+    }) as ViewRow;
+
+  // Links live one level down, so the root listing keeps the five entries the layout tests are
+  // measured against.
+  const links: ViewRow[] =
+    base === ""
+      ? []
+      : [
+          {
+            ...entry("verweis-auf-ordner", "symlink", 12, 5),
+            mode: 0o120777,
+            target: "/home/user/anderswo",
+            target_kind: "dir",
+          },
+          {
+            ...entry("kaputter-verweis", "symlink", 9, 6),
+            mode: 0o120777,
+            target: "/home/user/weg.txt",
+            broken: true,
+          },
+          {
+            ...entry("relativer-verweis", "symlink", 8, 7),
+            mode: 0o120777,
+            target: "kurz.txt",
+            target_kind: "file",
+          },
+          // An archive, for the extraction tests, and a picture the thumbnail cache has not
+          // seen. Both one level down, because the root listing is what the layout tests count.
+          entry("bilder.zip", "file", 3_000, 8),
+          entry("foto.jpg", "file", 900_000, 9),
+        ];
+
+  return {
+    entries: [
+      entry("a-rather-long-directory-name-for-testing", "dir", 4096, 0),
+      entry("zweiter-ordner", "dir", 4096, 1),
+      entry("notes-with-a-long-enough-name-to-elide.md", "file", 4096, 2),
+      entry("bild.png", "file", 2_400_000, 3),
+      entry("kurz.txt", "file", 12, 4),
+      ...links,
+    ],
+  };
+}
+
 setTransport({
   async invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
     // Every call is recorded, so a test can assert that five selected rows became one request
@@ -46,82 +121,45 @@ setTransport({
     });
 
     switch (command) {
-      case "search": {
-        const query = String(args?.query ?? "");
-        // The fixture is a daemon, so it answers with everything: the frontend must not be the
-        // thing that decides which rows match.
-        return { hits: query ? ALL : [], mode: "auto", elapsed_ms: 3, partial: false } as T;
-      }
-      case "list": {
-        // A share whose server has gone: the daemon knocks with a deadline and answers with
-        // this rather than hanging. `?deadshare=1` is how a test asks for that machine.
-        if (
-          params.get("deadshare") === "1" &&
-          String(args?.path ?? "").startsWith("/mnt/backup")
-        ) {
-          throw new Error(
-            "server:/export/backup did not answer within 2000 ms — the share may be gone",
-          );
+      // One method, two sources — which is the whole of M10 step 1. The fixture answers in the
+      // shape the daemon answers in, so a test that passes here is a test about the window.
+      case "view_open": {
+        const source = (args?.source ?? {}) as Source;
+        if (source.kind === "query") {
+          // The fixture is a daemon: it answers with everything, because deciding which rows
+          // match is not the frontend's job (D4).
+          const rows = source.text ? ALL : [];
+          return {
+            rows,
+            origin: source,
+            order: "none",
+            basis: `${rows.length} Treffer für „${source.text}“, nach Relevanz (auto)`,
+            total: rows.length,
+            truncated: false,
+            hidden: 0,
+            refining: false,
+            elapsed_ms: 3,
+          } as T;
         }
-        // A directory the layout tests can navigate: two folders, three files, and names long
-        // enough to threaten a 400 px column.
-        const at = String(args?.path ?? "/");
-        const base = at === "/" ? "" : at.replace(/\/$/, "");
-        const entry = (name: string, kind: string, size: number, i: number) => ({
-          path: `${base}/${name}`,
-          kind,
-          size,
-          mtime: 1_700_000_000 - i * 86_400,
-          indexed: i % 3 !== 0,
-          // Every real listing carries these, so the fixture does too — a permissions column
-          // that only ever appeared against a live daemon would be a column nothing tests.
-          mode: kind === "dir" ? 0o040755 : 0o100644,
-          owner: { id: 1000, name: "someone" },
-          group: { id: 1000, name: "someone" },
-        });
-        // Links live one level down, so the root listing keeps the five entries the layout
-        // tests are measured against.
-        const links =
-          base === ""
-            ? []
-            : [
-                {
-                  ...entry("verweis-auf-ordner", "symlink", 12, 5),
-                  mode: 0o120777,
-                  target: "/home/user/anderswo",
-                  target_kind: "dir",
-                },
-                {
-                  ...entry("kaputter-verweis", "symlink", 9, 6),
-                  mode: 0o120777,
-                  target: "/home/user/weg.txt",
-                  broken: true,
-                },
-                {
-                  ...entry("relativer-verweis", "symlink", 8, 7),
-                  mode: 0o120777,
-                  target: "kurz.txt",
-                  target_kind: "file",
-                },
-                // An archive, for the extraction tests. One level down like the links, because
-                // the root listing is what the layout tests count.
-                entry("bilder.zip", "file", 3_000, 8),
-                // Not in the cache: the row it belongs to is the one that has to be rendered.
-                entry("foto.jpg", "file", 900_000, 9),
-              ];
+        const listing = listOf(String(source.path ?? "/"));
+        if (listing.error) throw new Error(listing.error);
         return {
-          path: at,
-          entries: [
-            entry("a-rather-long-directory-name-for-testing", "dir", 4096, 0),
-            entry("zweiter-ordner", "dir", 4096, 1),
-            entry("notes-with-a-long-enough-name-to-elide.md", "file", 4096, 2),
-            entry("bild.png", "file", 2_400_000, 3),
-            entry("kurz.txt", "file", 12, 4),
-            ...links,
-          ],
+          rows: listing.entries,
+          origin: source,
+          order: String(args?.order ?? "name"),
+          basis: `${listing.entries.length} Einträge, nach Namen geordnet — der Ordner selbst, nichts anderes`,
+          total: listing.entries.length,
           truncated: false,
           hidden: 1,
+          refining: false,
+          elapsed_ms: 1,
         } as T;
+      }
+      case "list": {
+        // Kept for anything that still asks by path; the window asks `view_open` now.
+        const listing = listOf(String(args?.path ?? "/"));
+        if (listing.error) throw new Error(listing.error);
+        return { path: args?.path, entries: listing.entries, truncated: false, hidden: 1 } as T;
       }
       case "mount_volume": {
         // `?mountfails=1` is an internal disk: polkit refuses it without a prompt. **The

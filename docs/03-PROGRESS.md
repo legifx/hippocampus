@@ -9,9 +9,9 @@ If you finish work without editing this file, the next agent starts from nothing
 
 | | |
 |---|---|
-| **Active milestone** | **M11 — The Agent Brain** (added at the owner's request 2026-08-23, D74). M8 and M5 as below. |
-| **Status** | **M6's mandatory list is complete as of 2026-08-24: archives (`fs.extract`, D81/D82), thumbnails in the list (D83) and network locations (D84, staged — what is mounted is offered, mounting is not built). What is left of M6 is its own §3, a week of exclusive use by the owner. 990 Rust tests, 60 vitest, 154 browser tests.** **M11 is ten of its twelve criteria in — see its own scorecard below before anything else, and every benchmark gate is green including the new one.** M4 complete. M6's mandatory list is done; its acceptance now needs a week of use rather than more code. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **A note on counting, kept because it cost a session:** this file once said 399 tests and accused the previous entry's 812 of being unreproducible. The 399 was wrong — the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Count by summing every `test result:` line. Check the measuring tool before disbelieving the measurement; this file already says that about latency, and it applies to counting. |
-| **Last updated** | 2026-08-24 (M6: network locations, D84 — the mandatory list is complete) |
+| **Active milestone** | **M10 — the explorer restructure**, step 1 of four done (2026-08-24, D85). M11, M8 and M5 as below. |
+| **Status** | **M10 step 1 landed on 2026-08-24: `view.open`, one row shape from every source (D85). M6's mandatory list is complete as of the same day: archives (`fs.extract`, D81/D82), thumbnails in the list (D83) and network locations (D84, staged — what is mounted is offered, mounting is not built). What is left of M6 is its own §3, a week of exclusive use by the owner. 998 Rust tests, 60 vitest, 155 browser tests.** **M11 is ten of its twelve criteria in — see its own scorecard below before anything else, and every benchmark gate is green including the new one.** M4 complete. M6's mandatory list is done; its acceptance now needs a week of use rather than more code. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **A note on counting, kept because it cost a session:** this file once said 399 tests and accused the previous entry's 812 of being unreproducible. The 399 was wrong — the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Count by summing every `test result:` line. Check the measuring tool before disbelieving the measurement; this file already says that about latency, and it applies to counting. |
+| **Last updated** | 2026-08-24 (M10 step 1: `view.open`, one row shape — D85) |
 | **Blocked on** | nothing |
 
 ## Start here
@@ -791,6 +791,46 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
+
+### 2026-08-24 — M10 step 1: one row stream, and a flaky test that was a lost keystroke
+
+M6's mandatory list finished earlier in the day, so this session started the restructure the
+explorer paper argues for. **Step 1 of four**, and step 1 only: `view.open` with two sources, one
+row shape, one mapper. No new capability, no behaviour change.
+
+**998 Rust tests** against 990 — 4 new in `cortex-core::view`, 4 in `cortexd/tests/views.rs` —
+**60 vitest**, **155 browser tests**. Green, including a full browser run *while*
+`cargo test --workspace` had every core, which is the run that used to fail.
+
+**What exists now.** `cortex_core::view` holds `Source`, `Order`, `ViewRow` and `View`;
+`view.open` serves `dir` and `query` through the same `Surface::list` and `run_search` the old
+methods use; `view.update` carries a reranked order as rows. In the window, `useBrowse` and
+`useSearch` are gone and `useView` replaces both, `rowFromHit`/`rowFromEntry` are gone and
+`rowFromView` replaces both. `fs.list` and `search` stay for the CLI and for agents.
+
+**The `hit` the panes are given is now built from the row** rather than from whichever call
+produced it — a `Row` carries `nodeId` and `score` now, so the "was this a search result"
+question has nowhere left to be asked.
+
+**What "no branch" honestly means** is written up in D85, because the DoD sentence is easy to
+overclaim: the *row path* has no branch, and nineteen mentions of `searching` remain in `App.tsx`
+for things that are about the window rather than about a row — whether a drop has a directory to
+land in, whether the breadcrumb shows, which of the two held views is on screen.
+
+**A defect in a test nobody wrote this session, found by looking at why it kept failing.**
+`context.spec.ts` failed three times in full runs and never on its own. The error read "waiting
+for tab Gedächtnis" for thirty seconds, which looks like a broken tab strip; the page snapshot
+showed no panel at all. Its helper pressed Ctrl+Shift+A immediately after `goto`, without waiting
+for the application — under load the press landed before React had attached its keydown listener
+and was simply lost. It waits for a row and then for the panel now. Six repeats at six workers
+pass, and so does a full run under a parallel `cargo test`. **A test that races the thing it is
+testing fails as a mystery rather than as a message.**
+
+**What step 2 needs, for whoever picks this up.** The memory columns: salience, degree, last
+episode, pinned and concepts on every row from every source, tier as brightness rather than a
+badge, and `Order::Salience` as the default for query views. `ViewRow` is where they go, and the
+gate to watch is the 10 000-entry one — §5 of the paper says to drop the columns rather than the
+budget if they collide.
 
 ### 2026-08-24 — M6: network locations, and the calls that do not come back
 

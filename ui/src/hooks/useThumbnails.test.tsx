@@ -41,6 +41,8 @@ function row(name: string, kind: "file" | "dir" = "file"): Row {
     owner: null,
     linkTarget: null,
     broken: false,
+    nodeId: null,
+    score: null,
   };
 }
 
