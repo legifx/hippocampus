@@ -338,6 +338,62 @@
   line-height: 1.45;
 }
 
+/* The note field: one line, in the panel, no dialog. A dialog for a sentence is a dialog nobody
+   opens — and the whole point of an annotation is that it costs less than editing the file. */
+.hc-annotate {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+
+.hc-annotate-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--hc-stroke);
+  border-radius: var(--hc-radius-row);
+  background: var(--hc-surface);
+  color: var(--hc-text);
+  font: inherit;
+}
+
+.hc-annotate-input::placeholder {
+  color: var(--hc-text-faint);
+}
+
+.hc-annotate-said {
+  flex: 0 0 auto;
+}
+
+/* A way to go somewhere, not a list: the neighbours of a file are a view of their own. */
+.hc-context-open {
+  display: block;
+  width: 100%;
+  margin: 4px 0 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--hc-stroke);
+  border-radius: var(--hc-radius-row);
+  background: none;
+  color: var(--hc-text-dim);
+  font: inherit;
+  text-align: left;
+  cursor: default;
+}
+
+.hc-context-open:hover,
+.hc-context-open:focus-visible {
+  color: var(--hc-text);
+  border-color: var(--hc-stroke-lift);
+}
+
+/* One line per episode: the verb, when, and who. */
+.hc-episode {
+  display: flex;
+  gap: 8px;
+  margin: 2px 0;
+}
+
 .hc-place-mark {
   width: 10px;
   height: 10px;

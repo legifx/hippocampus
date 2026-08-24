@@ -488,6 +488,41 @@ async fn view_open(
         .await
 }
 
+/// Why a row is where it is, and what has happened to it.
+///
+/// One command for the sidebar's two questions (M10 step 4). Passed through as JSON: the shape
+/// belongs to the daemon, and a second copy of it here would be a second thing to keep in step.
+#[tauri::command]
+async fn node_why(state: tauri::State<'_, AppState>, path: String) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(
+            cortex_rpc::protocol::method::NODE_WHY,
+            json!({ "path": path }),
+        )
+        .await
+}
+
+/// Attach a note to a file without touching the file.
+///
+/// The whole point of an annotation: the file on the disk is unchanged, and what somebody wanted
+/// to say about it lives in the index beside it.
+#[tauri::command]
+async fn annotate(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    note: String,
+    tags: Option<Vec<String>>,
+) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(
+            cortex_rpc::protocol::method::BRAIN_ANNOTATE,
+            json!({ "target": path, "note": note, "tags": tags.unwrap_or_default() }),
+        )
+        .await
+}
+
 /// A capped slice of a file, for the preview pane.
 ///
 /// It goes through the daemon's `fs.read` rather than reading the file here, which looks like a
@@ -1198,6 +1233,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             search,
             view_open,
+            node_why,
+            annotate,
             status,
             extract_status,
             neighbors,

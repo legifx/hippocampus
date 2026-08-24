@@ -431,6 +431,37 @@ export type ViewUpdate = {
   model?: string | null;
 };
 
+/**
+ * What the daemon says about one row, when asked why it is where it is.
+ *
+ * `components` is absent until a consolidation pass has scored the node — a fresh index holds no
+ * judgements, and saying so is a better answer than a row of zeroes.
+ */
+export type NodeWhy = {
+  path: string;
+  node_id: number;
+  tier: string;
+  salience: number;
+  pinned: boolean;
+  degree?: number | null;
+  last_episode?: number | null;
+  computed_at?: number | null;
+  components?: {
+    access: number;
+    recency: number;
+    edits: number;
+    centrality: number;
+    pin: number;
+    project: number;
+    noise: number;
+    usefulness?: number;
+    total?: number;
+  } | null;
+  episodes: { id: number; ts: number; actor: string; action: string }[];
+  /** Notes somebody attached to the file, without touching the file. */
+  annotations: { node_id: number; note: string; tags: string[]; ts: number; actor: string }[];
+};
+
 /** What the shared thumbnail cache holds for a viewport's worth of rows. */
 export type ThumbnailsAnswer = {
   found: { path: string; png: string; width: number; height: number; size: string }[];
@@ -646,6 +677,18 @@ export const ipc = {
       conflict,
       dryRun,
     }),
+
+  /**
+   * Why a row is where it is, and what has happened to it.
+   *
+   * One call for both, because they are one question asked at one moment: a person looking at a
+   * row wants the score's parts *and* when they last touched it.
+   */
+  nodeWhy: (path: string) => transport.invoke<NodeWhy>("node_why", { path }),
+
+  /** Attach a note to a file without touching the file. */
+  annotate: (path: string, note: string, tags: string[] = []) =>
+    transport.invoke<unknown>("annotate", { path, note, tags }),
 
   /**
    * Open a view over a source.

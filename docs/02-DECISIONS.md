@@ -2644,3 +2644,43 @@ for the places the index made and not for a directory or a query.
 view is the exception because "what has been forgotten" is a question, and its basis line answers
 the one that follows immediately: **nothing was deleted** — the files are on the disk, unchanged,
 and opening or pinning one brings it back.
+
+### D88 — Why a row is here, and what happened to it, are one question
+
+**Status:** accepted · 2026-08-24 · M10 step 4
+
+The sidebar's new job (§4.5). `node.why(path)` answers with the parts of the salience score, the
+file's episodes, the notes attached to it, and the memory columns — in one call, because a person
+looking at a row asks all of it in one glance. The panel used to make two calls for a fraction of
+this and show a third thing it should not have been showing.
+
+**The breakdown is read, not computed.** `salience_log` holds what the consolidation pass
+calculated, component by component, and the panel prints those numbers. Recomputing them for
+display would be a second implementation of the score, and the two would disagree the first time
+a weight changed. When no pass has scored the node yet the panel says so — *"noch nicht bewertet"*
+— rather than drawing a row of zeroes, because a fresh index holds no judgements and a zero that
+means "unknown" is the most expensive kind of lie in an interface about memory.
+
+**The parts are named in words a person can argue with**: *zuletzt benutzt*, *wie oft benutzt*,
+*wie verbunden*, *Rauschen*. The noise term is signed and shown signed, so the parts visibly add
+up to the number above them.
+
+**"Verbunden" left the panel** and became a button that goes to the `neighbours` view (D87). A
+panel can show the first three of a graph; a place can show all of it, sort it, and let you act
+on it. What was lost is that the neighbours are no longer visible without a keystroke; what was
+gained is that they are no longer *only* visible as three names in a corner.
+
+**A note is written in one line, in the panel.** No dialog: a dialog for a sentence is a dialog
+nobody opens, and the whole point of an annotation is that it costs less than editing the file.
+The panel re-reads after writing rather than pushing the note into its own list — what it shows
+has to be what the daemon stored, or the two drift the first time one of them rejects something.
+
+**An annotation's episode belongs to the annotation, not to the file.** It is recorded against
+the annotation node, so a rebuild replays it as what it was. The file's history therefore does
+not contain "notiert", and the note appears once — in *Notizen*, with its own timestamp — rather
+than twice. This was found by a test that asserted the opposite; the test was wrong and the
+comment explaining why is now in it.
+
+**Enter in the note field is not Enter in the window.** The window opens the selected row on
+Enter and sees the key on its way up from the input. The field stops it, and Escape clears the
+field rather than closing the window. Typing a note and pressing Enter used to open a file.

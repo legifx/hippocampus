@@ -12,13 +12,32 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useState } from "react";
-import { ipc, type Memory, type NeighborsResult, type SearchHit } from "../ipc";
+import { ipc, type Memory, type NodeWhy, type SearchHit, type Source } from "../ipc";
 import { formatAge, splitPath } from "../format";
 import type { Row } from "../row";
 import { spring, stagger } from "../motion";
 
-/** Everything the schema allows except `annotates`, which arrives separately. */
-const RELATED_EDGES = ["contains", "co_access", "imports", "similar_to", "derived_from"];
+/** What an episode's verb is called in a window whose default locale is German. */
+const ACTION_LABEL: Record<string, string> = {
+  create: "angelegt",
+  modify: "geändert",
+  open: "geöffnet",
+  move: "verschoben",
+  delete: "gelöscht",
+  search: "gesucht",
+  annotate: "notiert",
+};
+
+/** The parts of a salience score, in the order they are worth reading. */
+const COMPONENT_LABEL: [keyof NonNullable<NodeWhy["components"]>, string][] = [
+  ["recency", "zuletzt benutzt"],
+  ["access", "wie oft benutzt"],
+  ["edits", "wie oft geändert"],
+  ["centrality", "wie verbunden"],
+  ["pin", "angeheftet"],
+  ["project", "im Projekt"],
+  ["noise", "Rauschen"],
+];
 
 /** Words for the memory kinds, so a panel in German does not print an English enum. */
 const KIND_LABEL: Record<string, string> = {
@@ -30,8 +49,19 @@ const KIND_LABEL: Record<string, string> = {
   observation: "Beobachtung",
 };
 
-export function ContextSidebar({ hit, row }: { hit: SearchHit | null; row?: Row | null }) {
-  const [context, setContext] = useState<NeighborsResult | null>(null);
+export function ContextSidebar({
+  hit,
+  row,
+  onOpenSource,
+}: {
+  hit: SearchHit | null;
+  row?: Row | null;
+  /** Go somewhere: the graph around this file is a place now, not a list in here (M10 §4.5). */
+  onOpenSource?: (source: Source) => void;
+}) {
+  const [why, setWhy] = useState<NodeWhy | null>(null);
+  const [note, setNote] = useState("");
+  const [saying, setSaying] = useState<string | null>(null);
   /**
    * What agents have learned about this file.
    *
@@ -45,7 +75,7 @@ export function ContextSidebar({ hit, row }: { hit: SearchHit | null; row?: Row 
 
   useEffect(() => {
     if (!hit) {
-      setContext(null);
+      setWhy(null);
       return;
     }
 
@@ -59,22 +89,27 @@ export function ContextSidebar({ hit, row }: { hit: SearchHit | null; row?: Row 
       .memoriesAbout(hit.path)
       .then((result) => current && setMemories(result.memories ?? []))
       .catch(() => current && setMemories([]));
+    // Why this row is where it is, and what has happened to it — one call, because they are one
+    // question asked at one moment (M10 step 4).
     ipc
-      // Every edge type *except* `annotates`. The notes come back in their own field of the
-      // same answer, so asking the daemon to leave them out of the edge list is one argument —
-      // and filtering them out here instead would be the frontend data processing that D4
-      // forbids outright.
-      .neighbors(hit.path, 1, RELATED_EDGES)
-      .then((result) => current && setContext(result))
-      .catch((e: unknown) => {
-        if (!current) return;
-        setContext(null);
-        setError(e instanceof Error ? e.message : "the brain did not answer");
+      .nodeWhy(hit.path)
+      .then((result) => current && setWhy(result))
+      .catch(() => {
+        // A file the index has never seen has no history and no score, which is a fact about
+        // the file rather than a failure: the panel shows what it does have.
+        if (current) setWhy(null);
       });
 
     return () => {
       current = false;
     };
+  }, [hit?.path]);
+
+  // The note field belongs to the file it was opened on: carrying half a sentence to the next
+  // row would attach it to something else at the next Enter.
+  useEffect(() => {
+    setNote("");
+    setSaying(null);
   }, [hit?.path]);
 
   if (!hit) {
@@ -85,8 +120,7 @@ export function ContextSidebar({ hit, row }: { hit: SearchHit | null; row?: Row 
     );
   }
 
-  const notes = context?.annotations ?? [];
-  const related = context?.neighbors ?? [];
+  const notes = why?.annotations ?? [];
 
   return (
     <aside className="hc-context" aria-label="Kontext">
@@ -141,20 +175,98 @@ export function ContextSidebar({ hit, row }: { hit: SearchHit | null; row?: Row 
         </AnimatePresence>
       </Section>
 
-      <Section title="Verbunden" count={related.length} empty="nichts verknüpft">
-        {related.map((neighbor, index) => (
-          <motion.div
-            key={neighbor.node_id}
-            className="hc-related"
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ ...spring("content"), delay: stagger(index, true) }}
-          >
-            <span className="hc-pill">{neighbor.edge}</span>
-            <span className="hc-related-path hc-meta">
-              {neighbor.path ? splitPath(neighbor.path).name : `Knoten ${neighbor.node_id}`}
-            </span>
-          </motion.div>
+      {/* Writing a note without leaving the window, and without touching the file (M10 §4.5).
+          One line, Enter to keep it: a dialog for a sentence is a dialog nobody opens. */}
+      <form
+        className="hc-annotate"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const text = note.trim();
+          if (text === "" || !hit) return;
+          setNote("");
+          setSaying("…");
+          ipc
+            .annotate(hit.path, text)
+            .then(() => {
+              setSaying("notiert");
+              // Read it back rather than pushing it into the list here: what the panel shows
+              // has to be what the daemon stored, or the two drift the first time one of them
+              // rejects something.
+              return ipc.nodeWhy(hit.path).then((result) => setWhy(result));
+            })
+            .catch((e: unknown) => setSaying(e instanceof Error ? e.message : "nicht gespeichert"));
+        }}
+      >
+        <input
+          className="hc-annotate-input"
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          // The window handles Enter — it opens the selected row — and it sees this key on its
+          // way up. Without stopping it here, typing a note and pressing Enter opens a file
+          // instead of keeping the note, which is how this was found.
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === "Escape") event.stopPropagation();
+            if (event.key === "Escape") setNote("");
+          }}
+          placeholder="Notiz zu dieser Datei …"
+          aria-label="Notiz"
+        />
+        {saying && <span className="hc-faint hc-annotate-said">{saying}</span>}
+      </form>
+
+      {/* The graph around this file is a place, so this is a way to *go* there rather than a
+          list in a panel that could only ever show the first few (M10 §4.5). */}
+      {onOpenSource && hit && (
+        <button
+          type="button"
+          className="hc-context-open"
+          onClick={() => onOpenSource({ kind: "neighbours", path: hit.path })}
+        >
+          Verbunden ansehen{why?.degree ? ` (${why.degree})` : ""}
+        </button>
+      )}
+
+      {/* Why this row is where it is: the parts of the score the consolidation pass computed and
+          stored, not a number recomputed here. Absent until a pass has run, and said rather than
+          shown as a row of zeroes — a fresh index holds no judgements. */}
+      <Section
+        title="Warum"
+        count={why?.components ? 1 : 0}
+        empty={
+          why === null
+            ? "diese Datei kennt der Index noch nicht"
+            : "noch nicht bewertet — die Konsolidierung war hier noch nicht"
+        }
+      >
+        {why?.components && (
+          <dl className="hc-facts hc-meta hc-why">
+            {COMPONENT_LABEL.map(([key, label]) => {
+              const value = Number(why.components?.[key] ?? 0);
+              if (value === 0) return null;
+              return (
+                <div key={key}>
+                  <dt>{label}</dt>
+                  <dd className="hc-num">{value > 0 ? `+${value.toFixed(2)}` : value.toFixed(2)}</dd>
+                </div>
+              );
+            })}
+            <div>
+              <dt>Salienz</dt>
+              <dd className="hc-num">{why.salience.toFixed(2)}</dd>
+            </div>
+          </dl>
+        )}
+      </Section>
+
+      {/* What happened to it, from the episode log — which is the half `mtime` cannot answer:
+          reading a file is an episode too. */}
+      <Section title="Verlauf" count={why?.episodes.length ?? 0} empty="nichts aufgezeichnet">
+        {(why?.episodes ?? []).slice(0, 8).map((episode) => (
+          <p key={episode.id} className="hc-episode hc-meta">
+            <span>{ACTION_LABEL[episode.action] ?? episode.action}</span>
+            <span className="hc-num">{formatAge(episode.ts)}</span>
+            <span className="hc-faint">{episode.actor}</span>
+          </p>
         ))}
       </Section>
 

@@ -573,6 +573,27 @@ impl Store {
     }
 
     /// Nodes with an episode since `since`, most recently touched first.
+    /// What happened to one node, newest first.
+    ///
+    /// The episode log is the ground truth for a file's history (R10), and this is the question
+    /// the sidebar asks about the selection: not "what changed" — `mtime` says that — but *who*
+    /// touched it, *how*, and *when*. Reading was an episode too, which is the half `mtime`
+    /// cannot answer.
+    pub fn episodes_for(&self, node: NodeId, limit: usize) -> Result<Vec<cortex_core::model::Episode>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare_cached(
+            "SELECT id, ts, actor, action, node_id, session_id, metadata_json
+             FROM episodes WHERE node_id = ?1
+             ORDER BY ts DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![node.0, limit as i64], crate::queries::row_to_episode)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row??);
+        }
+        Ok(out)
+    }
+
     pub fn recently_touched(&self, since: i64, limit: usize) -> Result<Vec<Touched>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(

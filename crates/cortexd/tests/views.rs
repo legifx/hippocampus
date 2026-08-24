@@ -443,3 +443,66 @@ fn a_slice_of_time_lists_each_file_once() {
     let basis = view["result"]["basis"].as_str().unwrap();
     assert!(basis.contains("Zeitfenster"), "{basis}");
 }
+
+/// M10 step 4: why a row is where it is, and what has happened to it — in one answer.
+#[test]
+fn one_call_says_why_a_row_is_here_and_what_happened_to_it() {
+    let instance = Instance::start();
+    let mut client = Client::connect(&instance.socket());
+    corpus(&instance.work());
+    client.call("reconcile", json!({}));
+
+    let beta = instance.work().join("beta.md").display().to_string();
+    client.call("brain.annotate", json!({ "target": beta, "note": "gehört zum Parser" }));
+    client.call("brain.consolidate", json!({}));
+
+    let why = client.call("node.why", json!({ "path": beta }));
+    let result = &why["result"];
+
+    assert_eq!(result["path"], json!(beta));
+    assert!(result["salience"].is_number(), "{result}");
+    assert!(result["tier"].is_string(), "{result}");
+    // The note, from the same answer: the panel used to ask `brain.neighbors` for it, and that
+    // question is a *place* now.
+    let notes = result["annotations"].as_array().unwrap();
+    assert_eq!(notes.len(), 1);
+    assert!(notes[0]["note"].as_str().unwrap().contains("Parser"));
+
+    // And the history, newest first, from the episode log rather than from `mtime`: reading a
+    // file is an episode too, which is the half `mtime` cannot answer.
+    //
+    // **An annotation's episode is not in here, and that is right.** It is recorded against the
+    // annotation node — the thing that was created — rather than against the file it is about,
+    // so a rebuild replays it as what it was. The note itself is above, in `annotations`, with
+    // its own timestamp; the panel shows it there rather than twice.
+    let episodes = result["episodes"].as_array().unwrap();
+    assert!(!episodes.is_empty(), "{result}");
+    assert!(
+        episodes.iter().all(|e| e["node_id"] == result["node_id"]),
+        "every episode here is about this file: {episodes:?}"
+    );
+
+    // The components exist once a pass has scored it, and they are the stored ones rather than
+    // a number recomputed for display.
+    assert!(
+        result["components"].is_object(),
+        "a consolidation pass ran, so the breakdown should be there: {result}"
+    );
+    assert!(result["components"]["recency"].is_number());
+}
+
+#[test]
+fn a_file_the_index_has_never_seen_is_told_so_rather_than_explained() {
+    let instance = Instance::start();
+    let mut client = Client::connect(&instance.socket());
+    let unknown = instance.work().join("nie-gesehen.md").display().to_string();
+
+    let answer = client.call("node.why", json!({ "path": unknown }));
+    assert!(
+        answer["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("nothing to explain"),
+        "{answer}"
+    );
+}

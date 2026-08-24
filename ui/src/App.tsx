@@ -1066,7 +1066,18 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
         </div>
 
         {showPreview && (showBoth || pane === "preview") && <PreviewPane hit={settled} />}
-        {showContext && <ContextSidebar hit={settled} row={settledFocus.row} />}
+        {showContext && (
+          <ContextSidebar
+            hit={settled}
+            row={settledFocus.row}
+            // The graph around a file is a place: the sidebar sends you there rather than
+            // showing the first few of it (M10 §4.5).
+            onOpenSource={(source) => {
+              setQuery("");
+              browse.goTo(source);
+            }}
+          />
+        )}
       </main>
 
       {operations.pending && (

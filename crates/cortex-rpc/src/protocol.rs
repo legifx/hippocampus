@@ -224,6 +224,9 @@ pub mod method {
     pub const VIEW_OPEN: &str = "view.open";
     /// A better order for a view already answered, once the reranker has run. Never called.
     pub const VIEW_UPDATE: &str = "view.update";
+    /// Why a row is where it is, and what has happened to it. One call for the sidebar's two
+    /// questions, because they are asked at the same moment about the same file (M10 step 4).
+    pub const NODE_WHY: &str = "node.why";
     pub const FS_MKDIR: &str = "fs.mkdir";
     pub const FS_RENAME: &str = "fs.rename";
     pub const OPERATION_CANCEL: &str = "operation.cancel";
@@ -325,6 +328,7 @@ pub mod method {
                 // `view.open` reads exactly what `search` and `fs.list` read, through the same
                 // code, and answers a question that does not depend on its neighbours.
                 | VIEW_OPEN
+                | NODE_WHY
                 | FS_PLACES
                 | FS_READ
                 | FS_STAT
@@ -380,6 +384,7 @@ pub mod method {
         FS_TRANSFER,
         FS_EXTRACT,
         VIEW_OPEN,
+        NODE_WHY,
         FS_MKDIR,
         FS_RENAME,
         FS_MOUNT,

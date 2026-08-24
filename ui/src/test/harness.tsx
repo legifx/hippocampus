@@ -393,6 +393,51 @@ setTransport({
         }
         return { outcome: "started", operation: 1, total_files: 2, total_bytes: 1000 } as T;
       }
+      case "node_why": {
+        // What the daemon answers about one row: the parts of its score, its history, and the
+        // notes attached to it (M10 step 4).
+        const path = String(args?.path ?? "");
+        return {
+          path,
+          node_id: 7,
+          tier: "stm",
+          salience: 0.62,
+          pinned: false,
+          degree: 3,
+          last_episode: 1_700_000_000,
+          computed_at: 1_700_000_000,
+          components: {
+            access: 0.21,
+            recency: 0.3,
+            edits: 0.05,
+            centrality: 0.12,
+            pin: 0,
+            project: 0.04,
+            noise: -0.1,
+          },
+          episodes: [
+            { id: 3, ts: 1_700_000_000, actor: "human", action: "open" },
+            { id: 2, ts: 1_699_990_000, actor: "agent:claude", action: "annotate" },
+            { id: 1, ts: 1_699_900_000, actor: "human", action: "modify" },
+          ],
+          annotations: [
+            {
+              node_id: 11,
+              note: "eine Notiz, die lang genug ist, um in einer schmalen Spalte umzubrechen",
+              tags: ["decision", "storage"],
+              ts: 1_600_000_000,
+              actor: "agent:claude",
+            },
+          ],
+        } as T;
+      }
+      case "annotate": {
+        (window as unknown as HarnessWindow).__hcAnnotated = {
+          path: String(args?.path ?? ""),
+          note: String(args?.note ?? ""),
+        };
+        return { ok: true } as T;
+      }
       case "thumbnails": {
         // The shared cache, as the previewer would report it: the picture is already there, the
         // second one has to be rendered, and everything else is not worth asking about again.
@@ -662,6 +707,8 @@ type HarnessWindow = {
   __hcMounted?: string;
   /** Which device it asked to unmount, and whether it asked for the power to be cut. */
   __hcEjected?: { device: string; eject: boolean };
+  /** The note the sidebar attached, and to what. */
+  __hcAnnotated?: { path: string; note: string };
 };
 
 (window as unknown as HarnessWindow).__hcEmit = (event, payload) => {

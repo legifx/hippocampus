@@ -9,9 +9,9 @@ If you finish work without editing this file, the next agent starts from nothing
 
 | | |
 |---|---|
-| **Active milestone** | **M10 — the explorer restructure**, steps 1, 2 and 3 of four done (2026-08-24, D85–D87). M11, M8 and M5 as below. |
-| **Status** | **M10 steps 1, 2 and 3 landed on 2026-08-24: `view.open` with one row shape from every source (D85), and the memory columns on every row — measured before they were built, and cheaper than the per-row queries they sit beside (D86). Step 2's last criterion needs the owner: salience ordering verified by hand against a real index, once. M6's mandatory list is complete as of the same day: archives (`fs.extract`, D81/D82), thumbnails in the list (D83) and network locations (D84, staged — what is mounted is offered, mounting is not built). What is left of M6 is its own §3, a week of exclusive use by the owner. 1005 Rust tests, 60 vitest, 152 functional browser tests and 12 perf (run separately, on an idle machine — see the step 3 entry).** **M11 is ten of its twelve criteria in — see its own scorecard below before anything else, and every benchmark gate is green including the new one.** M4 complete. M6's mandatory list is done; its acceptance now needs a week of use rather than more code. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **A note on counting, kept because it cost a session:** this file once said 399 tests and accused the previous entry's 812 of being unreproducible. The 399 was wrong — the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Count by summing every `test result:` line. Check the measuring tool before disbelieving the measurement; this file already says that about latency, and it applies to counting. |
-| **Last updated** | 2026-08-24 (M10 step 3: the places the index makes — D87) |
+| **Active milestone** | **M10 — the explorer restructure**, all four steps done (2026-08-24, D85–D88). M11, M8 and M5 as below. |
+| **Status** | **M10 landed in full on 2026-08-24 — all four steps: `view.open` with one row shape from every source (D85), the memory columns on every row — measured before they were built, and cheaper than the per-row queries they sit beside (D86) — and the places the index makes (D87). Step 2 is complete: its by-hand criterion was checked by the owner against their own index and the salience order held. M6's mandatory list is complete as of the same day: archives (`fs.extract`, D81/D82), thumbnails in the list (D83) and network locations (D84, staged — what is mounted is offered, mounting is not built). What is left of M6 is its own §3, a week of exclusive use by the owner. 1007 Rust tests, 60 vitest, 156 functional browser tests and 12 perf (run separately, on an idle machine — see the step 3 entry).** **M11 is ten of its twelve criteria in — see its own scorecard below before anything else, and every benchmark gate is green including the new one.** M4 complete. M6's mandatory list is done; its acceptance now needs a week of use rather than more code. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **A note on counting, kept because it cost a session:** this file once said 399 tests and accused the previous entry's 812 of being unreproducible. The 399 was wrong — the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Count by summing every `test result:` line. Check the measuring tool before disbelieving the measurement; this file already says that about latency, and it applies to counting. |
+| **Last updated** | 2026-08-24 (M10 step 4: the sidebar — D88. All four steps done) |
 | **Blocked on** | nothing |
 
 ## Start here
@@ -792,6 +792,37 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
 
+### 2026-08-24 — M10 step 4: the sidebar's new job, and M10 is done
+
+The last of the four steps. **1007 Rust tests**, **60 vitest**, **156 functional browser tests**
+(4 new) and 12 perf. Green.
+
+`node.why(path)` answers the sidebar's questions in one call: the parts of the salience score as
+the consolidation pass stored them, the file's episodes, the notes attached to it, and the memory
+columns. The panel shows *Warum* — named parts, signed, adding up to the score — *Verlauf* in the
+log's own verbs, and a one-line field that attaches a note without touching the file. "Verbunden"
+is gone from the panel and is a button that goes to the `neighbours` place instead. D88 has the
+reasoning, including the two things it decided not to do: recompute the score for display, and
+show an annotation twice.
+
+**Three things this session got wrong first.**
+
+1. **Enter in the note field opened a file.** The window handles Enter for the selected row and
+   sees the key bubbling out of the input. The field stops it now.
+2. **A test asserted an annotation appears in the file's history.** It does not, and should not:
+   the episode belongs to the annotation node so a rebuild replays it as what it was. The note
+   shows once, in *Notizen*.
+3. **The panel's own state outlived the selection.** Half a typed sentence carried to the next
+   row would attach itself to a different file at the next Enter; the field clears with the
+   selection.
+
+**M10 is complete as a plan.** What it asked for — one row stream, the memory on every row, the
+new places, the sidebar — is built and tested. What it did not ask for and is now worth doing is
+the owner's list from the same day: **the agent view does not show everything it could, and the
+explorer's GUI is still rough in places.** Those are the next session's work, and they are not
+architecture — they are the appearance pass the owner has been deferring since M4, plus whatever
+using the thing for a week turns up.
+
 ### 2026-08-24 — M10 step 3: the places the index makes, and a perf gate that was measuring the machine
 
 Step 3 of four. `concept`, `working_set`, `neighbours`, `timeline` and `tier` are sources like a
@@ -876,7 +907,13 @@ row and nothing draws them. Numbers in a column would be a visual design decisio
 has deferred the appearance until the thing is stable; step 4 gives them a home in the sidebar,
 where "why is this here" is a question somebody is actually asking.
 
-**The one thing still open in step 2, and it needs the owner.** Its Definition of Done ends with
+**Step 2's last criterion is met** (2026-08-24, by the owner, at their own index): a directory
+opened with **Sortieren: Salienz** put the files they had been working with at the top. Verified
+by hand, once, as the Definition of Done asks — the weights are not obviously wrong, and there is
+nothing further to tune blind. What follows is the criterion as it was written and how to repeat
+the check.
+
+**How the check was made, for repeating it.** Its Definition of Done ends with
 *"a directory of files you have worked with this week, ordered by salience, puts them at the top
 — verified by hand, once, and written down."* That is a claim about a real index and cannot be
 asserted against a fixture. Open the window in a directory you have been working in, press Ctrl+K

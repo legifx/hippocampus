@@ -996,6 +996,64 @@ async fn dispatch_inner(
             json(NodeGetResult { node })
         }
 
+        // Why this row is where it is, and what has happened to it (M10 step 4).
+        //
+        // One call for the sidebar's two questions. They are asked about the same file at the
+        // same moment — a person looks at a row and wants to know why it is ranked where it is
+        // *and* when they last touched it — and two round trips for one glance is the pattern
+        // the context panel was already paying for annotations and memories separately.
+        method::NODE_WHY => {
+            let params: NodeGetParams = parse(params)?;
+            let path = params
+                .path
+                .as_deref()
+                .ok_or_else(|| RpcError::invalid_params("`path` is required"))?;
+            let node = daemon
+                .store
+                .node_by_path(Path::new(path))
+                .map_err(internal)?
+                .ok_or_else(|| {
+                    RpcError::invalid_params(&format!(
+                        "{path} is not in the index, so there is nothing to explain yet"
+                    ))
+                })?;
+
+            // The components the consolidation pass computed and stored. `None` means no pass
+            // has scored this node yet, which is a real answer — a fresh index has no
+            // judgements in it — and is said rather than shown as a row of zeroes.
+            let scored = daemon
+                .store
+                .salience_components(node.id)
+                .map_err(internal)?;
+            let episodes = daemon
+                .store
+                .episodes_for(node.id, 20)
+                .map_err(internal)?;
+            let columns = cortex_store::memory_columns::for_path(&daemon.store, Path::new(path))
+                .map_err(internal)?;
+            // The notes somebody attached to the file. Here rather than through
+            // `brain.neighbors`, which the panel used to call for them and which answers a
+            // different question — the graph around a node is a *place* now (M10 §4.5).
+            let annotations = daemon
+                .store
+                .annotations_for(node.id)
+                .map_err(internal)?;
+
+            json(serde_json::json!({
+                "path": path,
+                "annotations": annotations,
+                "node_id": node.id.0,
+                "tier": node.tier.as_str(),
+                "salience": node.salience,
+                "pinned": node.pinned,
+                "degree": columns.as_ref().map(|c| c.degree),
+                "last_episode": columns.as_ref().and_then(|c| c.last_episode),
+                "computed_at": scored.as_ref().map(|(at, _)| *at),
+                "components": scored.as_ref().map(|(_, c)| c),
+                "episodes": episodes,
+            }))
+        }
+
         method::EPISODE_APPEND => {
             let params: EpisodeAppendParams = parse(params)?;
             let actor = Actor::parse(&params.actor).ok_or_else(|| {
