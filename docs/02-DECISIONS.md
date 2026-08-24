@@ -2684,3 +2684,51 @@ comment explaining why is now in it.
 **Enter in the note field is not Enter in the window.** The window opens the selected row on
 Enter and sees the key on its way up from the input. The field stops it, and Escape clears the
 field rather than closing the window. Typing a note and pressing Enter used to open a file.
+
+### D89 — Nothing in this window is painted by the platform
+
+**Status:** accepted · 2026-08-24 · M4/M11 defect
+
+A `<button>` with no `background` keeps the user agent's `buttonface`, which is **light**. Every
+class in this window sets a text colour and most set no background, so every control that did not
+explicitly paint itself came out light-grey text on a light-grey button — unreadable, in a dark
+window. It hit the Agent Inspector's tab strip, its kill switch, the actions on a memory
+(*Korrigieren · Ersetzen · Löschen*), *Schließen (Esc)* and the one `select` in the panel.
+
+**It was reported as three separate bugs** — "the buttons are broken", "the buttons are ugly",
+"the panel is hard to read" — and it was one missing rule. There is now a reset in `tokens.css`
+for `button`, `select`, `input` and `textarea`, and the classes paint on top of it. `font:
+inherit` is part of it: a control that keeps the platform font is a different size from the text
+beside it at every zoom level.
+
+**The rule is asserted rather than remembered.** `ui/tests/controls.spec.ts` walks every
+`button`, `select` and `input` in the ordinary window, in the palette and on each Inspector tab,
+computes the perceived lightness of its background, and fails on anything above the midpoint. A
+dark window draws nothing light; that is checkable, so it is checked.
+
+**And a tab that is not selected now looks pressable** — it lightens on hover and has a focus
+ring. Before, an unselected tab was indistinguishable from a label, which is the other half of
+"the buttons are broken": nothing said they could be pressed.
+
+### D90 — A view inside a panel measures the panel, not the window
+
+**Status:** accepted · 2026-08-24 · M8/M11 defect
+
+The Agent Inspector's *Architektur* tab drew nothing on the owner's machine: a black box, no
+error, correct data underneath — `cortex graph --limit 4000` answered with 4 023 nodes.
+
+`BrainScene` measured `container.clientWidth/Height` once, at construction, and then listened to
+**`window.resize`**. In the standalone `ui-agent` page the container *is* the window, so that is
+right. Inside the Inspector the container is a panel that is mounted while it is still animating
+in — measured at zero — and nothing resizes the window afterwards, so nothing ever corrects it.
+A renderer sized 0×0 draws nothing and reports nothing.
+
+The scene now also observes its container with a `ResizeObserver`, and `onResize` ignores a width
+of zero rather than committing it. `ui/tests/architecture.spec.ts` asserts the canvas ends up the
+size of the box it sits in.
+
+**What this does not prove.** The test runs in Chromium; the window is WebKitGTK with
+`WEBKIT_DISABLE_DMABUF_RENDERER=1` (D59), and whether WebGL works there is a separate question
+with a separate answer. If the tab is still empty after this, the next thing to check is the
+renderer, and the honest way to check it is to make the failure say which one it was — the tab
+already has a failed state and shows the message, so an empty box means the renderer started.

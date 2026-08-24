@@ -1099,8 +1099,21 @@
   padding: 3px 9px;
   border-radius: var(--hc-radius-pill);
   border: 1px solid transparent;
+  background: none;
   color: var(--hc-text-dim);
   white-space: nowrap;
+}
+
+/* A tab that is not selected still has to look like something you can press. */
+.hc-tab:hover,
+.hc-tab:focus-visible {
+  color: var(--hc-text);
+  border-color: var(--hc-stroke);
+}
+
+.hc-tab:focus-visible {
+  outline: 1px solid var(--hc-stroke-lift);
+  outline-offset: 1px;
 }
 
 .hc-tab-on {
@@ -1114,6 +1127,24 @@
   align-items: center;
   gap: 6px;
   flex: none;
+}
+
+/* The actions on a memory — Korrigieren, Ersetzen, Löschen — and every other pill that is a
+   button. Transparent at rest, outlined on hover, never the platform's light grey. */
+button.hc-pill {
+  background: none;
+  color: var(--hc-text-dim);
+}
+
+button.hc-pill:hover,
+button.hc-pill:focus-visible {
+  color: var(--hc-text);
+  border-color: var(--hc-stroke-lift);
+}
+
+button.hc-pill:focus-visible {
+  outline: 1px solid var(--hc-stroke-lift);
+  outline-offset: 1px;
 }
 
 .hc-pill-on {

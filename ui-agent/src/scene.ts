@@ -336,6 +336,19 @@ export class BrainScene {
     this.composer.addPass(this.bloomPass);
 
     window.addEventListener("resize", this.onResize);
+    // And the container's own size, which in the standalone view is the window's and inside the
+    // Agent Inspector is a panel's.
+    //
+    // **This is why the Inspector's Architektur tab drew nothing.** The scene measured its
+    // container once, at construction — and the panel is mounted while it is still animating
+    // in, so the measurement was zero. Nothing resized the window afterwards, so nothing ever
+    // corrected it: a canvas of 0×0, a black box, and no error anywhere. A `window` listener is
+    // the right listener for a page that *is* the view and the wrong one for a view inside a
+    // panel.
+    if (typeof ResizeObserver !== "undefined") {
+      this.containerResize = new ResizeObserver(() => this.onResize());
+      this.containerResize.observe(options.container);
+    }
   }
 
   private drawnEdges: GraphEdge[] = [];
@@ -345,10 +358,15 @@ export class BrainScene {
     return this.drawnEdges.length;
   }
 
+  private containerResize: ResizeObserver | null = null;
+
   private onResize = (): void => {
     const { container } = this.options;
     const width = container.clientWidth;
     const height = Math.max(1, container.clientHeight);
+    // A container with no width yet — mid-animation, or on a tab that has not been shown — is
+    // not a size to render at. Skipping keeps the last good one until there is a real one.
+    if (width === 0) return;
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
@@ -599,6 +617,8 @@ export class BrainScene {
 
   dispose(): void {
     window.removeEventListener("resize", this.onResize);
+    this.containerResize?.disconnect();
+    this.containerResize = null;
     this.renderer.dispose();
     this.controls.dispose();
   }

@@ -11,7 +11,7 @@ If you finish work without editing this file, the next agent starts from nothing
 |---|---|
 | **Active milestone** | **M10 — the explorer restructure**, all four steps done (2026-08-24, D85–D88). M11, M8 and M5 as below. |
 | **Status** | **M10 landed in full on 2026-08-24 — all four steps: `view.open` with one row shape from every source (D85), the memory columns on every row — measured before they were built, and cheaper than the per-row queries they sit beside (D86) — and the places the index makes (D87). Step 2 is complete: its by-hand criterion was checked by the owner against their own index and the salience order held. M6's mandatory list is complete as of the same day: archives (`fs.extract`, D81/D82), thumbnails in the list (D83) and network locations (D84, staged — what is mounted is offered, mounting is not built). What is left of M6 is its own §3, a week of exclusive use by the owner. 1007 Rust tests, 60 vitest, 156 functional browser tests and 12 perf (run separately, on an idle machine — see the step 3 entry).** **M11 is ten of its twelve criteria in — see its own scorecard below before anything else, and every benchmark gate is green including the new one.** M4 complete. M6's mandatory list is done; its acceptance now needs a week of use rather than more code. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **A note on counting, kept because it cost a session:** this file once said 399 tests and accused the previous entry's 812 of being unreproducible. The 399 was wrong — the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Count by summing every `test result:` line. Check the measuring tool before disbelieving the measurement; this file already says that about latency, and it applies to counting. |
-| **Last updated** | 2026-08-24 (M10 step 4: the sidebar — D88. All four steps done) |
+| **Last updated** | 2026-08-24 (two defects the owner found: unreadable controls D89, empty 3D tab D90) |
 | **Blocked on** | nothing |
 
 ## Start here
@@ -791,6 +791,34 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
+
+### 2026-08-24 — Two defects the owner found by looking: unreadable controls, and an empty 3D tab
+
+Reported as "die Buttons sind verbuggt und hässlich" and "bei Architektur sieht man nichts". Both
+turned out to be one-line causes with wide blast radii, and both now have a test.
+
+**Every control in the window was painted by the platform.** There was no `button` reset: a
+`<button>` keeps `buttonface`, which is light, and the classes set only a text colour. The
+Inspector's tabs, kill switch, memory actions and its `select` were light-on-light. One rule in
+`tokens.css` fixes all of them, and `controls.spec.ts` now walks every control in the window, the
+palette and each Inspector tab and fails on any background lighter than the midpoint (D89).
+Unselected tabs also lighten on hover now — nothing had said they were pressable.
+
+**The 3D view measured the window and lived in a panel.** `BrainScene` read its container's size
+once and then listened to `window.resize`; inside the Inspector the container is a panel that is
+mounted mid-animation, so the measurement was zero and nothing ever corrected it — 0×0 canvas,
+black box, no error, with 4 023 nodes waiting behind it. It observes its container now, and
+`architecture.spec.ts` asserts the canvas fills its box (D90).
+
+**What is not yet known**: whether that was the whole of it on the owner's machine. The test runs
+in Chromium and the window is WebKitGTK with the dmabuf renderer disabled (D59). If the tab is
+still empty after this build, the renderer is the next suspect — and the tab's failed state does
+print its reason, so an empty box means the renderer started and drew nothing.
+
+**Still open from the same report:** *"im Allgemeinen nicht übersichtlich"* — the Inspector's
+layout. Not a defect, a design question, and the first one worth answering now that its controls
+are legible: five tabs, a live list, a memory list with three actions per row, and no hierarchy
+between them.
 
 ### 2026-08-24 — M10 step 4: the sidebar's new job, and M10 is done
 

@@ -393,6 +393,44 @@ setTransport({
         }
         return { outcome: "started", operation: 1, total_files: 2, total_bytes: 1000 } as T;
       }
+      case "brain_graph": {
+        // A snapshot small enough to read and complete enough to draw: two files under a
+        // directory, one concept, one memory, and the totals the view prints beside them.
+        const node = (id: number, path: string | null, kind: string, salience: number) => ({
+          id,
+          path,
+          kind,
+          label: path ? null : `Begriff ${id}`,
+          tier: id % 3 === 0 ? "cold" : "stm",
+          salience,
+          pinned: false,
+          zone_id: 1,
+          parent_id: id === 1 ? null : 1,
+          degree: 2,
+          last_episode: 1_700_000_000,
+        });
+        return {
+          nodes: [
+            node(1, "/home/user/Projects", "dir", 0.9),
+            node(2, "/home/user/Projects/parser.rs", "file", 0.8),
+            node(3, "/home/user/Projects/grammar.rs", "file", 0.4),
+            node(4, null, "concept", 0.6),
+            node(5, null, "memory", 0.5),
+          ],
+          edges: [
+            { src: 1, dst: 2, type: "contains", weight: 1 },
+            { src: 1, dst: 3, type: "contains", weight: 1 },
+            { src: 2, dst: 3, type: "co_access", weight: 0.7 },
+            { src: 4, dst: 2, type: "derived_from", weight: 1 },
+          ],
+          zones: [{ id: 1, name: "Projects", hue: 210, nodes: 3 }],
+          events: [],
+          working_set: [2],
+          totals: { nodes: 5, edges: 4 },
+          basis: "eine Fixture: fünf Knoten, vier Kanten, damit die Ansicht etwas zu zeichnen hat",
+          report: null,
+        } as T;
+      }
       case "node_why": {
         // What the daemon answers about one row: the parts of its score, its history, and the
         // notes attached to it (M10 step 4).

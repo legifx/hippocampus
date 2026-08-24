@@ -71,6 +71,63 @@
   box-sizing: border-box;
 }
 
+/* Every button in this window is painted by its own class, so the user agent must paint none of
+ * them.
+ *
+ * Without this a `<button>` keeps the platform default — `buttonface`, which is *light* — while
+ * the classes above set only a text colour, and every control that does not explicitly paint a
+ * background comes out light grey text on a light grey button. The Agent Inspector's tabs, its
+ * kill switch and its "Korrigieren / Ersetzen / Löschen" were unreadable for exactly this
+ * reason, and it read as three separate bugs rather than one missing rule.
+ *
+ * `font: inherit` matters as much: a button that keeps the platform font is a different size
+ * from the text beside it, at every zoom level. */
+button {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: default;
+}
+
+button:disabled {
+  color: var(--hc-text-faint);
+}
+
+/* The same for a dropdown and a text field: the platform paints those light too, and the one
+ * `select` in this window — the kind of a memory somebody is writing — was the last control
+ * left reading white on white. `appearance: none` removes the platform arrow with it, so the
+ * arrow is drawn here. */
+select,
+input,
+textarea {
+  background: var(--hc-surface);
+  color: var(--hc-text);
+  font: inherit;
+  border: 1px solid var(--hc-stroke);
+  border-radius: var(--hc-radius-row);
+}
+
+select {
+  appearance: none;
+  padding: 2px 22px 2px 8px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--hc-text-dim) 50%),
+    linear-gradient(135deg, var(--hc-text-dim) 50%, transparent 50%);
+  background-position: right 12px top 52%, right 7px top 52%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 1px solid var(--hc-stroke-lift);
+  outline-offset: 1px;
+}
+
 html,
 body,
 #root {
