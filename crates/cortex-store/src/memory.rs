@@ -320,6 +320,12 @@ impl Store {
         // exactly what happened the moment memories started being scored at all. Scoring
         // something that is about to be deleted is also just wasted work.
         let memories_total = self.count_memories()?;
+        // Packs older than the retention window go with the rest of the housekeeping. Written
+        // and never called is how `decay_unreported` spent its first hour, and a table that
+        // only grows is a worse version of the same mistake.
+        if !p.dry_run {
+            self.prune_packs(p.now - crate::memories::PACK_RETENTION_SECS)?;
+        }
         let (memories_expired, memories_unreported) = if p.dry_run {
             (self.expiring_memory_count(p.now)?, self.unreported_memory_count(p.decay.min_retrievals)?)
         } else {

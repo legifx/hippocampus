@@ -25,11 +25,19 @@ use std::path::PathBuf;
 
 /// The longest memory that will be accepted.
 ///
-/// A memory is a sentence or a paragraph. Something longer is a document, and a document
-/// belongs on the filesystem where the extractor can chunk it properly — this layer stores one
-/// chunk per memory on purpose, and a memory that needed several would be silently truncated by
-/// the embedder instead of being refused here.
-pub const MAX_MEMORY_CHARS: usize = 4_000;
+/// A memory is a sentence or a paragraph. Something longer is a document, and a document belongs
+/// on the filesystem where the extractor can chunk it properly — this layer stores one chunk per
+/// memory on purpose, and a memory that needed several would be silently truncated by the
+/// embedder instead of being refused here.
+///
+/// **1 400, not 4 000, and the number comes from the model rather than from taste.** The
+/// embedding model takes 512 tokens; at the upward-biased 3.5 characters per token this system
+/// budgets with, 1 400 characters is 400 tokens — comfortably inside it with room for the
+/// tokeniser being less generous than the estimate on code or on German. A 4 000-character
+/// memory would be accepted, stored whole, searched lexically in full, and embedded from its
+/// first third only, so its vector would describe the beginning of something and its text would
+/// say something else. Nothing would fail.
+pub const MAX_MEMORY_CHARS: usize = 1_400;
 
 /// How much of a memory is kept as the chunk preview.
 const PREVIEW_CHARS: usize = 240;
@@ -145,7 +153,9 @@ impl Store {
         }
         if text.chars().count() > MAX_MEMORY_CHARS {
             return Err(StoreError::corrupt(format!(
-                "a memory of {} characters is a document; the limit is {MAX_MEMORY_CHARS}",
+                "a memory of {} characters is a document; the limit is {MAX_MEMORY_CHARS}, \
+                 which is what fits in the embedding model's 512 tokens. Write the document to \
+                 a file and remember one sentence about it.",
                 text.chars().count()
             )));
         }
@@ -958,6 +968,13 @@ impl OutcomeApplied {
     }
 }
 
+/// How long a context pack's record is kept.
+///
+/// Thirty days. An outcome is reported minutes after the pack in practice, and the record
+/// exists only so that the report can be attributed; keeping every pack for ever would make the
+/// largest table in this index a log of things an agent was once shown.
+pub const PACK_RETENTION_SECS: i64 = 30 * 24 * 60 * 60;
+
 /// How much harder a noise report bites than a helpful one helps.
 ///
 /// Above one on purpose. A memory that wasted a slot is more informative than one that filled
@@ -1599,6 +1616,85 @@ mod tests {
         assert_eq!(
             store.memory_for_chunk(written.chunk_id).unwrap(),
             Some(written.node_id)
+        );
+    }
+
+    /// A context pack's record is bookkeeping and the consolidation pass takes out the old ones.
+    ///
+    /// The point of the test is not the SQL. It is that something *calls* it: `decay_unreported`
+    /// spent its first hour written, tested and inert, and a table that only ever grows is a
+    /// worse version of the same mistake.
+    #[test]
+    fn the_consolidation_pass_prunes_packs_it_no_longer_needs() {
+        use crate::memory::ConsolidateParams;
+
+        let store = store();
+        let node = remember(&store, MemoryScope::Global, MemoryKind::Fact, "something");
+        let now = 100 * 86_400;
+        let old = now - PACK_RETENTION_SECS - 1;
+
+        // Recorded with the test's own clock rather than through `pack_with`, whose fixed
+        // timestamp is older than the retention window and would make "recent" a misnomer.
+        store
+            .record_pack(
+                "recent",
+                None,
+                "just now",
+                2048,
+                50,
+                &[PackItemRecord {
+                    node_id: node,
+                    rank: 0,
+                    arm: PackArm::Lexical,
+                    score: 1.0,
+                }],
+                now,
+            )
+            .unwrap();
+        store
+            .record_pack("ancient", None, "long ago", 2048, 50, &[], old)
+            .unwrap();
+
+        // A dry run counts and removes nothing.
+        store
+            .consolidate(&ConsolidateParams {
+                dry_run: true,
+                ..ConsolidateParams::new(now)
+            })
+            .unwrap();
+        assert!(store.pack_items("recent").unwrap().len() == 1);
+
+        store.consolidate(&ConsolidateParams::new(now)).unwrap();
+        assert_eq!(
+            store.pack_items("recent").unwrap().len(),
+            1,
+            "a pack inside the retention window was pruned"
+        );
+        assert!(
+            store
+                .report_outcome("ancient", &[node], &[], Reporter::Human, &Actor::Human, now)
+                .is_err(),
+            "a pack older than the retention window is still there"
+        );
+    }
+
+    #[test]
+    fn a_memory_the_model_could_not_embed_whole_is_refused() {
+        // The limit is the embedding model's 512 tokens expressed in characters, not a taste.
+        // A memory over it would be stored whole, searched lexically in full, and embedded from
+        // its first part only — a vector describing the beginning of something whose text says
+        // something else, with nothing failing anywhere.
+        let store = store();
+        let long = "a".repeat(MAX_MEMORY_CHARS + 1);
+        let refused = store.remember(
+            &NewMemory::new(MemoryScope::Global, MemoryKind::Fact, long),
+            &agent("a"),
+            1,
+        );
+        let message = refused.unwrap_err().to_string();
+        assert!(
+            message.contains("512 tokens"),
+            "the refusal does not say why the limit is where it is: {message}"
         );
     }
 

@@ -79,6 +79,12 @@ Worth remembering: a build flag that is not obvious, an approach that was tried 
 convention the code does not state, a preference the human expressed once, the reason a decision
 went the way it did.
 
+A memory is a sentence or two — **1 400 characters at most**, which is what fits inside the
+embedding model's 512 tokens. Anything longer is a document: write it to a file and remember one
+sentence about where it is. The limit is enforced rather than truncated, because a memory stored
+whole and embedded from its first part only would have a vector describing the beginning of
+something whose text says something else, and nothing anywhere would fail.
+
 Not worth remembering: anything a file already says — the file is indexed, and a memory
 restating it costs a slot in every future pack to tell you something `brain_search` would have
 found. Nor anything true only for the next ten minutes; that is what `session` scope is for.

@@ -664,7 +664,7 @@ the `nodes` row:
 |---|---|
 | `scope` | `session:<id>` · `agent:<name>` · `project:<zone_id>` · `global` |
 | `kind` | `fact` · `preference` · `procedure` · `decision` · `failure` · `observation` |
-| `text` | the memory itself, held here because there is no file to re-read it from |
+| `text` | the memory itself, held here because there is no file to re-read it from. Capped at 1 400 characters — what fits in the model's 512 tokens, so that no memory is stored whole and embedded in part |
 | `subject_id` | optional node the memory is *about*; an `annotates` edge is written with it |
 | `confidence` | 0–1, the writer's own claim, never treated as ground truth |
 | `usefulness` | learned; see §4 below. Starts at 0, is not the same thing as confidence |
