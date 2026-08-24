@@ -365,6 +365,34 @@ async fn transfer(
         .await
 }
 
+/// Unpack an archive. Answers with a handle like `transfer`, and reports on the same two
+/// events, because to whoever is watching the bar it is the same kind of operation.
+///
+/// Named `extract_archive` rather than `extract`: `extract_status` next to it is about the
+/// daemon's content extraction, which is a different thing entirely, and two commands whose
+/// names differ by a suffix would be read as two halves of one feature.
+#[tauri::command]
+async fn extract_archive(
+    state: tauri::State<'_, AppState>,
+    archive: String,
+    destination: Option<String>,
+    conflict: Option<String>,
+    dry_run: Option<bool>,
+) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(
+            cortex_rpc::protocol::method::FS_EXTRACT,
+            json!({
+                "archive": archive,
+                "destination": destination,
+                "conflict": conflict.unwrap_or_else(|| "fail".into()),
+                "dry_run": dry_run.unwrap_or(false),
+            }),
+        )
+        .await
+}
+
 #[tauri::command]
 async fn cancel_operation(
     state: tauri::State<'_, AppState>,
@@ -1126,6 +1154,7 @@ pub fn run() {
             list,
             places,
             transfer,
+            extract_archive,
             cancel_operation,
             mkdir,
             rename_entry,

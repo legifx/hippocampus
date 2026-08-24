@@ -343,7 +343,7 @@ fn resolve_conflict(to: &Path, conflict: OnConflict) -> Result<PathBuf> {
 
 /// `notes.md` becomes `notes (2).md` — the form a person recognises from every file manager,
 /// with the number before the extension so the file still opens with the right program.
-fn free_name(taken: &Path) -> PathBuf {
+pub(crate) fn free_name(taken: &Path) -> PathBuf {
     let stem = taken.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
     let extension = taken.extension().and_then(|e| e.to_str());
 

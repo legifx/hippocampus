@@ -10,8 +10,8 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | **M11 — The Agent Brain** (added at the owner's request 2026-08-23, D74). M8 and M5 as below. |
-| **Status** | **M11 is ten of its twelve criteria in — see its own scorecard below before anything else. 960 Rust tests, 54 vitest, 35 Playwright, and every benchmark gate green including the new one.** M4 complete. M6 begun and paused. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **881 Rust tests pass** under `cargo test --workspace` across 40 test binaries — 44 of them in the new `cortex-memory`, 23 in `cortex-store::memory`, 2 guarding the response path — plus 11 vitest in `ui-agent`. **A note on that number:** this file briefly said 399 and accused the previous entry's 812 of being unreproducible. The 399 was wrong: the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Check the measuring tool before disbelieving the measurement — this file already says that about latency, and it applies to counting. |
-| **Last updated** | 2026-08-24 (M11: ten of twelve met; the Inspector, the live 3D view, and the memory in the ordinary window) |
+| **Status** | **M6's archive item is in as of 2026-08-24 — zip, tar and tar.gz, with D82's four rules and 9 tests against a live daemon. 977 Rust tests, 56 vitest, 134 browser tests in `test:ui` (146 with the perf suite).** **M11 is ten of its twelve criteria in — see its own scorecard below before anything else, and every benchmark gate is green including the new one.** M4 complete. M6 begun and paused. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **881 Rust tests pass** under `cargo test --workspace` across 40 test binaries — 44 of them in the new `cortex-memory`, 23 in `cortex-store::memory`, 2 guarding the response path — plus 11 vitest in `ui-agent`. **A note on that number:** this file briefly said 399 and accused the previous entry's 812 of being unreproducible. The 399 was wrong: the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Check the measuring tool before disbelieving the measurement — this file already says that about latency, and it applies to counting. |
+| **Last updated** | 2026-08-24 (M6: archives — `fs.extract`, and the four rules in D82) |
 | **Blocked on** | nothing |
 
 ## Start here
@@ -260,9 +260,9 @@ convenience is actually a statement about architecture — **a directory is one 
 several, not the ground truth of the view.** Following it gives concepts, the working set and the
 cold tier the same navigation directories already have, in four shippable steps.
 
-**It waits behind M6's mandatory list.** Archives, drag-and-drop out of the window, network
-locations and permission display are still missing, and the largest scope risk in this project is
-that the memory features are more interesting to build than those are.
+**It waits behind M6's mandatory list.** Archives are in as of 2026-08-24; drag-and-drop out of
+the window, network locations and thumbnails in the list are still missing, and the largest scope
+risk in this project is that the memory features are more interesting to build than those are.
 `docs/paper/EXPLORER-KICKOFF-PROMPT.md` is the session prompt when it is time.
 
 ### What to do next here
@@ -272,7 +272,8 @@ that the memory features are more interesting to build than those are.
 - **The grace window shows up as a flat legend.** A five-day-old index has every node in `stm`
   and the tier legend reads `working 0 / ltm 0 / cold 0`. The snapshot's `basis` now explains
   this in words, but it is worth watching whether the explanation is enough.
-- M6 is where it was; nothing in this session touched it.
+- M6's archive item is done (2026-08-24). What is left of its mandatory list: network locations
+  and thumbnails in the list.
 
 ## Where M6 stands
 
@@ -492,9 +493,17 @@ unmount or eject anything at all. D60 has the reasoning.
 
 ### What M6 still needs
 
-1. **Archives** — extract zip and tar at minimum.
-2. **Network locations**, which may be staged.
-3. **Thumbnails in the list**, not only in the preview pane.
+1. **Network locations**, which may be staged.
+2. **Thumbnails in the list**, not only in the preview pane.
+
+**Archives are done** (2026-08-24). `fs.extract` unpacks zip, tar and tar.gz, answers with a
+handle and reports on the transfer notifications (D81); Ctrl+E in the window, and the command
+palette offers "Entpacken" for an archive and for nothing else. The trust rules are D82 and each
+has a test against a live daemon: an entry that would escape, a link, a cancellation that leaves
+nothing behind, an undo that takes back what was written and not the file a person added
+afterwards. **Not covered:** `.tar.bz2` and `.tar.xz` (the suffixes are stripped for naming but
+the formats are not read), archives with a password, and *creating* one — M6 asks for extraction,
+and packing is a different gesture with a different dialog.
 
 **The stepped breath layer was measured, and it bought nothing** — 116% before, 110% after. The
 explanation behind it was wrong, and what replaced it is in D59: the heartbeat runs only while
@@ -765,6 +774,48 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
+
+### 2026-08-24 — M6: archives, and four things an archive is not allowed to do
+
+The first item off M6's mandatory list since the milestone was reordered. `fs.extract` in
+`cortex-agent/src/archive.rs`, dispatched by the daemon the way `fs.transfer` is, reachable from
+the window with Ctrl+E.
+
+**977 Rust tests** against 965 at the start — 9 new integration tests in `cortexd/tests/archives.rs`
+and 3 in the module — **56 vitest**, and **134 browser tests** in `test:ui` including 5 new ones in
+`ui/tests/archives.spec.ts` (146 with the perf suite). Everything green.
+
+**One flake worth knowing about, and it is not new.** Under the full Playwright run at five
+workers, `context.spec.ts` "states a preference outright" timed out once waiting for the memory
+tab, and passed on its own and on the next full run. It is a load-dependent wait in a test that
+drives the Inspector, not an extraction problem — recorded here rather than fixed blind.
+
+**What it does.** Zip, tar and gzipped tar, identified by magic bytes with the extension only as
+a fallback. A dry run answers what is inside, where it would go and whether something is already
+there; the real call answers with a handle and reports progress until it is done or cancelled.
+Refused entries are named in the answer rather than skipped. Undo removes exactly what was
+written. The reasoning is D81 (why it reports as a transfer) and D82 (the four rules about paths
+that came from a stranger).
+
+**Three things found by building it, in the order they would have hurt.**
+
+1. **An archive can unpack into itself.** The destination is the archive's name with its suffix
+   stripped — and a file identified by its *bytes* need not have one. `bundle.bin` produced
+   `bundle.bin` as its own destination, which the conflict check then reported as "already
+   exists": a correct refusal for entirely the wrong reason, and one that would have read as a
+   bug in the conflict handling rather than in the naming. Found by a test that was about gzip
+   detection and named the file `.bin` for unrelated reasons.
+2. **`tar_gz` is not a word.** `#[serde(rename_all = "snake_case")]` spelled the format `tar_gz`
+   on the wire while the type's own `as_str` said `tar.gz`. Two names for one thing, and the one
+   a client would have shown a person was the wrong one.
+3. **A field nothing reads.** `FsExtractParams` was drafted with a `plan` field beside `dry_run`,
+   copied from `FsTransferParams` — where it is also unread. It was removed rather than added to:
+   an extraction is gated like a transfer, by the kill switch and the write allow-list, because
+   the plan handshake fingerprints targets and an extraction's targets do not exist yet. This
+   file has a section about things that were written, tested and called by nothing; the way not
+   to extend it is to notice at the time.
+
+**What is not built:** `.tar.bz2` and `.tar.xz`, encrypted archives, and creating one.
 
 ### 2026-08-24 — M11 built: the memory layer, the second collection, and the pack
 

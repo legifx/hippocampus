@@ -1781,6 +1781,100 @@ async fn dispatch_inner(
             json(answer)
         }
 
+        method::FS_EXTRACT => {
+            let params: cortex_core::tools::FsExtractParams = parse(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+
+            // Everything that can be refused is refused before an operation id exists, for the
+            // same reason as a transfer: an operation that starts and then fails on policy
+            // grounds makes the caller wait for a notification to learn what the call could
+            // have told it.
+            let plan = surface(daemon, &ctx.actor, &auditor)
+                .plan_extract(&params.archive, params.destination.as_deref(), params.conflict)
+                .map_err(tool_error)?;
+
+            if params.dry_run {
+                return json(cortex_core::tools::ExtractAnswer::Planned {
+                    format: plan.format,
+                    destination: plan.destination,
+                    total_files: plan.total.files,
+                    total_bytes: plan.total.bytes,
+                    entries: plan.entries,
+                    truncated: plan.truncated,
+                    occupied: plan.occupied,
+                });
+            }
+
+            let (archive, destination, format, total) =
+                (plan.archive, plan.destination, plan.format, plan.total);
+            let (operation, handle) = daemon.operations.start();
+            let started = Instant::now();
+            let answer = cortex_core::tools::ExtractAnswer::Started {
+                operation,
+                destination: destination.clone(),
+                total_files: total.files,
+                total_bytes: total.bytes,
+            };
+
+            let daemon = daemon.clone();
+            let actor = ctx.actor.clone();
+            let notify = ctx.notify.clone();
+
+            tokio::task::spawn_blocking(move || {
+                let auditor = Auditor::new(daemon.store.clone(), &actor);
+                let surface = surface(&daemon, &actor, &auditor);
+                let mut throttle =
+                    crate::operations::Throttle::new(crate::operations::PROGRESS_INTERVAL);
+
+                let outcome = surface.run_extract(
+                    &archive,
+                    &destination,
+                    format,
+                    total,
+                    &handle,
+                    |progress| {
+                        if throttle.should_send(Instant::now()) {
+                            notify(
+                                method::TRANSFER_PROGRESS,
+                                serde_json::to_value(crate::operations::to_wire(
+                                    operation, progress,
+                                ))
+                                .unwrap_or_default(),
+                            );
+                        }
+                    },
+                );
+
+                daemon.operations.finish(operation);
+                // A directory of new files the index has never seen: one rebuild, then the
+                // ingest pass that reads them.
+                let _ = rebuild_index(&daemon);
+                daemon.ingest.signal_work();
+
+                // The same notification a transfer ends on, because to whoever is watching the
+                // progress bar it is the same operation ending. `moved` carries the one path
+                // that matters — where it landed.
+                notify(
+                    method::TRANSFER_DONE,
+                    serde_json::to_value(cortex_core::tools::TransferDone {
+                        operation,
+                        moved: if outcome.cancelled {
+                            Vec::new()
+                        } else {
+                            vec![outcome.destination.clone()]
+                        },
+                        failed: outcome.refused,
+                        cancelled: outcome.cancelled,
+                        undo_ids: outcome.undo_id.into_iter().collect(),
+                        elapsed_ms: started.elapsed().as_millis() as u64,
+                    })
+                    .unwrap_or_default(),
+                );
+            });
+
+            json(answer)
+        }
+
         method::SHUTDOWN => {
             daemon.ingest.stop();
             daemon.shutdown.notify_waiters();

@@ -93,6 +93,9 @@ setTransport({
                   target: "kurz.txt",
                   target_kind: "file",
                 },
+                // An archive, for the extraction tests. One level down like the links, because
+                // the root listing is what the layout tests count.
+                entry("bilder.zip", "file", 3_000, 8),
               ];
         return {
           path: at,
@@ -258,6 +261,36 @@ setTransport({
           } as T;
         }
         return { outcome: "started", operation: 1, total_files: 2, total_bytes: 1000 } as T;
+      }
+      case "extract_archive": {
+        // What the daemon answers, in the two halves the window asks for: what is inside, and
+        // then the handle. Where it would go is the daemon's decision, so the fixture makes it
+        // the same way — a new directory beside the archive, named after it.
+        const archive = String(args?.archive ?? "");
+        const destination = archive.replace(/\.zip$/, "");
+        if (args?.dryRun) {
+          return {
+            outcome: "planned",
+            format: "zip",
+            destination,
+            total_files: 3,
+            total_bytes: 3000,
+            entries: [
+              { path: "eins.png", kind: "file", size: 1000 },
+              { path: "zwei.png", kind: "file", size: 1000 },
+              { path: "unterordner/drei.png", kind: "file", size: 1000 },
+            ],
+            truncated: false,
+            occupied: false,
+          } as T;
+        }
+        return {
+          outcome: "started",
+          operation: 7,
+          destination,
+          total_files: 3,
+          total_bytes: 3000,
+        } as T;
       }
       case "cancel_operation":
         return { cancelled: true } as T;

@@ -348,6 +348,37 @@ export type TransferAnswer =
   | { outcome: "planned"; total_files: number; total_bytes: number; conflicts: Conflict[] }
   | { outcome: "started"; operation: number; total_files: number; total_bytes: number };
 
+/** What `extractArchive` answers: what is inside, or the handle of an unpacking. */
+export type ExtractAnswer =
+  | {
+      outcome: "planned";
+      format: ArchiveFormat;
+      destination: string;
+      total_files: number;
+      total_bytes: number;
+      entries: ArchiveEntry[];
+      /** True when `entries` is a prefix rather than the whole archive. */
+      truncated: boolean;
+      /** Something is already where it would go. */
+      occupied: boolean;
+    }
+  | {
+      outcome: "started";
+      operation: number;
+      destination: string;
+      total_files: number;
+      total_bytes: number;
+    };
+
+export type ArchiveFormat = "zip" | "tar" | "tar.gz";
+
+export type ArchiveEntry = {
+  /** Relative to the destination, and already checked: nothing here escapes it. */
+  path: string;
+  kind: FsKind;
+  size: number;
+};
+
 export type TransferProgress = {
   operation: number;
   files_done: number;
@@ -520,6 +551,23 @@ export const ipc = {
       sources,
       destination,
       mode,
+      conflict,
+      dryRun,
+    }),
+
+  /**
+   * Unpack an archive. Answers with a handle; progress arrives on the same events a transfer
+   * uses. A dry run says what is inside and where it would go, and writes nothing.
+   */
+  extractArchive: (
+    archive: string,
+    destination: string | null = null,
+    conflict: ConflictChoice = "fail",
+    dryRun = false,
+  ) =>
+    transport.invoke<ExtractAnswer>("extract_archive", {
+      archive,
+      destination,
       conflict,
       dryRun,
     }),

@@ -42,7 +42,7 @@ import {
   type SearchHit,
   type SortBy,
 } from "./ipc";
-import { rowFromEntry, rowFromHit, type Row } from "./row";
+import { isArchive, rowFromEntry, rowFromHit, type Row } from "./row";
 import { codeOf, messageOf } from "./format";
 
 const ROW_HEIGHT_COMPACT = 28;
@@ -383,6 +383,15 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
     askWhichApplication(paths, label);
   }, [targets, current, askWhichApplication]);
 
+  /**
+   * Unpack what the cursor is on. Silent when it is not an archive, because the binding is
+   * reached by pressing a key rather than by choosing a menu entry — a notice saying "that is
+   * not an archive" for every stray Ctrl+E would be noise for a mistake nobody makes twice.
+   */
+  const extractSelected = useCallback(() => {
+    if (current && isArchive(current.name)) operations.extract(current.path);
+  }, [current, operations]);
+
   const commands: Command[] = useMemo(
     () => [
       { id: "open", label: "Öffnen", binding: "Enter", run: openSelected },
@@ -449,6 +458,17 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
             detail: browse.state.sort === order ? "nochmal wählen kehrt um" : undefined,
             run: () => browse.orderBy(order),
           }))),
+      ...(current && isArchive(current.name)
+        ? [
+            {
+              id: "extract",
+              label: "Entpacken",
+              binding: "Ctrl+E",
+              detail: "in einen neuen Ordner daneben",
+              run: extractSelected,
+            },
+          ]
+        : []),
       { id: "cut", label: "Ausschneiden", binding: "Ctrl+X", run: () => operations.cut(targets) },
       { id: "copyfiles", label: "Kopieren", binding: "Ctrl+C", run: () => operations.copy(targets) },
       {
@@ -474,7 +494,19 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
       { id: "undo", label: "Rückgängig", binding: "Ctrl+Z", run: () => operations.undo() },
       { id: "dismiss", label: "Schließen", binding: "Esc", run: () => ipc.dismiss().catch(() => {}) },
     ],
-    [openSelected, hit, pane, showBoth, comfortable, searching, browse, operations, targets, current],
+    [
+      openSelected,
+      hit,
+      pane,
+      showBoth,
+      comfortable,
+      searching,
+      browse,
+      operations,
+      targets,
+      current,
+      extractSelected,
+    ],
   );
 
   const openPlace = useCallback(
@@ -668,6 +700,13 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
             event.preventDefault();
             setComfortable((c) => !c);
             return;
+          case "e":
+            // Ctrl+E on an archive: unpack it. The places pane takes this key first and ejects
+            // a drive with it, which is the same idea addressed to the only kind of row that
+            // has one — nothing here can reach a drive, and nothing there can reach a file.
+            event.preventDefault();
+            extractSelected();
+            return;
         }
       }
 
@@ -759,6 +798,7 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
       places,
       flatPlaces,
       openPlace,
+      extractSelected,
     ],
   );
 

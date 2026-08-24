@@ -214,6 +214,9 @@ pub mod method {
     // The operations a file manager needs and an agent may also use. `fs.transfer` answers with
     // a handle rather than a result, because copying can take a minute.
     pub const FS_TRANSFER: &str = "fs.transfer";
+    /// Unpack an archive. Answers with a handle like `fs.transfer`, and reports on the same
+    /// two notifications, because it is the same kind of thing to whoever started it.
+    pub const FS_EXTRACT: &str = "fs.extract";
     pub const FS_MKDIR: &str = "fs.mkdir";
     pub const FS_RENAME: &str = "fs.rename";
     pub const OPERATION_CANCEL: &str = "operation.cancel";
@@ -365,6 +368,7 @@ pub mod method {
         FS_MOVE,
         FS_TRASH,
         FS_TRANSFER,
+        FS_EXTRACT,
         FS_MKDIR,
         FS_RENAME,
         FS_MOUNT,
@@ -925,6 +929,7 @@ mod tests {
             method::FS_MKDIR,
             method::FS_RENAME,
             method::FS_TRANSFER,
+            method::FS_EXTRACT,
             method::UNDO,
             method::REBUILD_INDEX,
             method::RECONCILE,

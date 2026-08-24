@@ -25,7 +25,7 @@ import {
   type TransferDone,
   type TransferProgress,
 } from "../ipc";
-import { messageOf } from "../format";
+import { messageOf, splitPath } from "../format";
 
 export type Clipboard = {
   paths: string[];
@@ -75,6 +75,10 @@ export function useOperations(onChanged: () => void, destination: string | null)
   // The operation this window started. Progress for anything else — there is nothing else
   // today, but the daemon does not promise that — is ignored rather than displayed.
   const mine = useRef<number | null>(null);
+  // What the running operation *is*. A transfer and an extraction report on the same two
+  // notifications, deliberately, so the wording of the closing sentence is the one thing that
+  // has to remember which of them was asked for.
+  const runningKind = useRef<"transfer" | "extract">("transfer");
   const changed = useRef(onChanged);
   changed.current = onChanged;
   // Where a drop would land. Held in a ref because the subscription is made once and the
@@ -108,7 +112,7 @@ export function useOperations(onChanged: () => void, destination: string | null)
         if (disposed || done.operation !== mine.current) return;
         mine.current = null;
         setRunning(null);
-        setNotice(summarise(done));
+        setNotice(summarise(done, runningKind.current));
         // The directory changed underneath whatever is on screen.
         changed.current();
       })
@@ -174,6 +178,7 @@ export function useOperations(onChanged: () => void, destination: string | null)
         .then((answer) => {
           if (answer.outcome !== "started") return;
           mine.current = answer.operation;
+          runningKind.current = "transfer";
           setRunning({
             operation: answer.operation,
             fraction: 0,
@@ -271,6 +276,50 @@ export function useOperations(onChanged: () => void, destination: string | null)
       offs.forEach((off) => off());
     };
   }, []);
+
+  /**
+   * Unpack an archive into a new directory beside it.
+   *
+   * Two calls, like a paste: the first asks what is inside and where it would go, the second
+   * does it. The dry run is not ceremony — it is where a file that is not an archive, or one
+   * the policy will not read, is refused while nothing has happened yet.
+   *
+   * **When something is already at the destination it unpacks beside it** rather than asking.
+   * The three answers a conflict dialog could offer are refuse, merge and replace; merging an
+   * archive into an existing directory and replacing one are both destructive in ways a person
+   * cannot see from a dialog, and "notes (2)" costs nothing but a name.
+   */
+  const extract = useCallback(
+    (archive: string) => {
+      if (running || pending) return;
+      ipc
+        .extractArchive(archive, null, "fail", true)
+        .then((planned) => {
+          if (planned.outcome !== "planned") return;
+          const conflict: ConflictChoice = planned.occupied ? "keep" : "fail";
+          return ipc.extractArchive(archive, null, conflict).then((answer) => {
+            if (answer.outcome !== "started") return;
+            mine.current = answer.operation;
+            runningKind.current = "extract";
+            setRunning({
+              operation: answer.operation,
+              fraction: 0,
+              filesDone: 0,
+              totalFiles: answer.total_files,
+              bytesDone: 0,
+              totalBytes: answer.total_bytes,
+              current: null,
+            });
+            setNotice({
+              text: `entpacke ${answer.total_files} nach ${splitPath(answer.destination).name}`,
+              kind: "info",
+            });
+          });
+        })
+        .catch((e: unknown) => setNotice({ text: messageOf(e), kind: "error" }));
+    },
+    [running, pending],
+  );
 
   const paste = useCallback(
     (destination: string) => {
@@ -395,6 +444,7 @@ export function useOperations(onChanged: () => void, destination: string | null)
     cut,
     copy,
     paste,
+    extract,
     cancel,
     trash,
     undo,
@@ -409,7 +459,8 @@ export function useOperations(onChanged: () => void, destination: string | null)
  * A batch that partly failed says both halves. "3 kopiert" when two of five did not arrive is
  * the kind of message that costs somebody a file.
  */
-function summarise(done: TransferDone): Notice {
+function summarise(done: TransferDone, kind: "transfer" | "extract"): Notice {
+  if (kind === "extract") return summariseExtraction(done);
   if (done.cancelled) {
     return {
       text: `abgebrochen — ${done.moved.length} bereits übertragen`,
@@ -427,4 +478,28 @@ function summarise(done: TransferDone): Notice {
     };
   }
   return { text: `${done.moved.length} übertragen`, kind: "info" };
+}
+
+/**
+ * The same notification, said the way an extraction ended.
+ *
+ * `moved` carries the one directory it landed in, and `failed` carries the entries the daemon
+ * refused — a link, a device node, a path that would have written above the destination. Those
+ * are named rather than counted away: an archive that quietly unpacks to fewer files than it
+ * holds is the failure a person discovers a week later.
+ */
+function summariseExtraction(done: TransferDone): Notice {
+  if (done.cancelled) return { text: "entpacken abgebrochen", kind: "info" };
+  const into = done.moved[0] ? splitPath(done.moved[0]).name : "";
+  if (done.failed.length > 0) {
+    const first = done.failed[0];
+    return {
+      text:
+        done.failed.length === 1
+          ? `entpackt nach ${into} — 1 Eintrag nicht: ${first?.reason ?? ""}`
+          : `entpackt nach ${into} — ${done.failed.length} Einträge nicht`,
+      kind: "error",
+    };
+  }
+  return { text: `entpackt nach ${into}`, kind: "info" };
 }

@@ -2343,3 +2343,73 @@ specification, not an implementation detail.
 **Revisit when:** enough outcome reports exist to ask D76's own question — whether a memory's
 usefulness predicts a human calling it useful. If it does not, `w8` is decoration and should be
 removed rather than tuned.
+
+---
+
+### D81 — An extraction is a transfer, and reports as one
+
+**Status:** accepted · 2026-08-24 · M6
+
+An archive is unpacked with `fs.extract`, which answers with an operation handle and then reports
+on `transfer.progress` and `transfer.done` — the same two notifications a copy uses, and the same
+`operation.cancel` stops it.
+
+The alternative was a notification pair of its own, `extract.progress` / `extract.done`. It was
+rejected because the difference it would encode is not one anybody has: to the person watching,
+unpacking a 400 MB archive and copying a 400 MB directory are the same event — a bar, a name
+going past, a cancel button — and the window would have had to grow a second subscription, a
+second reducer and a second "what is running" state to render the same thing twice. The client
+that already knew how to draw a transfer now draws an extraction for free.
+
+What is *not* shared is the sentence at the end. `summariseExtraction` says "entpackt nach
+bilder — 1 Eintrag nicht: is a symbolic link"; a transfer's wording would have said "1
+übertragen" and dropped the refusal, because a transfer's `moved` is a list of files and an
+extraction's is the one directory it made. One ref in `useOperations` remembers which of the two
+was started, and it is the only thing that has to.
+
+**The cost, stated:** a client that subscribes to `transfer.done` now receives events for
+operations it did not start with `fs.transfer`. The window already filtered by operation id — it
+has to, because two clients share a daemon — so nothing changed there, but a future client that
+filtered by *method* instead would be surprised. That is the reason `TransferDone` carries the
+`operation` and not the tool.
+
+### D82 — Every path in an archive comes from a stranger
+
+**Status:** accepted · 2026-08-24 · M6
+
+The paths in a transfer came off the filesystem and through the policy engine. The paths in an
+archive came from whoever built it. Four rules follow, and they are why this is 600 lines of Rust
+rather than a call to `bsdtar`:
+
+1. **Nothing lands outside the destination.** Entry paths are resolved component by component;
+   an absolute path, a `..` or a Windows prefix is refused. Refused, not sanitised: `foo/../bar`
+   rewritten to `foo/bar` silently changes what the archive said, and a rule that quietly edits
+   hostile input is a rule nobody can reason about.
+2. **Links are refused, not followed.** A symbolic link inside an archive is a path of the
+   archive's choosing, and a hard link is worse. Neither is created. This costs something real —
+   a source tarball with a symlink in it unpacks incomplete — and the entry is *named* in the
+   answer for exactly that reason, rather than being skipped in silence.
+3. **A declared size is a claim.** Both formats state an uncompressed size. It is what the
+   progress bar counts against, and it is enforced while writing: an entry that produces more
+   than it declared is stopped at the byte it crosses. That is what a zip bomb looks like from
+   inside the write loop, and it needs no configured limit to catch.
+4. **The default destination is a new directory beside the archive.** Not the current one. An
+   archive with forty files at its root emptying itself over a directory somebody is standing in
+   is the oldest surprise in file management, and the fix costs one directory. The name is the
+   archive's, with its suffix stripped — the compound one, so `notes.tar.gz` gives `notes`. An
+   archive identified by its magic bytes need not be named for its format at all, and the first
+   one that was not (`bundle.bin`) unpacked into itself: a name with nothing left to strip now
+   gets `-extracted`, and that case has a test.
+
+**Undo takes back what was written and nothing else.** One journal entry per extraction, holding
+one inverse step per path created: `Delete` for each file, `RemoveDir` for each directory. The
+single-step alternative — "remove the destination recursively" — was rejected because it would
+also remove whatever the person had put in that directory since. The price is a large row for a
+large archive, roughly a hundred kilobytes of JSON per thousand files, which is the cheaper of
+the two mistakes.
+
+**And it leaves nothing behind when it stops.** The same list is the cleanup list: a cancellation
+or a mid-archive failure removes every file and every directory the extraction created, in
+reverse order, and directories that existed before are not touched because they were never
+recorded. M6 §4 asks for this of a copy; an extraction that left half a tree looking like a
+finished one would be the same failure with a different verb.

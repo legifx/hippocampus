@@ -42,3 +42,8 @@ libc = "0.2"
 
 [dev-dependencies]
 tempfile.workspace = true
+# Building the archives the extraction tests unpack. Test-only: the daemon reads archives, it
+# never writes one.
+zip = { version = "8", default-features = false, features = ["deflate"] }
+tar = "0.4"
+flate2 = "1"

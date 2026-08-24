@@ -713,6 +713,94 @@ pub struct TransferFailure {
     pub reason: String,
 }
 
+/// Unpack an archive.
+///
+/// Shaped like [`FsTransferParams`] rather than like a one-shot call, because to the person
+/// doing it an extraction *is* a transfer: it can take a minute, it can be cancelled, and it
+/// wants the same progress bar. It reports on the same two notifications for the same reason.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FsExtractParams {
+    /// The archive itself.
+    pub archive: PathBuf,
+    /// Where its contents go. Absent means "a new directory beside the archive, named after
+    /// it", which is what a file manager does and what stops an archive with fifty files at its
+    /// root from emptying itself over a home directory.
+    #[serde(default)]
+    pub destination: Option<PathBuf>,
+    #[serde(default)]
+    pub conflict: ConflictChoice,
+    /// Answer with what is inside and where it would go, without writing anything.
+    ///
+    /// There is no `plan` field beside this one, unlike the single-path tools. An extraction is
+    /// gated the way a transfer is — by the kill switch and the write allow-list — because the
+    /// plan handshake fingerprints the targets, and the targets of an extraction do not exist
+    /// until it runs. A field nothing reads would be worse than its absence.
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+/// One thing inside an archive, as the listing shows it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArchiveEntry {
+    /// The path it would land on, relative to the destination. Already normalised and already
+    /// checked: an entry that would escape the destination is refused by the plan, not listed.
+    pub path: PathBuf,
+    pub kind: FsKind,
+    /// What the archive says it will unpack to. A header can lie; the extraction stops the
+    /// moment an entry writes more than this.
+    pub size: u64,
+}
+
+/// What `fs.extract` answers: either what is inside, or the handle of the unpacking.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum ExtractAnswer {
+    /// A dry run. Nothing has been written.
+    Planned {
+        format: ArchiveFormat,
+        /// Where it would go, with the conflict choice already applied — so a client can show
+        /// the name before anything exists.
+        destination: PathBuf,
+        total_files: u64,
+        total_bytes: u64,
+        /// The first entries, for a listing. Capped: an archive with 100 000 files in it should
+        /// not be answered with 100 000 rows nobody scrolls.
+        entries: Vec<ArchiveEntry>,
+        /// True when `entries` is a prefix rather than the whole archive.
+        truncated: bool,
+        /// Whether something is already at the destination. The client asks before it starts.
+        occupied: bool,
+    },
+    Started {
+        operation: u64,
+        destination: PathBuf,
+        total_files: u64,
+        total_bytes: u64,
+    },
+}
+
+/// The archive formats this build unpacks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArchiveFormat {
+    Zip,
+    Tar,
+    /// Spelled on the wire the way a person spells it. `snake_case` would make this `tar_gz`,
+    /// which is a name nothing outside this file uses.
+    #[serde(rename = "tar.gz")]
+    TarGz,
+}
+
+impl ArchiveFormat {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ArchiveFormat::Zip => "zip",
+            ArchiveFormat::Tar => "tar",
+            ArchiveFormat::TarGz => "tar.gz",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationCancelParams {
     pub operation: u64,

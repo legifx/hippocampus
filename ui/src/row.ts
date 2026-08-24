@@ -97,6 +97,19 @@ export function rowFromEntry(entry: FsEntry): Row {
  * implementations are held together by `format_mode`'s tests on the Rust side and this file's
  * on the TypeScript side asserting the same strings.
  */
+/**
+ * Whether a row is something the daemon might unpack.
+ *
+ * By name, and only to decide whether to *offer* the command — the daemon reads the file's
+ * magic bytes and has the final say, so a `.zip` that is really a text file is refused by the
+ * call rather than by this. Getting it wrong here costs a menu entry that does nothing, which
+ * is the right way round: the opposite mistake hides a working command.
+ */
+export function isArchive(name: string): boolean {
+  const lower = name.toLowerCase();
+  return [".zip", ".tar", ".tar.gz", ".tgz"].some((suffix) => lower.endsWith(suffix));
+}
+
 export function formatMode(kind: FsKind, mode: number): string {
   const type = kind === "dir" ? "d" : kind === "symlink" ? "l" : kind === "other" ? "?" : "-";
   let out = type;
