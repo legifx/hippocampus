@@ -132,6 +132,10 @@ fn main() -> Result<()> {
 
     let files = build_workspace(&store, &mut rng, args.files)?;
     let history_end = simulate(&store, &mut rng, &files, args.days)?;
+    // An agent has been working here too, and it has learned things. Without this the published
+    // snapshot draws the files and leaves out the half of the brain M11 is about — which was
+    // exactly the state of `brain.graph` until somebody looked.
+    let memories = simulate_agent(&store, &mut rng, &files, args.days)?;
 
     // One pass per simulated day, so decay and demotion happen the way they would in use — a
     // single pass at the end would measure a different system.
@@ -168,8 +172,9 @@ fn main() -> Result<()> {
     })?;
     snapshot.report = store.last_consolidation()?;
     snapshot.basis = format!(
-        "synthetic workspace, {} simulated days. Every path here is invented; every salience, \
-         tier and edge was computed by the same engine the daemon runs. {}",
+        "synthetic workspace, {} simulated days, {memories} memories an invented agent wrote \
+         while working in it. Every path here is invented; every salience, tier and edge was \
+         computed by the same engine the daemon runs. {}",
         args.days, snapshot.basis
     );
 
@@ -296,6 +301,99 @@ fn upsert(
 
 /// Invent a working history: sessions, mostly inside one project, plus builds that touch
 /// everything and must not become associations.
+/// An agent working alongside the human, and what it learns.
+///
+/// Deliberately sparse: a memory every few days, not one per session. An agent that remembered
+/// something every hour would produce a graph in which memories outnumber files, which is not
+/// what this system is for and would make the picture a lie in the flattering direction.
+///
+/// The outcome reports are the part worth simulating rather than assuming. Roughly half of what
+/// is written is later reported useful, a fifth is reported as noise, and the rest is never
+/// mentioned at all — which is what makes the decay of the unmentioned visible in the snapshot
+/// instead of being a claim in a decision log.
+fn simulate_agent(store: &Store, rng: &mut Rng, files: &[File], days: i64) -> Result<usize> {
+    use cortex_core::memory::{MemoryKind, MemoryScope, PackArm, Reporter};
+    use cortex_store::memories::{NewMemory, PackItemRecord};
+
+    let agent = Actor::Agent("claude".into());
+    let subjects: Vec<&File> = files.iter().filter(|f| !f.generated).collect();
+    if subjects.is_empty() {
+        return Ok(0);
+    }
+
+    // Sentence shapes, so the text reads like something rather than like a fixture. Nothing
+    // here is claimed to be true of anything; it is a plausible sentence with a plausible shape.
+    let claims: &[(MemoryKind, &str)] = &[
+        (MemoryKind::Procedure, "the check has to run before the commit, not after it"),
+        (MemoryKind::Failure, "the shortcut here was tried and it loses the ordering"),
+        (MemoryKind::Decision, "kept the simpler structure; the faster one could not explain itself"),
+        (MemoryKind::Fact, "this directory is output rather than input, whatever its name says"),
+        (MemoryKind::Observation, "the numbers here were measured on a busy machine and are not comparable"),
+        (MemoryKind::Preference, "answer in German unless asked otherwise"),
+        (MemoryKind::Fact, "the generated files under this project are rewritten on every build"),
+        (MemoryKind::Procedure, "regenerate the corpus before measuring anything against it"),
+    ];
+
+    let mut written: Vec<cortex_core::ids::NodeId> = Vec::new();
+    for day in 0..days {
+        if !rng.chance(28) {
+            continue;
+        }
+        let at = EPOCH + day * DAY + 11 * 3_600 + rng.below(3_600) as i64;
+        let (kind, claim) = claims[rng.below(claims.len())];
+        let subject = subjects[rng.below(subjects.len())];
+        let scope = match rng.below(10) {
+            0 => MemoryScope::Global,
+            1 | 2 => MemoryScope::Project(1),
+            _ => MemoryScope::Agent("claude".into()),
+        };
+        let node = store.node_by_id(subject.id)?;
+        let memory = NewMemory {
+            subject: node.map(|n| (n.id, n.path.display().to_string())),
+            confidence: 0.4 + (rng.below(50) as f64) / 100.0,
+            session_id: Some(format!("agent-d{day}")),
+            ..NewMemory::new(scope, kind, format!("{claim} (day {day})"))
+        };
+        let remembered = store.remember(&memory, &agent, at)?;
+        if !remembered.deduplicated {
+            written.push(remembered.node_id);
+        }
+
+        // A pack, and sometimes a verdict on it. The pack is what makes `retrieved_count` mean
+        // anything, and the silence on most of them is the point.
+        if written.len() >= 2 {
+            let shown: Vec<cortex_core::ids::NodeId> =
+                written.iter().rev().take(3).copied().collect();
+            let pack = format!("sim-d{day}");
+            let items: Vec<PackItemRecord> = shown
+                .iter()
+                .enumerate()
+                .map(|(rank, node)| PackItemRecord {
+                    node_id: *node,
+                    rank,
+                    arm: PackArm::Lexical,
+                    score: 1.0 / (rank as f64 + 1.0),
+                })
+                .collect();
+            store.record_pack(&pack, None, "a task", 2048, 400, &items, at)?;
+            store.note_retrieved(&shown)?;
+
+            let verdict = rng.below(10);
+            let subject_of_report = shown[rng.below(shown.len())];
+            if verdict < 5 {
+                let reporter = if verdict == 0 { Reporter::Human } else { Reporter::Agent };
+                let actor = if verdict == 0 { Actor::Human } else { agent.clone() };
+                store.report_outcome(&pack, &[subject_of_report], &[], reporter, &actor, at + 60)?;
+            } else if verdict < 7 {
+                store.report_outcome(&pack, &[], &[subject_of_report], Reporter::Agent, &agent, at + 60)?;
+            }
+            // The remaining three tenths are packs nobody says anything about, which is what
+            // the unreported decay is for.
+        }
+    }
+    Ok(written.len())
+}
+
 fn simulate(store: &Store, rng: &mut Rng, files: &[File], days: i64) -> Result<i64> {
     let human: Vec<usize> = files
         .iter()

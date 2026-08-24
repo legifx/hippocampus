@@ -10,7 +10,7 @@ It is read-only. It never touches a file and never writes to the index.
 
 | channel | variable |
 |---|---|
-| hue | zone — the daemon's own colour for the project a node lives in |
+| hue | zone — the daemon's own colour for the project a node lives in; gold for a concept the index inferred, green for a **memory** somebody stated |
 | brightness | tier: Working, Short-term, Long-term, Cold |
 | size | salience (square root, because area is what the eye compares) |
 | halo | in the Working Set |
@@ -46,6 +46,13 @@ npm install && npm run dev
 `brain-sim` invents a workspace and sixty days of plausible use over it, then runs the **real**
 `Store::consolidate` once per simulated day. The history is fiction; every salience, tier and
 edge in it was computed by the same engine the daemon runs.
+
+It also invents an **agent** working alongside the human, which writes about twenty memories over
+the sixty days and reports back on some of them. That half is deliberately sparse: an agent that
+remembered something every hour would produce a picture in which memories outnumber files, which
+is not what this system is and would be a lie in the flattering direction. What it does show is
+the thing that is otherwise only an argument — memories nobody ever reported on drifting outward
+while the ones that earned a mention stay in.
 
 **From your own daemon** — this is the one that shows your actual index:
 
