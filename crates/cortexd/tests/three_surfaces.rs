@@ -606,6 +606,23 @@ fn the_kill_switch_reaches_the_memory_tools() {
         );
     }
 
+    // Three things still answer with the surface off, and they are the three you look at when
+    // you have just switched it off: what the state is, what happened, and who was working.
+    // `audit.recent` and `agent.status` were already on that side of the line; `agent.sessions`
+    // was gated, which meant the window lost its session list at exactly the wrong moment.
+    for (method, params) in [
+        ("agent.status", json!({})),
+        ("audit.recent", json!({ "limit": 5 })),
+        ("agent.sessions", json!({ "limit": 5 })),
+    ] {
+        let answer = daemon.rpc(method, params);
+        assert!(
+            answer.get("error").is_none() && !answer["code"].is_i64(),
+            "{method} refused while the surface was off, and it is an observation rather than \
+             an action: {answer}"
+        );
+    }
+
     // Back on, and the memory written before is still the only one.
     daemon.rpc("agent.set_enabled", json!({ "enabled": true }));
     let listed = daemon.rpc("brain.memories", json!({}));

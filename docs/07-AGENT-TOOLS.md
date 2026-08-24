@@ -65,6 +65,12 @@ two are different questions and the second one is the one this system is unusual
 | `brain_forget_memory(memory_id)` | delete one outright |
 | `agent_session_begin(name, task)` / `agent_session_end(session_id)` | attribution for one piece of work |
 
+**Three calls answer even with the kill switch off**, because they observe the agent layer
+rather than act for one: `agent_status`, `audit_recent` and `agent_sessions`. That is the line —
+reading about agents is not agency — and it is drawn there because switching the surface off is
+exactly the moment somebody wants to look at what happened before they did. Everything that
+writes, including `session_begin` and `session_end`, refuses.
+
 ### Scope, in one paragraph
 
 Every memory belongs to a scope: `session` expires with the task, `agent` is private to one

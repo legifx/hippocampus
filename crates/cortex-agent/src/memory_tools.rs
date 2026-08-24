@@ -426,10 +426,19 @@ impl Surface<'_> {
         Ok(ChangedResult { changed })
     }
 
+    /// The sessions this daemon has seen.
+    ///
+    /// **Not gated by the kill switch**, and that is the same line `agent.status` and
+    /// `audit.recent` are already on: those three *observe* the agent layer, they do not act
+    /// for an agent. Gating this one meant the window lost the session list exactly when
+    /// somebody most wants it — with the surface switched off, looking at what happened before
+    /// it was switched off. It is still audited, like every call at this surface.
+    ///
+    /// The writes — `session.begin` and `session.end` — stay gated. That is where the line is:
+    /// reading about agents is not agency.
     pub fn sessions(&self, params: &SessionsParams) -> ToolResult<SessionsResult> {
         let tool = "agent.sessions";
         let args = serde_json::to_value(params).unwrap_or_default();
-        self.gate_args(tool, &args)?;
 
         let limit = params.limit.unwrap_or(50);
         let sessions = self

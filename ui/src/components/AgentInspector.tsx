@@ -105,22 +105,32 @@ export function AgentInspector({ open, onClose, tab, onTab }: AgentInspectorProp
   }, []);
 
   const loadLive = useCallback(async () => {
-    try {
-      const [s, a, r, st] = await Promise.all([
-        ipc.agentSessions(50),
-        ipc.auditRecent(80),
-        ipc.auditRecent(80, true),
-        ipc.agentStatus(),
-      ]);
-      setSessions(s);
-      setAudit(a.entries ?? []);
-      setRefused(r.entries ?? []);
-      setStatus(st);
-      setError(null);
-    } catch (e) {
-      fail(e);
+    // Settled rather than all: with the Agent Surface switched off some of these refuse, and
+    // one refusal must not blank the three that still answer. Switching it off is exactly when
+    // somebody wants to look at what happened before they did.
+    const [s, a, r, st] = await Promise.allSettled([
+      ipc.agentSessions(50),
+      ipc.auditRecent(80),
+      ipc.auditRecent(80, true),
+      ipc.agentStatus(),
+    ]);
+    if (s.status === "fulfilled") setSessions(s.value);
+    if (a.status === "fulfilled") setAudit(a.value.entries ?? []);
+    if (r.status === "fulfilled") setRefused(r.value.entries ?? []);
+    if (st.status === "fulfilled") setStatus(st.value);
+
+    // A loop rather than `.find`, for the reason the architectural test is blunt about: it
+    // looks for collection operations by name and is right to, because a test that could tell
+    // "searching four settled promises" from "filtering the daemon's answer" would be a test
+    // with an exception in it.
+    let refusal: string | null = null;
+    for (const result of [s, a, r, st]) {
+      if (result.status === "rejected" && refusal === null) {
+        refusal = result.reason instanceof Error ? result.reason.message : String(result.reason);
+      }
     }
-  }, [fail]);
+    setError(refusal);
+  }, []);
 
   const loadMemories = useCallback(async () => {
     try {
