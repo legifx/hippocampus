@@ -10,8 +10,8 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | **M11 — The Agent Brain** (added at the owner's request 2026-08-23, D74). M8 and M5 as below. |
-| **Status** | M4 complete. M6 begun and paused. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **881 Rust tests pass** under `cargo test --workspace` across 40 test binaries — 44 of them in the new `cortex-memory`, 23 in `cortex-store::memory`, 2 guarding the response path — plus 11 vitest in `ui-agent`. **A note on that number:** this file briefly said 399 and accused the previous entry's 812 of being unreproducible. The 399 was wrong: the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Check the measuring tool before disbelieving the measurement — this file already says that about latency, and it applies to counting. |
-| **Last updated** | 2026-08-24 (M11 daemon side built; the Inspector is not) |
+| **Status** | **M11 is nine of its twelve criteria in — see its own scorecard below before anything else.** M4 complete. M6 begun and paused. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **881 Rust tests pass** under `cargo test --workspace` across 40 test binaries — 44 of them in the new `cortex-memory`, 23 in `cortex-store::memory`, 2 guarding the response path — plus 11 vitest in `ui-agent`. **A note on that number:** this file briefly said 399 and accused the previous entry's 812 of being unreproducible. The 399 was wrong: the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Check the measuring tool before disbelieving the measurement — this file already says that about latency, and it applies to counting. |
+| **Last updated** | 2026-08-24 (M11: nine of twelve criteria met, the Inspector built, the 3D view live) |
 | **Blocked on** | nothing |
 
 ## Start here
@@ -1674,6 +1674,55 @@ and roughly thirty always-on services, while the workstation has a 16 GB RTX-cla
 direction is therefore reversed — embeddings and reranking stay local. Recorded as D6.
 
 ---
+
+## M11 — where its Definition of Done actually stands
+
+Twelve criteria. **Nine met, two partly, one waiting on the owner.** The two partial ones are
+partial in ways worth reading rather than in ways worth rounding up.
+
+| # | Criterion | State |
+|---|---|---|
+| 1 | A memory written once is returned by `brain.context` on all three surfaces, identically | **met** — `three_surfaces.rs`, against a real daemon and two real binaries |
+| 2 | `rebuild` reproduces a byte-identical dump including supersession, deletion and what a memory earned | **met in shape, not at the stated scale** — see below |
+| 3 | The budget is honoured at 512, 2 048 and 8 192 tokens over 5 000 memories | **met** — asserted inside the benchmark loop, not only in its report |
+| 4 | `brain.context` P95 under 120 ms | **met** — 8.97 ms, a factor of thirteen |
+| 5 | MMR at λ 0.7 beats λ 1.0 on duplicates without losing distinct facts | **asserted, not quantified** — see below |
+| 6 | The learning signal moves the ranking in all three directions | **met**, including the counter-intuitive one |
+| 7 | Scope isolation per surface; no unrequested promotion to `global` | **met** — and the CLI's default had to be fixed to make the second half true |
+| 8 | Supersession: absent, present with history, detected without deciding | **met** |
+| 9 | The kill switch reaches every memory tool | **met** — asserted per tool over the socket |
+| 10 | The Inspector renders at 400 px, costs under 1 % of a core, and gives the window back | **partly — the cost is not measured** |
+| 11 | A human's deletion is immediate and survives a rebuild | **met**, live as well as in a test |
+| 12 | A real task, twice, by a human, measurably better the second time | **not done — this one needs the owner** |
+
+**§2's scale.** The criterion says a thousand memories; the round trip runs on a dozen in a test
+and on six against a live daemon. What the test is for is the *shape* — every scope, every kind,
+a supersession chain, a deletion, and earned usefulness including a correction — and a column
+that is lost is lost at any scale. A thousand would measure the rebuild's cost, which is a
+different question and does not have a budget yet.
+
+**§5's numbers.** The test asserts *strictly fewer* duplicates at λ 0.7 than at λ 1.0 with no
+loss of distinct facts, which is the property. It does not record the two counts, and the
+criterion asks for both to be recorded. Cheap to add; not added.
+
+**§10's cost.** The panel does not poll while it is shut and does not poll a tab that is not
+showing, and both are asserted. Nothing has measured what it costs while the Live tab streams.
+This project has a recorded case of a hidden window burning a full core that no amount of reading
+the code would have shown (D59), and the cgroup snippet at the top of this file is how to settle
+it in thirty seconds. Nobody has run it against this panel.
+
+**Two more gaps that are not Definition-of-Done items and matter anyway:**
+
+- **The semantic arm of `brain.context` has never run against a real embedding model.** The
+  second vector collection is built, filled by the embedding stage, rebuilt from the table
+  without the model, and asserted not to mix with the file collection — all with the hashing
+  embedder. Nothing has checked that a memory written in one wording is retrieved by a task
+  phrased in another, which is the entire reason the arm exists.
+- **Consolidation has never run over a corpus of memories.** They are nodes, so salience,
+  tiering and decay reach them for free — and "for free" is an argument, not a measurement.
+  Nobody has looked at whether a decay curve tuned for files suits a memory. D76's revisit
+  trigger is the honest place to start: if a memory's usefulness does not predict a human
+  calling it useful, the signal is decoration and should be removed rather than tuned.
 
 ## Driving it by hand, and the four things that found
 
