@@ -267,7 +267,13 @@ test.describe("the Agent Inspector holds its width", () => {
     await page.goto("/harness.html?at=/&hits=50");
     await page.keyboard.press("Control+Shift+A");
     await page.waitForSelector(".hc-inspector");
+    // Wait for the panel to have taken focus before pressing again. Opening moves focus in an
+    // effect, and a second keystroke sent into the middle of that is a race — this failed once
+    // under parallel load and passed every time it was run alone, which is the signature.
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.getAttribute("role") ?? ""))
+      .toBe("tab");
     await page.keyboard.press("Control+Shift+A");
-    expect(await page.locator(".hc-inspector").count()).toBe(0);
+    await expect(page.locator(".hc-inspector")).toHaveCount(0);
   });
 });
