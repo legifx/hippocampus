@@ -180,7 +180,11 @@ describe("AgentInspector", () => {
 
     // The kind, the writer, and the three counts that say whether it has ever been worth its
     // place: helped, noise, and how often it was shown at all.
-    expect(screen.getByText("Fehlschlag")).toBeTruthy();
+    //
+    // Scoped to the list rather than the panel: the compose row's kind picker has an option for
+    // every kind, so "the word Fehlschlag appears somewhere" stopped meaning anything the
+    // moment a human could write one.
+    expect(screen.getByRole("list").textContent).toContain("Fehlschlag");
     expect(screen.getByText("agent:claude")).toBeTruthy();
     expect(screen.getByText("0/2/9")).toBeTruthy();
     expect(screen.getByText("-0.15")).toBeTruthy();
