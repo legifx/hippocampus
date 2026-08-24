@@ -11,7 +11,7 @@ If you finish work without editing this file, the next agent starts from nothing
 |---|---|
 | **Active milestone** | **M11 — The Agent Brain** (added at the owner's request 2026-08-23, D74). M8 and M5 as below. |
 | **Status** | M4 complete. M6 begun and paused. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **881 Rust tests pass** under `cargo test --workspace` across 40 test binaries — 44 of them in the new `cortex-memory`, 23 in `cortex-store::memory`, 2 guarding the response path — plus 11 vitest in `ui-agent`. **A note on that number:** this file briefly said 399 and accused the previous entry's 812 of being unreproducible. The 399 was wrong: the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Check the measuring tool before disbelieving the measurement — this file already says that about latency, and it applies to counting. |
-| **Last updated** | 2026-08-23 (M11 specification) |
+| **Last updated** | 2026-08-24 (M11 daemon side built; the Inspector is not) |
 | **Blocked on** | nothing |
 
 ## Start here
@@ -759,6 +759,77 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
+
+### 2026-08-24 — M11 built: the memory layer, the second collection, and the pack
+
+Three slices, 942 tests against 881 at the start of the session, every one of them green.
+`cargo test --workspace`, counted by summing `test result:` lines rather than by reading the
+last one — the note above about the measuring tool applies to counting, and it is why this
+number is trustworthy.
+
+**What exists now.** Migration 7; `kind = 'memory'` as a node kind; scopes, kinds, supersession,
+expiry, usefulness and the counts behind it; a second usearch collection over memory chunks with
+its own embedding pass and its own reconcile; `brain.context` in `cortex-query`; and the whole
+family on the socket, the CLI and MCP with the three-surface test extended to prove they agree.
+
+**Three bugs found by building it, and all three would have shipped.**
+
+1. **The first migration would have destroyed the index.** Widening a CHECK constraint means
+   dropping and recreating the table, and `DROP TABLE nodes` with foreign keys enforced runs
+   every `ON DELETE CASCADE` on the way out: edges, chunks, annotations, salience_log. The
+   obvious guard — `PRAGMA foreign_keys = OFF` at the top of the migration — **does nothing**,
+   because that pragma is a no-op inside a transaction and every migration runs in one. It reads
+   exactly like protection. The runner now handles it around the transaction for migrations that
+   declare `rebuilds_tables`, runs `foreign_key_check` before committing, and restores what it
+   found. The regression test is behavioural — real children, enforcement genuinely on — and it
+   was checked against the broken version before being kept: it fails with "edges were cascaded
+   away".
+
+   The same first draft also silently dropped the `extract_note` column and four indexes, which
+   is why the table was dumped and compared rather than rewritten from memory. There is now a
+   test that every index on a rebuilt table survives.
+
+2. **`canonical_dump` could not see a memory.** It walks `nodes WHERE path IS NOT NULL`, so a
+   rebuild that lost every memory would have compared equal and Definition of Done §2 would have
+   passed while being false. It has a memory section now, keyed by `(scope, kind, text)` because
+   the rebuild renumbers the ids it would otherwise be keyed by.
+
+3. **Two vector counts could not tell the collections apart.** `indexable_vector_count` joined
+   chunks to embeddings and nothing else, so the first embedded memory would have pushed the
+   file collection's expected count past what the file index holds, the reconcile would have
+   concluded the index had drifted, and it would have rebuilt 122 137 vectors on every pass for
+   ever. Both queries are scoped by `n.path IS NOT NULL` now, with a test that fails if either
+   forgets.
+
+**And one that only an end-to-end run could find.** A task is a sentence — *"where does the
+reference corpus come from"* — and `match_expression` builds a conjunction of every word in it,
+deliberately, because an OR over a hundred thousand files ranks noise above the answer. Over a
+memory store of a few thousand that reasoning inverts: the conjunction matched nothing, and a
+context pack that returns nothing looks exactly like an empty memory. `task_expression` is a
+disjunction over content words with a short bilingual stopword list. The first version of that
+compared case-sensitively, so a sentence starting with "Der" or "The" kept its stopword.
+
+**What was decided while building, and written down.** D79: the token budget is an estimate.
+The Definition of Done asked for "a tokeniser rather than a divisor", which hides the question
+it does not answer — *whose*. The only tokeniser this repository ships belongs to a
+384-dimension retrieval model. The estimate is structural, biased upwards because the two errors
+are not symmetric, and bounded below by the word count, which a byte-pair encoding cannot go
+under. Both build prompts are amended.
+
+**What is not built yet**, in the order it should be picked up:
+
+- **The Agent Inspector** (M11 §8) — the button, the panel, the five tabs. Nothing of it exists.
+- **The live 3D view** (M11 §9) — `ui-agent` still eats a static `graph.json`.
+- **The benchmark** for `brain.context` against its 120 ms gate. The gate is in the table and
+  nothing measures it yet, which by this project's own rule means the milestone is not done.
+- **`brain.explain` over a memory.** It explains a file's ranking; a memory's `usefulness` and
+  its counts are in the pack's basis but not in `explain`.
+- **Consolidation over memories.** They are nodes, so salience and tiering reach them for free,
+  but nothing has been *run* over a corpus of them and no number says whether the decay curve
+  that suits files suits a memory. D76's revisit trigger is the honest place to start.
+- **`decay_unreported` is not called by anything.** The function exists and is tested; the
+  consolidation pass does not yet invoke it, so the counter-intuitive half of the learning
+  signal is implemented and inert.
 
 ### 2026-08-23 — M11 specified: the agent brain, and the vector question answered
 
