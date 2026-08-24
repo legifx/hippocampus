@@ -84,6 +84,7 @@ async fn main() -> Result<()> {
         .call(
             method::IDENTIFY,
             IdentifyParams {
+                session: None,
                 actor: args.actor.clone(),
             },
         )

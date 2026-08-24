@@ -546,7 +546,7 @@ async fn run(args: Args) -> Result<()> {
     // Naming yourself is one round trip and it is what makes the audit log worth reading.
     if let Some(actor) = &args.actor {
         let identified: IdentifyResult = client
-            .call(method::IDENTIFY, IdentifyParams { actor: actor.clone() })
+            .call(method::IDENTIFY, IdentifyParams { actor: actor.clone(), session: None })
             .await?;
         if !identified.agent_surface_enabled {
             eprintln!("warning: the Agent Surface is switched off; agent tools will refuse");

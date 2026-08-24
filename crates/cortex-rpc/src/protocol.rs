@@ -819,6 +819,12 @@ pub struct AuditRecentResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IdentifyParams {
+    /// An agent session this connection is resuming, if it has one already.
+    ///
+    /// Optional: a client that has not opened a session yet says nothing and calls
+    /// `agent.session.begin`, which binds one to the connection from then on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
     /// `human`, `system`, or an agent's name. A bare name is taken as an agent name — nothing
     /// verifies the claim, and the value of it is attribution, not access control.
     pub actor: String,

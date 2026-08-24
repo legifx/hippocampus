@@ -422,6 +422,7 @@ async fn handle_connection(
 
     let notifier_writer = writer.clone();
     let mut ctx = ConnCtx {
+        session: None,
         actor: cortex_core::model::Actor::Human,
         notify: Arc::new(move |method: &str, params: serde_json::Value| {
             let message = serde_json::json!({
@@ -599,6 +600,14 @@ fn spawn_rerank(
 #[derive(Clone)]
 pub struct ConnCtx {
     pub actor: cortex_core::model::Actor,
+    /// The agent session this connection is working under, once it has opened one.
+    ///
+    /// Set by `agent.session.begin` and by `identify`, so that everything after it is
+    /// attributable to *this task* rather than to the agent's name in general — which is the
+    /// whole reason sessions exist (M11 §7). Without it `agent_sessions.calls` stays at zero
+    /// for every session ever opened, which is what it did until somebody looked at the panel
+    /// that prints it.
+    pub session: Option<String>,
     /// How a spawned operation reaches the client that started it.
     ///
     /// A transfer's progress belongs to the connection that asked for it, not to every
@@ -608,6 +617,30 @@ pub struct ConnCtx {
 }
 
 async fn dispatch(
+    daemon: &Arc<Daemon>,
+    method: &str,
+    params: Option<serde_json::Value>,
+    refinable: &mut Option<search::Outcome>,
+    ctx: &mut ConnCtx,
+) -> Result<serde_json::Value, RpcError> {
+    let answer = dispatch_inner(daemon, method, params, refinable, ctx).await;
+
+    // Count it against the session, if this connection is working under one. Here rather than
+    // in each handler for the obvious reason and one less obvious: a refusal never reaches a
+    // handler at all, and a refusal is the interesting half of the number.
+    //
+    // A counter that is only updated sometimes is a counter nobody can reason about, and this
+    // one was updated never — `note_session_call` existed, was tested, and was called by
+    // nothing, so every session in the Inspector reported zero calls for ever.
+    if let Some(session) = ctx.session.as_deref() {
+        if let Err(e) = daemon.store.note_session_call(session, answer.is_ok()) {
+            tracing::warn!(error = %e, "could not count a call against its session");
+        }
+    }
+    answer
+}
+
+async fn dispatch_inner(
     daemon: &Arc<Daemon>,
     method: &str,
     params: Option<serde_json::Value>,
@@ -1145,6 +1178,9 @@ async fn dispatch(
         method::IDENTIFY => {
             let params: IdentifyParams = parse(params)?;
             ctx.actor = cortex_agent::actor_from_client(Some(&params.actor));
+            if let Some(session) = params.session.as_deref() {
+                ctx.session = Some(session.to_string());
+            }
             tracing::info!(actor = %ctx.actor.as_str(), "connection identified");
             json(IdentifyResult {
                 actor: ctx.actor.as_str(),
@@ -1473,21 +1509,26 @@ async fn dispatch(
             let params: cortex_core::tools::SessionBeginParams = optional(params)?;
             let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
             let generated = session_id(indexer::unix_now(), &ctx.actor);
-            json(
-                surface(daemon, &ctx.actor, &auditor)
-                    .session_begin(&params, &generated)
-                    .map_err(tool_error)?,
-            )
+            let opened = surface(daemon, &ctx.actor, &auditor)
+                .session_begin(&params, &generated)
+                .map_err(tool_error)?;
+            // Everything this connection does from here on belongs to this session, which is
+            // what makes "what did this task do" answerable rather than "what did this agent
+            // do, some time in the last year".
+            ctx.session = Some(opened.session_id.clone());
+            json(opened)
         }
 
         method::AGENT_SESSION_END => {
-            let params = parse(params)?;
+            let params: cortex_core::tools::SessionEndParams = parse(params)?;
             let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
-            json(
-                surface(daemon, &ctx.actor, &auditor)
-                    .session_end(&params)
-                    .map_err(tool_error)?,
-            )
+            let ended = surface(daemon, &ctx.actor, &auditor)
+                .session_end(&params)
+                .map_err(tool_error)?;
+            if ctx.session.as_deref() == Some(params.session_id.as_str()) {
+                ctx.session = None;
+            }
+            json(ended)
         }
 
         method::AGENT_SESSIONS => {

@@ -324,17 +324,6 @@ impl Store {
             .optional()?)
     }
 
-    /// Every chunk id that belongs to a memory. The second vector collection is built from
-    /// this, and a rebuild of it needs no model (D75).
-    pub fn memory_chunk_ids(&self) -> Result<Vec<ChunkId>> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(
-            "SELECT c.id FROM chunks c JOIN memories m ON m.node_id = c.node_id ORDER BY c.id",
-        )?;
-        let rows = stmt.query_map([], |r| Ok(ChunkId(r.get(0)?)))?;
-        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
-    }
-
     /// List memories. The scope filter is the caller's, and it is not optional for an agent.
     pub fn list_memories(&self, filter: &MemoryFilter) -> Result<Vec<Memory>> {
         let conn = self.conn();

@@ -1681,6 +1681,42 @@ direction is therefore reversed — embeddings and reranking stay local. Recorde
 
 ---
 
+## Four things that were written, tested, and called by nothing
+
+This session found the same defect four times, which is a rate worth naming rather than four
+separate notes. Each was correct code with a test beside it and no caller anywhere:
+
+| what | what it meant in practice |
+|---|---|
+| `decay_unreported` | a memory retrieved fifty times and never mentioned ranked exactly as well as one that had earned it — the counter-intuitive half of D76, implemented and inert |
+| `prune_packs` | a table that only ever grew, holding a record of everything an agent was once shown |
+| `recalled_with` | an edge type in the schema and the enum that nothing wrote, so memories never associated with each other at all |
+| `note_session_call` | **the Inspector printed "0 Aufrufe" beside every session ever opened** |
+
+The last one is the one to learn from, because it had a *user interface* built on top of it. A
+panel was written to display a number, the number was always zero, and nothing anywhere failed —
+the tests for the counter passed, because they called it themselves.
+
+**What the four have in common** is that each was written from the specification, in the order
+the specification lists things, and the call site belonged to a different layer that was written
+earlier or later. The tests were written at the same moment as the function and therefore called
+it directly, which is exactly the shape that cannot catch this.
+
+**The cheap defence, and it is genuinely cheap:** for every public function added to a layer,
+grep for a caller outside its own file before the commit. Three of these four were found in about
+a minute by
+
+```sh
+for f in $(grep -o "pub fn [a-z_]*" crates/cortex-store/src/memories.rs | sed 's/pub fn //' | sort -u); do
+  printf '%s %s\n' "$(grep -rl "\.$f(" crates/ bench/ --include=*.rs | grep -vc memories.rs)" "$f"
+done | sort -n | head
+```
+
+The fourth was found by reading the panel. Where a function's *purpose* is to make a number
+appear somewhere, the test that matters asserts the number where it appears — which is what
+`a_session_counts_the_calls_and_the_refusals_that_belong_to_it` now does, over a real socket,
+counting a real refusal.
+
 ## M11 — where its Definition of Done actually stands
 
 Twelve criteria. **Nine met, two partly, one waiting on the owner.** The two partial ones are

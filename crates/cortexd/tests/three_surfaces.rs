@@ -537,6 +537,67 @@ fn a_memory_written_once_is_returned_by_every_surface() {
     assert!(item["basis"]["lexical_rank"].as_u64().is_some());
 }
 
+/// A session counts what happened during it — which it did not, for every session ever opened.
+///
+/// `note_session_call` was written, tested and called by nothing, so `agent_sessions.calls`
+/// stayed at zero and the Inspector printed "0 Aufrufe" beside every session in the list. The
+/// counting is in the dispatcher rather than in each handler, because a refusal never reaches a
+/// handler and a refusal is the interesting half of the number.
+#[test]
+fn a_session_counts_the_calls_and_the_refusals_that_belong_to_it() {
+    use std::os::unix::net::UnixStream;
+
+    let daemon = Daemon::start();
+    let stream = UnixStream::connect(daemon.root().join("run/cortex.sock")).unwrap();
+    let mut writer = stream.try_clone().unwrap();
+    let mut reader = BufReader::new(stream);
+
+    let mut send = |id: i64, method: &str, params: Value| -> Value {
+        writeln!(
+            writer,
+            "{}",
+            json!({"jsonrpc":"2.0","id":id,"method":method,"params":params})
+        )
+        .unwrap();
+        writer.flush().unwrap();
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        serde_json::from_str(&line).unwrap()
+    };
+
+    send(1, "identify", json!({ "actor": "counter" }));
+    let opened = send(2, "agent.session.begin", json!({ "task": "counting" }));
+    let session = opened["result"]["session_id"].as_str().unwrap().to_string();
+
+    // Three that work and one that cannot: writing outside an empty allow-list.
+    send(3, "brain.remember", json!({ "text": "one", "scope": "global" }));
+    send(4, "brain.remember", json!({ "text": "two", "scope": "global" }));
+    send(5, "brain.memories", json!({}));
+    let refused = send(6, "fs.write", json!({ "path": "/etc/nope", "content": "x" }));
+    assert!(refused.get("error").is_some(), "the fixture's refusal was allowed");
+
+    let listed = send(7, "agent.sessions", json!({ "limit": 10 }));
+    let sessions = listed["result"]["sessions"].as_array().unwrap();
+    let mine = sessions
+        .iter()
+        .find(|s| s["id"].as_str() == Some(session.as_str()))
+        .expect("the session is listed");
+
+    // Six calls precede the listing: identify, begin, and the four above. The listing itself
+    // has not been counted yet when the answer is built.
+    assert!(
+        mine["calls"].as_i64().unwrap_or(0) >= 4,
+        "a session that ran six calls reported {}: {mine}",
+        mine["calls"]
+    );
+    assert_eq!(
+        mine["refusals"].as_i64(),
+        Some(1),
+        "the refusal was not counted, and a refusal is the interesting half"
+    );
+    assert_eq!(mine["memories"].as_i64(), Some(0), "memories are scoped to the session that writes them, and these were global-scoped without a session_id");
+}
+
 /// The first thing an agent reads names the tool it should call first.
 ///
 /// Not a style check. The instructions block is the only place to tell an agent what to do
