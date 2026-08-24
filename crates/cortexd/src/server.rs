@@ -738,15 +738,28 @@ async fn dispatch(
                 },
             };
 
-            let reasons = explain_reasons(
-                &outcome,
-                node.as_ref(),
-                rank,
-                chunks,
-                extract.as_ref().map(|(state, note)| (*state, note.clone())),
-            );
+            // A memory is a node, so it arrives here like any other — and explaining it as a
+            // file that failed to rank would be true and useless.
+            let memory = match &node {
+                Some(node) if node.kind == cortex_core::model::NodeKind::Memory => {
+                    daemon.store.memory(node.id).map_err(internal)?
+                }
+                _ => None,
+            };
+
+            let reasons = match &memory {
+                Some(memory) => explain_memory(memory),
+                None => explain_reasons(
+                    &outcome,
+                    node.as_ref(),
+                    rank,
+                    chunks,
+                    extract.as_ref().map(|(state, note)| (*state, note.clone())),
+                ),
+            };
 
             json(SearchExplainResult {
+                memory,
                 query: outcome.query.clone(),
                 mode: outcome.mode,
                 expression: outcome.expression.clone(),
@@ -1794,6 +1807,64 @@ fn internal<E: std::fmt::Display>(e: E) -> RpcError {
 /// The ordering matters: the first thing said should be the thing that is wrong. "Not indexed"
 /// makes every other observation irrelevant, and "extraction skipped it" explains an empty
 /// content arm better than any score ever could.
+/// Why a memory is what it is: where it belongs, what it has earned, and what replaced it.
+///
+/// Deliberately not a ranking explanation. A memory does not compete with files for a place in
+/// a result list — it competes with other memories for a place in a context pack, and the pack
+/// explains that per item. What this answers is the other question: given that it is there,
+/// what is known about it and should it still be believed.
+fn explain_memory(memory: &cortex_core::memory::Memory) -> Vec<String> {
+    let mut reasons = Vec::new();
+    reasons.push(format!(
+        "this is a {} memory in {}, written by {}",
+        memory.kind, memory.scope, memory.actor
+    ));
+
+    if let Some(replaced_by) = memory.superseded_by {
+        reasons.push(format!(
+            "it has been superseded by memory {replaced_by}, so retrieval no longer returns it —              it is kept because the history is the reason supersession exists instead of deletion"
+        ));
+    }
+    if let Some(expires) = memory.expires_at {
+        reasons.push(format!(
+            "it is session scratch and expires at {expires}; only session scope has a clock,              everything else is the decay engine's decision"
+        ));
+    }
+
+    // The three counts, and what their relationship means. This is the part a person actually
+    // wants: whether the thing has ever been worth its place.
+    reasons.push(format!(
+        "it has been put into {} context pack(s), reported helpful {} time(s) and noise {}          time(s); its earned usefulness is {:+.3}",
+        memory.retrieved_count, memory.helped_count, memory.noise_count, memory.usefulness
+    ));
+    if memory.retrieved_count >= 5 && memory.helped_count == 0 && memory.noise_count == 0 {
+        reasons.push(
+            "it keeps arriving in context and nobody has ever said whether it helped, which is              why its usefulness is falling: retrieval without use is evidence against a memory,              because the retrieval was chosen by the ranking being evaluated"
+                .to_string(),
+        );
+    }
+    if memory.human_confirmed {
+        reasons.push("a human has confirmed it, which outweighs any agent's own report".to_string());
+    } else if memory.helped_count > 0 {
+        reasons.push(
+            "the reports on it are an agent's own, which are discounted rather than trusted"
+                .to_string(),
+        );
+    }
+
+    reasons.push(format!(
+        "its writer claimed a confidence of {:.2}. That is a claim, not evidence; usefulness is          the number that was earned",
+        memory.confidence
+    ));
+    if let Some(path) = &memory.subject_path {
+        reasons.push(format!("it is about {}", path.display()));
+    }
+    if memory.pinned {
+        reasons.push("it is pinned, so nothing forgets it".to_string());
+    }
+    reasons
+}
+
 fn explain_reasons(
     outcome: &search::Outcome,
     node: Option<&cortex_core::model::Node>,

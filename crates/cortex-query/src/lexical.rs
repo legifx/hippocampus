@@ -121,9 +121,48 @@ pub fn task_expression(task: &str) -> Option<String> {
     };
     let parts: Vec<String> = chosen
         .iter()
-        .map(|term| format!("\"{}\"", term.text.replace('"', "\"\"")))
+        .map(|term| {
+            let quoted = format!("\"{}\"", term.text.replace('"', "\"\""));
+            // A quoted phrase means what it says, and truncating it would silently widen it.
+            match stem_prefix(&term.text) {
+                Some(prefix) if !term.phrase => {
+                    format!("({quoted} OR \"{prefix}\"*)")
+                }
+                _ => quoted,
+            }
+        })
         .collect();
     Some(parts.join(" OR "))
+}
+
+/// A truncated form of `word` to match as a prefix, or `None` when it is too short to truncate.
+///
+/// This is the cheapest useful substitute for a stemmer, and it exists because of a hole a live
+/// run found rather than because of a theory. A memory saying "the hygiene gate runs before
+/// every **commit**" was not returned for the task "**committing** a change", because the
+/// tokeniser folds case and diacritics and does nothing else: `commit` and `committing` are two
+/// unrelated tokens to it. With an embedding model the semantic arm covers that; rule R5 means
+/// a fresh install has no model, and a context pack that only works after a download is one
+/// that does not work on the day somebody tries it.
+///
+/// Sixty per cent of the word, floor five characters, and only for words of seven or more. That
+/// lands on `commit`* for `committing`, `reposi`* for `repository`, `Umbene`* for
+/// `Umbenennung` — and leaves `corpus`, `index` and `zone` alone, where truncation would turn a
+/// term into a wildcard matching most of the store.
+///
+/// It over-matches, and deliberately: `commit`* also finds `committee`. The cost of that is one
+/// slot in a ranked list that BM25 orders and diversification thins; the cost of missing is the
+/// memory that answered the question never being seen at all. The two are not symmetric.
+fn stem_prefix(word: &str) -> Option<String> {
+    let chars: Vec<char> = word.chars().collect();
+    if chars.len() < 7 {
+        return None;
+    }
+    let keep = ((chars.len() * 3) / 5).max(5);
+    if keep >= chars.len() {
+        return None;
+    }
+    Some(chars[..keep].iter().collect())
 }
 
 /// Words too common to say anything about which memory is meant.
@@ -173,7 +212,7 @@ mod tests {
         // memory.
         assert_eq!(
             task_expression("where does the reference corpus come from").as_deref(),
-            Some("\"reference\" OR \"corpus\" OR \"come\"")
+            Some("(\"reference\" OR \"refer\"*) OR \"corpus\" OR \"come\"")
         );
     }
 
@@ -192,8 +231,33 @@ mod tests {
         // slip past.
         assert_eq!(
             task_expression("warum findet der Watcher die Umbenennung nicht").as_deref(),
-            Some("\"warum\" OR \"findet\" OR \"Watcher\" OR \"Umbenennung\"")
+            Some("\"warum\" OR \"findet\" OR (\"Watcher\" OR \"Watch\"*) OR (\"Umbenennung\" OR \"Umbene\"*)")
         );
+    }
+
+    /// The hole a live run found: `commit` and `committing` are unrelated tokens to a tokeniser
+    /// that folds case and diacritics and does nothing else.
+    #[test]
+    fn a_long_word_is_matched_by_a_truncated_prefix_too() {
+        let expression = task_expression("committing a change to the repository").unwrap();
+        assert!(
+            expression.contains("\"commit\"*"),
+            "committing does not reach commit: {expression}"
+        );
+        assert!(expression.contains("\"reposi\"*"));
+    }
+
+    #[test]
+    fn a_short_word_is_left_whole_because_truncating_it_would_match_everything() {
+        // `gate` truncated to five characters is longer than the word; `image` to five is the
+        // word itself. Neither may become a wildcard.
+        for short in ["gate", "image", "index", "zone", "log"] {
+            let expression = task_expression(short).unwrap();
+            assert!(
+                !expression.contains('*'),
+                "{short} was truncated into a prefix: {expression}"
+            );
+        }
     }
 
     #[test]
@@ -201,7 +265,8 @@ mod tests {
         // Somebody who quoted "the" meant it.
         assert_eq!(
             task_expression("\"the\" watcher").as_deref(),
-            Some("\"the\" OR \"watcher\"")
+            // The phrase keeps its exact form; the bare word gets its prefix.
+            Some("\"the\" OR (\"watcher\" OR \"watch\"*)")
         );
     }
 

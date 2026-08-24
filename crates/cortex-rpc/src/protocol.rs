@@ -572,6 +572,14 @@ pub struct SearchExplainResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extract_note: Option<String>,
     pub chunks: usize,
+    /// When the node explained is a memory rather than a file (M11).
+    ///
+    /// A memory has no path and does not compete in the file ranking, so the rank and the score
+    /// above are legitimately absent for one — and an explanation that only said "did not
+    /// appear" would be true and useless. What is worth knowing about a memory is its scope,
+    /// what it has earned, and whether something has replaced it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<cortex_core::memory::Memory>,
     /// Plain sentences, in the order they should be read. The point of the whole method.
     pub reasons: Vec<String>,
 }

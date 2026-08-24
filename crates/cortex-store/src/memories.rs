@@ -706,49 +706,73 @@ impl Store {
             )));
         }
 
-        let weight = reporter.weight();
         let mut applied = OutcomeApplied::default();
 
-        for (nodes, verdict, delta) in [
-            (helped, "helped", weight),
-            (noise, "noise", -weight * NOISE_PENALTY),
-        ] {
+        for (nodes, verdict) in [(helped, Verdict::Helped), (noise, Verdict::Noise)] {
             for node in nodes {
-                // Only items that were actually in the pack. An outcome naming something the
-                // pack never contained is a client bug, and silently accepting it would let a
-                // caller move any score it liked.
-                let in_pack = tx.execute(
-                    "UPDATE context_pack_items SET reported = ?3
-                     WHERE pack_id = ?1 AND node_id = ?2 AND reported IS NULL",
-                    params![pack_id, node.0, verdict],
-                )?;
-                if in_pack == 0 {
-                    applied.ignored += 1;
+                // What this pack already holds for this item, and who said it. The column is
+                // `<reporter>:<verdict>` rather than a bare verdict, because "has this been
+                // reported" and "who reported it" are different questions and the second one is
+                // the one that decides whether a new report is allowed to change anything.
+                let existing: Option<String> = tx
+                    .query_row(
+                        "SELECT reported FROM context_pack_items
+                         WHERE pack_id = ?1 AND node_id = ?2",
+                        params![pack_id, node.0],
+                        |r| r.get(0),
+                    )
+                    .optional()?
+                    .flatten();
+
+                let Some(previous) = existing.as_deref().map(parse_report) else {
+                    // Not in the pack at all. A client bug; counted rather than accepted,
+                    // because silently applying it would let a caller move any score it liked.
+                    if existing.is_none()
+                        && tx
+                            .query_row(
+                                "SELECT 1 FROM context_pack_items
+                                 WHERE pack_id = ?1 AND node_id = ?2",
+                                params![pack_id, node.0],
+                                |_| Ok(true),
+                            )
+                            .optional()?
+                            .is_none()
+                    {
+                        applied.ignored += 1;
+                        continue;
+                    }
+                    // In the pack and never reported on: apply.
+                    apply_report(&tx, pack_id, *node, reporter, verdict, None)?;
+                    applied.count(verdict);
                     continue;
-                }
-                let column = if verdict == "helped" {
-                    "helped_count"
-                } else {
-                    "noise_count"
                 };
-                tx.execute(
-                    &format!(
-                        "UPDATE memories
-                         SET usefulness = usefulness + ?2,
-                             {column} = {column} + 1,
-                             human_confirmed = max(human_confirmed, ?3)
-                         WHERE node_id = ?1"
-                    ),
-                    params![
-                        node.0,
-                        delta,
-                        (reporter == Reporter::Human && verdict == "helped") as i64
-                    ],
-                )?;
-                if verdict == "helped" {
-                    applied.helped += 1;
-                } else {
-                    applied.noise += 1;
+
+                match previous {
+                    // The same class of reporter reporting twice. A client that retries a
+                    // failed call must not double its own vote.
+                    Some((was, _)) if was == reporter => {
+                        applied.ignored += 1;
+                    }
+                    // A human correcting an agent. **This is the case a first version got
+                    // wrong**, and a live run found it: the guard against double-counting also
+                    // silenced the human, which is the exact opposite of the weighting D76
+                    // asks for. The agent's contribution is reversed and the human's applied,
+                    // so the human's verdict is what stands whether they agree or not.
+                    Some((Reporter::Agent, was_verdict)) if reporter == Reporter::Human => {
+                        apply_report(&tx, pack_id, *node, reporter, verdict, Some(was_verdict))?;
+                        applied.count(verdict);
+                    }
+                    // An agent contradicting a human. Ignored: the human already looked.
+                    Some((Reporter::Human, _)) => {
+                        applied.ignored += 1;
+                    }
+                    Some(_) => {
+                        applied.ignored += 1;
+                    }
+                    None => {
+                        apply_report(&tx, pack_id, *node, reporter, verdict, None)?;
+                        applied.count(verdict);
+                    }
                 }
             }
         }
@@ -790,14 +814,120 @@ impl Store {
     }
 }
 
+/// Which way a report went.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Verdict {
+    Helped,
+    Noise,
+}
+
+impl Verdict {
+    fn as_str(self) -> &'static str {
+        match self {
+            Verdict::Helped => "helped",
+            Verdict::Noise => "noise",
+        }
+    }
+
+    fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "helped" => Verdict::Helped,
+            "noise" => Verdict::Noise,
+            _ => return None,
+        })
+    }
+
+    /// The change to `usefulness` one report of this kind makes, before the reporter's weight.
+    fn delta(self) -> f64 {
+        match self {
+            Verdict::Helped => 1.0,
+            Verdict::Noise => -NOISE_PENALTY,
+        }
+    }
+
+    fn column(self) -> &'static str {
+        match self {
+            Verdict::Helped => "helped_count",
+            Verdict::Noise => "noise_count",
+        }
+    }
+}
+
+/// Read back a `<reporter>:<verdict>` mark. `None` for a row that has never been reported on.
+fn parse_report(stored: &str) -> Option<(Reporter, Verdict)> {
+    let (reporter, verdict) = stored.split_once(':')?;
+    Some((Reporter::parse(reporter)?, Verdict::parse(verdict)?))
+}
+
+/// Apply one report, reversing `undo` first when a human is correcting an agent.
+fn apply_report(
+    conn: &rusqlite::Connection,
+    pack_id: &str,
+    node: NodeId,
+    reporter: Reporter,
+    verdict: Verdict,
+    undo: Option<Verdict>,
+) -> Result<()> {
+    if let Some(previous) = undo {
+        // Reverse exactly what the agent's report did: its weighted delta and its count. The
+        // weight is the agent's, not the caller's, or a correction would leave a residue whose
+        // size depended on who happened to make it.
+        let column = previous.column();
+        conn.execute(
+            &format!(
+                "UPDATE memories
+                 SET usefulness = usefulness - ?2,
+                     {column} = max(0, {column} - 1)
+                 WHERE node_id = ?1"
+            ),
+            params![node.0, previous.delta() * Reporter::Agent.weight()],
+        )?;
+    }
+
+    let column = verdict.column();
+    conn.execute(
+        &format!(
+            "UPDATE memories
+             SET usefulness = usefulness + ?2,
+                 {column} = {column} + 1,
+                 human_confirmed = max(human_confirmed, ?3)
+             WHERE node_id = ?1"
+        ),
+        params![
+            node.0,
+            verdict.delta() * reporter.weight(),
+            (reporter == Reporter::Human && verdict == Verdict::Helped) as i64
+        ],
+    )?;
+    conn.execute(
+        "UPDATE context_pack_items SET reported = ?3 WHERE pack_id = ?1 AND node_id = ?2",
+        params![
+            pack_id,
+            node.0,
+            format!("{}:{}", reporter.as_str(), verdict.as_str())
+        ],
+    )?;
+    Ok(())
+}
+
 /// What an outcome report actually changed.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct OutcomeApplied {
     pub helped: usize,
     pub noise: usize,
-    /// Named by the report but not in the pack. Counted rather than refused, so that a client
-    /// reporting one stale id does not lose the rest of its report.
+    /// Named by the report but not in the pack, or already settled by somebody whose word
+    /// outranks the caller's. Counted rather than refused, so that one stale id does not lose
+    /// the rest of a report.
     pub ignored: usize,
+}
+
+impl OutcomeApplied {
+    fn count(&mut self, verdict: Verdict) {
+        match verdict {
+            Verdict::Helped => self.helped += 1,
+            Verdict::Noise => self.noise += 1,
+        }
+    }
 }
 
 /// How much harder a noise report bites than a helpful one helps.
@@ -1622,6 +1752,55 @@ mod tests {
         assert!(human_scored.usefulness > agent_scored.usefulness);
         assert!(human_scored.human_confirmed);
         assert!(!agent_scored.human_confirmed);
+    }
+
+    /// The flaw a live run found, and the one a unit test had actually been written *around*.
+    ///
+    /// `reporting_twice_on_one_item_only_counts_once` guards a client that retries. The first
+    /// implementation achieved that by refusing any second report on an item — which also
+    /// silenced a human correcting an agent, the exact opposite of the weighting D76 asks for.
+    /// Both properties are true now, and they are different properties.
+    #[test]
+    fn a_human_may_overrule_an_agents_report_and_an_agent_may_not_overrule_a_human() {
+        let store = store();
+        let contested = remember(&store, MemoryScope::Global, MemoryKind::Fact, "contested");
+        let settled = remember(&store, MemoryScope::Global, MemoryKind::Fact, "settled");
+        pack_with(&store, "p1", &[contested, settled]);
+
+        // The agent says one memory helped. The human, looking at the same pack, disagrees.
+        store
+            .report_outcome("p1", &[contested], &[], Reporter::Agent, &agent("a"), 200)
+            .unwrap();
+        let after_agent = store.memory(contested).unwrap().unwrap();
+        assert!(after_agent.usefulness > 0.0);
+        assert_eq!(after_agent.helped_count, 1);
+
+        let applied = store
+            .report_outcome("p1", &[], &[contested], Reporter::Human, &Actor::Human, 201)
+            .unwrap();
+        assert_eq!(applied.noise, 1, "the human's correction was ignored");
+        let corrected = store.memory(contested).unwrap().unwrap();
+        assert!(
+            corrected.usefulness < 0.0,
+            "the human said noise and the score is still positive: {}",
+            corrected.usefulness
+        );
+        assert_eq!(
+            corrected.helped_count, 0,
+            "the agent's count survived the correction, so the Inspector would still show it"
+        );
+        assert_eq!(corrected.noise_count, 1);
+
+        // And the other direction is refused: a human has already looked at `settled`.
+        store
+            .report_outcome("p1", &[settled], &[], Reporter::Human, &Actor::Human, 202)
+            .unwrap();
+        let before = store.memory(settled).unwrap().unwrap().usefulness;
+        let ignored = store
+            .report_outcome("p1", &[], &[settled], Reporter::Agent, &agent("a"), 203)
+            .unwrap();
+        assert_eq!(ignored.ignored, 1);
+        assert_eq!(store.memory(settled).unwrap().unwrap().usefulness, before);
     }
 
     #[test]

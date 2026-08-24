@@ -2151,6 +2151,15 @@ Three guards, because a feedback signal that can be gamed will be:
 1. **The reporter is recorded, and weighted.** `human_confirmed > agent_reported > unobserved`.
    An agent reporting on its own success is an unreliable narrator; it is not ignored, it is
    discounted, and `brain.explain` prints which of the three moved the number.
+
+   **A guard against double-counting silenced this, and only a live run found it.** The first
+   implementation refused any second report on a pack item, which correctly stops a client
+   retrying a failed call from doubling its own vote — and also stopped a human from correcting
+   an agent, which is the exact opposite of the weighting this decision is about. They are two
+   properties and they need two rules: the same *class* of reporter may not report twice, and a
+   human may overrule an agent. A correction reverses the agent's weighted delta and its count
+   before applying the human's, so the human's verdict is what stands whether or not they agree
+   — and the Inspector does not go on showing a "helped" the human has already contradicted.
 2. **A negative report is not a delete.** It lowers a component. Forgetting stays with the decay
    engine, so one bad session cannot erase a year, and a pin still beats everything.
 3. **`helped` and `noise` are counted separately, not netted.** A memory that is strongly useful
