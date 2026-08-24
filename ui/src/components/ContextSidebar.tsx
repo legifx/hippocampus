@@ -12,7 +12,7 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useState } from "react";
-import { ipc, type NeighborsResult, type SearchHit } from "../ipc";
+import { ipc, type Memory, type NeighborsResult, type SearchHit } from "../ipc";
 import { formatAge, splitPath } from "../format";
 import type { Row } from "../row";
 import { spring, stagger } from "../motion";
@@ -20,8 +20,27 @@ import { spring, stagger } from "../motion";
 /** Everything the schema allows except `annotates`, which arrives separately. */
 const RELATED_EDGES = ["contains", "co_access", "imports", "similar_to", "derived_from"];
 
+/** Words for the memory kinds, so a panel in German does not print an English enum. */
+const KIND_LABEL: Record<string, string> = {
+  fact: "Fakt",
+  preference: "Vorliebe",
+  procedure: "Ablauf",
+  decision: "Entscheidung",
+  failure: "Fehlschlag",
+  observation: "Beobachtung",
+};
+
 export function ContextSidebar({ hit, row }: { hit: SearchHit | null; row?: Row | null }) {
   const [context, setContext] = useState<NeighborsResult | null>(null);
+  /**
+   * What agents have learned about this file.
+   *
+   * A second call rather than a field of the first, because "the graph around this node" and
+   * "what is known about it that is not in it" are two questions and the daemon answers them
+   * with two methods. Merging them here would be the frontend deciding what a context panel is,
+   * which is the decision D4 keeps on the other side of the socket.
+   */
+  const [memories, setMemories] = useState<Memory[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -34,6 +53,12 @@ export function ContextSidebar({ hit, row }: { hit: SearchHit | null; row?: Row 
     // request per row — so a late answer for a row nobody is on any more is dropped.
     let current = true;
     setError(null);
+    // Failing to fetch these must not blank the panel: what an agent learned is the newest
+    // thing here and the least load-bearing.
+    ipc
+      .memoriesAbout(hit.path)
+      .then((result) => current && setMemories(result.memories ?? []))
+      .catch(() => current && setMemories([]));
     ipc
       // Every edge type *except* `annotates`. The notes come back in their own field of the
       // same answer, so asking the daemon to leave them out of the edge list is one argument —
@@ -87,6 +112,29 @@ export function ContextSidebar({ hit, row }: { hit: SearchHit | null; row?: Row 
                 ))}
                 <span className="hc-num">{formatAge(note.ts)}</span>
                 <span>{note.actor}</span>
+              </p>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </Section>
+
+      <Section title="Agenten wissen" count={memories.length} empty="noch nichts gelernt">
+        <AnimatePresence initial={false}>
+          {memories.map((memory, index) => (
+            <motion.div
+              key={memory.node_id}
+              className="hc-note hc-memory"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ ...spring("content"), delay: stagger(index, true) }}
+            >
+              <p className="hc-note-text">{memory.text}</p>
+              <p className="hc-meta">
+                <span className="hc-pill">{KIND_LABEL[memory.kind] ?? memory.kind}</span>
+                <span className="hc-num">{formatAge(memory.ts)}</span>
+                <span>{memory.actor}</span>
+                {memory.human_confirmed && <span title="Von einem Menschen bestätigt">✓</span>}
               </p>
             </motion.div>
           ))}

@@ -1186,3 +1186,13 @@
 .hc-scene[data-state="failed"] {
   display: none;
 }
+
+
+/* A memory in the context panel is not a note somebody typed: it is something a machine
+   concluded, and the two should not be indistinguishable at a glance. The same green the
+   three-dimensional view gives a memory, as a two-pixel edge rather than as a wash — a panel
+   this narrow cannot afford a second background colour. */
+.hc-memory {
+  border-left: 2px solid color-mix(in srgb, var(--hc-success) 55%, transparent);
+  padding-left: 8px;
+}

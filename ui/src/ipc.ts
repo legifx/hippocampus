@@ -699,6 +699,20 @@ export const ipc = {
       includeSuperseded,
     }),
 
+  /**
+   * What is known about one file and is not in it.
+   *
+   * The same call with the daemon's own subject filter. Not a different list narrowed here —
+   * "which memories are about this path" needs the node the path resolves to, which is the
+   * daemon's to know.
+   */
+  memoriesAbout: (path: string, limit = 20) =>
+    transport.invoke<MemoriesResult>("memories", {
+      about: path,
+      limit,
+      includeSuperseded: false,
+    }),
+
   forgetMemory: (memoryId: number) =>
     transport.invoke<{ changed: boolean }>("forget_memory", { memoryId }),
 

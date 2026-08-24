@@ -393,6 +393,34 @@ setTransport({
           require_dry_run: true,
         } as T;
       case "memories":
+        // The context panel asks for what is known about one path; the Inspector asks for
+        // everything. The fixture answers the narrow question narrowly, so a layout test of the
+        // sidebar measures one or two memories rather than thirty.
+        if (args?.about) {
+          return {
+            memories: [
+              {
+                node_id: 901,
+                scope: { kind: "agent", id: "claude" },
+                kind: "observation",
+                text:
+                  "this file is generated on every build, so editing it by hand is lost work " +
+                  "the next time anybody runs the pipeline",
+                confidence: 0.8,
+                usefulness: 0.35,
+                helped_count: 1,
+                noise_count: 0,
+                retrieved_count: 3,
+                human_confirmed: true,
+                actor: "agent:claude",
+                ts: 1_700_000_000,
+                salience: 0.4,
+                pinned: false,
+              },
+            ],
+            basis: "memories about this path",
+          } as T;
+        }
         return {
           memories: Array.from({ length: 30 }, (_, i) => ({
             node_id: i + 1,

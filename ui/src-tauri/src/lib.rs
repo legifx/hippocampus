@@ -64,6 +64,9 @@ async fn memories(
     limit: Option<usize>,
     kinds: Option<Vec<String>>,
     include_superseded: Option<bool>,
+    // The path a memory is *about*, for the context panel. Filtered by the daemon rather than
+    // here, which is D4 and also the only place that knows which node a path resolves to.
+    about: Option<String>,
 ) -> Result<Value, BridgeError> {
     state
         .bridge
@@ -74,6 +77,7 @@ async fn memories(
                 "limit": limit,
                 "kinds": kinds.unwrap_or_default(),
                 "include_superseded": include_superseded.unwrap_or(true),
+                "about": about,
             }),
         )
         .await
