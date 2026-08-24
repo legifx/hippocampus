@@ -356,3 +356,115 @@ fn a_new_process_picks_up_what_the_dead_one_had_already_written() {
         "a restarted thumbnailer re-rendered work that was already in the shared cache"
     );
 }
+
+/// A viewport's worth of rows, asked about at once — and never rendered.
+///
+/// This is the call the list makes while somebody scrolls, so its cost has to be a stat per path
+/// whatever is in the directory. The three answers are the three states a row can be in: it has
+/// a picture, it could have one, or it never will.
+#[test]
+fn a_whole_viewport_is_looked_up_at_once_and_nothing_is_rendered() {
+    let cache = Previewer::new_cache();
+    let cache_path = cache.path().to_path_buf();
+    let work = tempfile::tempdir().unwrap();
+
+    let cached = work.path().join("already-seen.jpg");
+    let uncached = work.path().join("never-seen.jpg");
+    let text = work.path().join("notes.md");
+    let gone = work.path().join("not-there.png");
+    photograph(&cached, 400, 300);
+    photograph(&uncached, 400, 300);
+    std::fs::write(&text, "words").unwrap();
+
+    let mut previewer = Previewer::start(cache);
+    // One of them has been previewed before, which is the only way into the cache.
+    previewer.preview(&cached, 128);
+
+    let before: Vec<PathBuf> = std::fs::read_dir(thumbnail_dir(&cache_path, "normal"))
+        .map(|entries| entries.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default();
+
+    let (_, answer) = previewer.call(
+        "thumbnails",
+        serde_json::json!({
+            "paths": [
+                cached.display().to_string(),
+                uncached.display().to_string(),
+                text.display().to_string(),
+                gone.display().to_string(),
+            ],
+            "pixels": 128
+        }),
+    );
+    let result = &answer["result"];
+
+    let found: Vec<&str> = result["found"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(found, vec![cached.display().to_string()]);
+    assert!(
+        std::path::Path::new(result["found"][0]["png"].as_str().unwrap()).exists(),
+        "the answer names a file that is not there"
+    );
+
+    let missing: Vec<&str> = result["missing"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(missing, vec![uncached.display().to_string()]);
+    assert_eq!(result["missing"][0]["kind"], serde_json::json!("image"));
+
+    // A text file and a path that is not there are both "stop asking": one is read through the
+    // daemon, the other has nothing to read. A client that had to tell them apart would end up
+    // retrying one of them on every scroll.
+    let skipped: Vec<&str> = result["skipped"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s.as_str().unwrap())
+        .collect();
+    assert_eq!(
+        skipped,
+        vec![text.display().to_string(), gone.display().to_string()]
+    );
+
+    let after: Vec<PathBuf> = std::fs::read_dir(thumbnail_dir(&cache_path, "normal"))
+        .map(|entries| entries.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default();
+    assert_eq!(
+        before.len(),
+        after.len(),
+        "the lookup rendered something; scrolling a directory of photographs would start a \
+         decode per row"
+    );
+}
+
+/// R1 does not weaken because the question was asked about several files at once.
+#[test]
+fn a_denied_path_is_skipped_by_the_batch_rather_than_named() {
+    let cache = Previewer::new_cache();
+    let work = tempfile::tempdir().unwrap();
+    let ssh = work.path().join(".ssh");
+    std::fs::create_dir_all(&ssh).unwrap();
+    let key = ssh.join("id_ed25519.png");
+    photograph(&key, 100, 100);
+
+    let mut previewer = Previewer::start(cache);
+    let (_, answer) = previewer.call(
+        "thumbnails",
+        serde_json::json!({ "paths": [key.display().to_string()], "pixels": 128 }),
+    );
+    let result = &answer["result"];
+
+    assert!(result["found"].as_array().unwrap().is_empty());
+    assert!(
+        result["missing"].as_array().unwrap().is_empty(),
+        "a denied file was offered as something worth rendering"
+    );
+    assert_eq!(result["skipped"].as_array().unwrap().len(), 1);
+}

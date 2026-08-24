@@ -96,6 +96,8 @@ setTransport({
                 // An archive, for the extraction tests. One level down like the links, because
                 // the root listing is what the layout tests count.
                 entry("bilder.zip", "file", 3_000, 8),
+                // Not in the cache: the row it belongs to is the one that has to be rendered.
+                entry("foto.jpg", "file", 900_000, 9),
               ];
         return {
           path: at,
@@ -261,6 +263,22 @@ setTransport({
           } as T;
         }
         return { outcome: "started", operation: 1, total_files: 2, total_bytes: 1000 } as T;
+      }
+      case "thumbnails": {
+        // The shared cache, as the previewer would report it: the picture is already there, the
+        // second one has to be rendered, and everything else is not worth asking about again.
+        const asked = (args?.paths as string[]) ?? [];
+        return {
+          found: asked
+            .filter((path) => path.endsWith("bild.png"))
+            .map((path) => ({ path, png: `${path}.thumb.png`, width: 128, height: 96, size: "normal" })),
+          missing: asked
+            .filter((path) => path.endsWith("foto.jpg"))
+            .map((path) => ({ path, kind: "image" })),
+          skipped: asked.filter(
+            (path) => !path.endsWith("bild.png") && !path.endsWith("foto.jpg"),
+          ),
+        } as T;
       }
       case "extract_archive": {
         // What the daemon answers, in the two halves the window asks for: what is inside, and

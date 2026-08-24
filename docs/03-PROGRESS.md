@@ -10,8 +10,8 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | **M11 — The Agent Brain** (added at the owner's request 2026-08-23, D74). M8 and M5 as below. |
-| **Status** | **M6's archive item is in as of 2026-08-24 — zip, tar and tar.gz, with D82's four rules and 9 tests against a live daemon. 977 Rust tests, 56 vitest, 134 browser tests in `test:ui` (146 with the perf suite).** **M11 is ten of its twelve criteria in — see its own scorecard below before anything else, and every benchmark gate is green including the new one.** M4 complete. M6 begun and paused. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **881 Rust tests pass** under `cargo test --workspace` across 40 test binaries — 44 of them in the new `cortex-memory`, 23 in `cortex-store::memory`, 2 guarding the response path — plus 11 vitest in `ui-agent`. **A note on that number:** this file briefly said 399 and accused the previous entry's 812 of being unreproducible. The 399 was wrong: the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Check the measuring tool before disbelieving the measurement — this file already says that about latency, and it applies to counting. |
-| **Last updated** | 2026-08-24 (M6: archives — `fs.extract`, and the four rules in D82) |
+| **Status** | **Two of M6's mandatory items landed on 2026-08-24: archives (`fs.extract`, D81/D82) and thumbnails in the list (D83). What is left of that list is network locations. 979 Rust tests, 60 vitest, 150 browser tests.** **M11 is ten of its twelve criteria in — see its own scorecard below before anything else, and every benchmark gate is green including the new one.** M4 complete. M6 in progress — its mandatory list is down to network locations. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **A note on counting, kept because it cost a session:** this file once said 399 tests and accused the previous entry's 812 of being unreproducible. The 399 was wrong — the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Count by summing every `test result:` line. Check the measuring tool before disbelieving the measurement; this file already says that about latency, and it applies to counting. |
+| **Last updated** | 2026-08-24 (M6: thumbnails in the list, D83 — after archives, D81/D82) |
 | **Blocked on** | nothing |
 
 ## Start here
@@ -494,7 +494,12 @@ unmount or eject anything at all. D60 has the reasoning.
 ### What M6 still needs
 
 1. **Network locations**, which may be staged.
-2. **Thumbnails in the list**, not only in the preview pane.
+
+**Thumbnails in the list are done** (2026-08-24). The previewer answers `thumbnails(paths)` for a
+whole viewport out of the shared XDG cache and renders nothing; the list renders the misses one
+at a time, on screen only, after the scrolling stops, and asks nothing while the window is hidden
+(D83). A row with a picture is exactly as tall as one without, which a browser test asserts,
+because the virtualiser is told the row height rather than measuring it.
 
 **Archives are done** (2026-08-24). `fs.extract` unpacks zip, tar and tar.gz, answers with a
 handle and reports on the transfer notifications (D81); Ctrl+E in the window, and the command
@@ -774,6 +779,45 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
+
+### 2026-08-24 — M6: thumbnails in the list, and the queue that is not slowness
+
+The second item off M6's mandatory list. `thumbnails` in `cortex-preview`, `useThumbnails` in the
+window, and a picture in the rows that have one.
+
+**979 Rust tests** against 977 — 2 new in `cortex-preview/tests/process.rs` — **60 vitest**
+(4 new) and **150 browser tests** (4 new). Green.
+
+**The shape, and why.** Two calls rather than one: a batch cache lookup that provably never
+renders, and the existing per-file render for the misses. The previewer is one process answering
+one request at a time and the preview pane shares it — a call that *might* render turns a flick
+through a directory of photographs into two hundred queued decodes with the selected file's
+preview behind them. D83 has the argument and the three consequences.
+
+**Two things this session had to be careful about, both about not breaking what is measured.**
+
+1. **The row height.** The virtualiser is told the height rather than measuring it, so a picture
+   that made a row four pixels taller would put every scroll position progressively out — worse
+   the further down the list, which is the kind of bug that gets reported as "scrolling feels
+   wrong". The image is `1.35em` in the line box, and a browser test compares a row with a
+   picture against one without at both densities' compact value.
+2. **The hidden window.** D59 measured what periodic work for nobody costs. The hook takes
+   `visible` and asks for nothing when the overlay is hidden, and a unit test asserts the
+   transport is never called in that state.
+
+**Two things found while building it.**
+
+- **The architecture test earned its keep.** `useThumbnails` was first written with `filter` and
+  `find`, which D4's guard forbids anywhere in this frontend. Nothing in the hook reshapes what
+  the daemon sent — these were "which paths to ask about" — so the temptation was to add an
+  exception. It was rewritten as loops instead: a blunt rule with one carve-out is a rule, and a
+  blunt rule with two is a habit.
+- **A NUL byte in a source file.** A `join(" ")` in the new hook contained `\x00` instead of a
+  space after a scripted edit. It compiled, ran and passed its tests — a separator is a
+  separator — but `file` reported the source as `data`, and the repository's own `grep` skips
+  binary files, so a search for `filter` in that file silently found nothing while the test that
+  reads it with `readFileSync` kept failing. **Two tools disagreeing about whether a file
+  contains a string is worth stopping for**; the tool that reads bytes was right.
 
 ### 2026-08-24 — M6: archives, and four things an archive is not allowed to do
 

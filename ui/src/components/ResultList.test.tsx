@@ -54,6 +54,7 @@ describe("ResultList", () => {
         onSelect={() => {}}
         onActivate={() => {}}
         rowHeight={ROW}
+        visible={true}
         zoneHues={new Map([[1, 210]])}
         emptyMessage="nichts"
         selectedPaths={[]}
@@ -79,6 +80,7 @@ describe("ResultList", () => {
         onSelect={() => {}}
         onActivate={() => {}}
         rowHeight={ROW}
+        visible={true}
         zoneHues={new Map()}
         emptyMessage="nichts"
         selectedPaths={[]}
@@ -103,6 +105,7 @@ describe("ResultList", () => {
         onSelect={() => {}}
         onActivate={() => {}}
         rowHeight={ROW}
+        visible={true}
         zoneHues={new Map()}
         emptyMessage="nichts"
         selectedPaths={[]}
@@ -124,6 +127,7 @@ describe("ResultList", () => {
         onSelect={() => {}}
         onActivate={() => {}}
         rowHeight={ROW}
+        visible={true}
         zoneHues={new Map()}
         emptyMessage="nichts"
         selectedPaths={[]}
@@ -142,6 +146,7 @@ describe("ResultList", () => {
         onSelect={() => {}}
         onActivate={() => {}}
         rowHeight={ROW}
+        visible={true}
         zoneHues={new Map()}
         emptyMessage="Nichts gefunden"
         selectedPaths={[]}
@@ -161,6 +166,7 @@ describe("ResultList", () => {
         onSelect={onSelect}
         onActivate={() => {}}
         rowHeight={ROW}
+        visible={true}
         zoneHues={new Map()}
         emptyMessage="nichts"
         selectedPaths={[]}

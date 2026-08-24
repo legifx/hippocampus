@@ -348,6 +348,15 @@ export type TransferAnswer =
   | { outcome: "planned"; total_files: number; total_bytes: number; conflicts: Conflict[] }
   | { outcome: "started"; operation: number; total_files: number; total_bytes: number };
 
+/** What the shared thumbnail cache holds for a viewport's worth of rows. */
+export type ThumbnailsAnswer = {
+  found: { path: string; png: string; width: number; height: number; size: string }[];
+  /** Not cached, and worth rendering. The kind is what it would cost. */
+  missing: { path: string; kind: "image" | "pdf" | "video" | "audio" }[];
+  /** Not cached and not worth asking about again: denied, gone, or un-thumbnailable. */
+  skipped: string[];
+};
+
 /** What `extractArchive` answers: what is inside, or the handle of an unpacking. */
 export type ExtractAnswer =
   | {
@@ -554,6 +563,15 @@ export const ipc = {
       conflict,
       dryRun,
     }),
+
+  /**
+   * Which of these rows already have a thumbnail on the disk, and which could have one.
+   *
+   * Never renders — see the hook that calls it. One call per viewport; the answer names the
+   * hits, the misses worth rendering, and the paths not worth asking about again.
+   */
+  thumbnails: (paths: string[], pixels = 128) =>
+    transport.invoke<ThumbnailsAnswer>("thumbnails", { paths, pixels }),
 
   /**
    * Unpack an archive. Answers with a handle; progress arrives on the same events a transfer

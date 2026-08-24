@@ -46,6 +46,46 @@ struct PreviewResult {
     elapsed_ms: u64,
 }
 
+/// A whole viewport's worth of rows, asked about at once.
+#[derive(Debug, Deserialize)]
+struct ThumbnailsParams {
+    paths: Vec<PathBuf>,
+    #[serde(default)]
+    pixels: Option<u32>,
+}
+
+/// What the cache already holds, and what it would take to hold the rest.
+///
+/// **This never renders.** A list scrolling past two hundred rows must not be able to start two
+/// hundred decodes, and a call that *might* render is a call whose cost depends on the
+/// directory somebody happens to be in. The client renders the misses it still wants, one at a
+/// time, through `preview` — which is the method that costs something and looks like it.
+#[derive(Debug, Serialize)]
+struct ThumbnailsResult {
+    found: Vec<FoundThumbnail>,
+    /// Not cached, and worth rendering: the kind says what it would cost.
+    missing: Vec<MissingThumbnail>,
+    /// Not cached and not worth asking about again — on the deny-list, gone, or already found
+    /// un-thumbnailable and unchanged since. Named rather than omitted, so a client can stop
+    /// asking instead of retrying the same file on every scroll.
+    skipped: Vec<PathBuf>,
+}
+
+#[derive(Debug, Serialize)]
+struct FoundThumbnail {
+    path: PathBuf,
+    png: PathBuf,
+    width: u32,
+    height: u32,
+    size: ThumbSize,
+}
+
+#[derive(Debug, Serialize)]
+struct MissingThumbnail {
+    path: PathBuf,
+    kind: render::Kind,
+}
+
 #[derive(Debug, Serialize)]
 struct PartialParams {
     path: PathBuf,
@@ -112,9 +152,82 @@ fn main() {
                 }
                 Err(e) => respond(&mut stdout, id, Err(&e.to_string())),
             },
+            "thumbnails" => match serde_json::from_value::<ThumbnailsParams>(params) {
+                Ok(params) => respond(
+                    &mut stdout,
+                    id,
+                    Ok(serde_json::json!(thumbnails(&cache, &deny, &params))),
+                ),
+                Err(e) => respond(&mut stdout, id, Err(&e.to_string())),
+            },
             other => respond(&mut stdout, id, Err(&format!("unknown method: {other}"))),
         }
     }
+}
+
+/// Look several paths up in the shared cache, and render none of them.
+///
+/// One call per viewport rather than one per row: a list that asked per row would make two
+/// hundred round trips through a pipe that answers one at a time, and the answer for the row at
+/// the bottom would arrive after the person had scrolled past it.
+fn thumbnails(cache: &Cache, deny: &[String], params: &ThumbnailsParams) -> ThumbnailsResult {
+    let wanted = params.pixels.unwrap_or(128).clamp(1, render::MAX_EDGE);
+    let size = ThumbSize::covering(wanted);
+
+    let mut result = ThumbnailsResult {
+        found: Vec::new(),
+        missing: Vec::new(),
+        skipped: Vec::new(),
+    };
+
+    for path in &params.paths {
+        // R1 first, and before anything is opened, exactly as `preview` does it: a file the
+        // deny-list covers must not be distinguishable from one that has no thumbnail.
+        if !cortex_core::denylist::classify(path, deny).may_read_content() || !path.is_file() {
+            result.skipped.push(path.clone());
+            continue;
+        }
+
+        // The bucket that was asked for, or a smaller one. A smaller thumbnail in a 20-pixel
+        // row is indistinguishable from the right one, and it is already on the disk.
+        let hit = cache
+            .lookup(path, size)
+            .map(|png| (png, size))
+            .or_else(|| {
+                size.smaller()
+                    .into_iter()
+                    .find_map(|smaller| cache.lookup(path, smaller).map(|png| (png, smaller)))
+            });
+
+        if let Some((png, found_size)) = hit {
+            let (width, height) = png_dimensions(&png).unwrap_or((0, 0));
+            result.found.push(FoundThumbnail {
+                path: path.clone(),
+                png,
+                width,
+                height,
+                size: found_size,
+            });
+            continue;
+        }
+
+        if cache.known_failure(path) {
+            result.skipped.push(path.clone());
+            continue;
+        }
+
+        let kind = render::kind_of(path);
+        match kind {
+            // Text is read through the daemon and never here, and a file with no renderer is
+            // not a miss — it is a row that will never have a picture.
+            render::Kind::Text | render::Kind::None => result.skipped.push(path.clone()),
+            _ => result.missing.push(MissingThumbnail {
+                path: path.clone(),
+                kind,
+            }),
+        }
+    }
+    result
 }
 
 fn preview(

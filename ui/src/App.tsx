@@ -984,6 +984,7 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
             }}
             onActivate={activate}
             rowHeight={rowHeight}
+            visible={visible}
             zoneHues={zoneHues}
             emptyMessage={emptyMessage(searching, state.loading, browse.state)}
             selectedPaths={targets}

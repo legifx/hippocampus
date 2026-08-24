@@ -514,6 +514,30 @@ fn preview(
     answer
 }
 
+/// Which of these rows already have a thumbnail on the disk.
+///
+/// One call for a viewport, and it never renders: see `Thumbnailer::thumbnails`. What comes
+/// back is passed through as JSON rather than typed here, because this is a bridge — the shape
+/// belongs to the previewer, and a second copy of it in this file would be a second thing to
+/// keep in step.
+#[tauri::command(async)]
+fn thumbnails(
+    state: tauri::State<'_, AppState>,
+    paths: Vec<String>,
+    pixels: Option<u32>,
+) -> Result<Value, preview::PreviewError> {
+    let started = std::time::Instant::now();
+    let answer = state.thumbnailer.thumbnails(&paths, pixels.unwrap_or(128));
+
+    // The same 50 ms line the preview path logs at. A cache lookup that takes this long is a
+    // disk that is busy or a directory nobody should be listing, and either is worth a line.
+    let elapsed = started.elapsed().as_millis();
+    if elapsed >= 50 {
+        tracing::info!(rows = paths.len(), ms = elapsed as u64, "slow thumbnail lookup");
+    }
+    answer
+}
+
 #[tauri::command]
 async fn explain(
     state: tauri::State<'_, AppState>,
@@ -1162,6 +1186,7 @@ pub fn run() {
             undo_last,
             read_text,
             preview,
+            thumbnails,
             explain,
             zones,
             activity_ping,

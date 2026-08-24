@@ -2413,3 +2413,43 @@ or a mid-archive failure removes every file and every directory the extraction c
 reverse order, and directories that existed before are not touched because they were never
 recorded. M6 §4 asks for this of a copy; an extraction that left half a tree looking like a
 finished one would be the same failure with a different verb.
+
+### D83 — A thumbnail is two questions, and only one of them is expensive
+
+**Status:** accepted · 2026-08-24 · M6
+
+Rows show a picture when there is one. Getting there is two calls, deliberately:
+
+- **`thumbnails(paths, pixels)`** — one call for a whole viewport, answering which of those paths
+  the shared XDG cache already holds. It is a stat per path and a PNG header read per hit, and
+  **it never renders**. Its cost therefore does not depend on what is in the directory, which is
+  the property that makes it safe to call while somebody scrolls.
+- **`preview(path, pixels)`** — the existing call, one row at a time, for the misses that are
+  still on screen after the scrolling stops.
+
+The single-call alternative — "give me thumbnails for these two hundred rows" — was rejected on
+the shape of the thing behind it. The previewer is one process answering one request at a time
+(D14), shared with the preview pane. A call that might render turns a flick through a directory
+of photographs into two hundred queued decodes, and the pane showing the file somebody actually
+selected waits behind all of them. The queue is invisible from the caller's side: every request
+looks slow, and none of them is.
+
+Three consequences worth stating:
+
+1. **Nothing is asked twice.** Every path ends in one of three states — a URL, `null`, or queued
+   — and the answer names the paths that are not worth asking about again (`skipped`: denied,
+   gone, or already found un-thumbnailable). Without that, scrolling back over a source tree
+   re-asks about every file in it, forever.
+2. **The row does not change size.** The image is `1.35em` inside a line of text, not a grid
+   column: the virtualiser is *told* the row height rather than measuring it, so a row that grew
+   by four pixels would put every scroll position progressively out. A browser test asserts a row
+   with a picture and a row without are both exactly 28 px.
+3. **No icon column.** A reserved column would indent every name in a directory of text files
+   for the sake of the one picture in it, and this list is names rather than icons. The cost is a
+   ragged left edge where pictures and plain rows alternate. That is a visual decision the owner
+   has deferred along with the rest of the appearance; it is recorded here so that whoever does
+   the visual pass knows it was a choice and not an oversight.
+
+**And it stops when nobody is looking.** The hook takes the window's visibility and asks for
+nothing while the overlay is hidden — the same rule D59 arrived at the expensive way, applied
+before it could be measured again.

@@ -12,6 +12,7 @@
 
 import { memo, useLayoutEffect } from "react";
 import { elideStart, fileUri, formatAge, formatSize, tierLabel } from "../format";
+import { useThumbnails } from "../hooks/useThumbnails";
 import { useVirtual } from "../hooks/useVirtual";
 import type { Row } from "../row";
 import { zoneBorder, zoneTint } from "../zone";
@@ -28,6 +29,14 @@ export type ResultListProps = {
   /** Enter, or a double click: descend into a directory, open a file. */
   onActivate: (row: Row) => void;
   rowHeight: number;
+  /**
+   * Whether anybody can see the window.
+   *
+   * Passed in rather than subscribed to here: the component above already knows, and a hidden
+   * overlay that asked the thumbnailer about its rows would be exactly the kind of periodic
+   * work for nobody that D59 measured and removed.
+   */
+  visible: boolean;
   /** Hue per zone id, as the daemon derived it (D15). */
   zoneHues: Map<number, number>;
   emptyMessage: string;
@@ -48,6 +57,7 @@ export function ResultList({
   onSelect,
   onActivate,
   rowHeight,
+  visible: windowVisible,
   zoneHues,
   emptyMessage,
   selectedPaths,
@@ -63,6 +73,12 @@ export function ResultList({
     if (cursor >= 0) scrollToIndex(cursor);
   }, [cursor, scrollToIndex]);
 
+  // Above the empty case on purpose: a hook may not be called conditionally, and the slice is
+  // what the thumbnails are asked about.
+  const { start, end, padTop, totalHeight } = virtual.window;
+  const visible = rows.slice(start, end);
+  const thumbnails = useThumbnails(visible, windowVisible);
+
   if (rows.length === 0) {
     return (
       <div className="hc-empty" role="status">
@@ -70,9 +86,6 @@ export function ResultList({
       </div>
     );
   }
-
-  const { start, end, padTop, totalHeight } = virtual.window;
-  const visible = rows.slice(start, end);
 
   return (
     <div
@@ -98,6 +111,7 @@ export function ResultList({
                 cursor={index === cursor}
                 hue={row.zoneId === null ? null : zoneHues.get(row.zoneId) ?? null}
                 rowHeight={rowHeight}
+                thumbnail={thumbnails.get(row.path) ?? null}
                 onSelect={onSelect}
                 onActivate={onActivate}
                 selectedPaths={selectedPaths}
@@ -117,6 +131,8 @@ type ListRowProps = {
   cursor: boolean;
   hue: number | null;
   rowHeight: number;
+  /** The picture for this row, when the cache has one. `null` is the ordinary case. */
+  thumbnail: string | null;
   onSelect: (index: number, modifiers: { shift: boolean; ctrl: boolean }) => void;
   onActivate: (row: Row) => void;
   selectedPaths: string[];
@@ -129,6 +145,7 @@ const ListRow = memo(function ListRow({
   cursor,
   hue,
   rowHeight,
+  thumbnail,
   onSelect,
   onActivate,
   selectedPaths,
@@ -173,6 +190,13 @@ const ListRow = memo(function ListRow({
     >
       <span className="hc-row-name hc-row-text">
         {row.isDir && <span className="hc-row-dirmark" aria-hidden="true" />}
+        {thumbnail !== null && (
+          // Only when there is one. Reserving a column for every row would indent every name in
+          // a directory of text files for the sake of the one picture in it — and this list is
+          // names, not icons. `aria-hidden`, because the name beside it already says which file
+          // this is and a screen reader repeating "image" per row says nothing.
+          <img className="hc-row-thumb" src={thumbnail} alt="" aria-hidden="true" loading="lazy" />
+        )}
         {row.name}
         {row.linkTarget !== null && (
           // The arrow and the target, inline: a link that showed only its own name would be

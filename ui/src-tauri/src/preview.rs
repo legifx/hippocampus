@@ -133,6 +133,46 @@ impl Thumbnailer {
         }
     }
 
+    /// Ask which of these paths the shared cache already has a thumbnail for.
+    ///
+    /// Never renders, so it cannot be slow in a way that depends on the directory: it is a stat
+    /// per path and a PNG header read per hit. The client renders what it still wants, one at a
+    /// time, through [`Self::preview`].
+    pub fn thumbnails(&self, paths: &[String], pixels: u32) -> Result<Value, PreviewError> {
+        let mut guard = self.process.lock().unwrap_or_else(|p| p.into_inner());
+        if guard.is_none() {
+            *guard = Some(self.spawn()?);
+        }
+
+        let request = {
+            let process = guard.as_mut().expect("just started");
+            let id = process.next_id;
+            process.next_id += 1;
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": id, "method": "thumbnails",
+                "params": { "paths": paths, "pixels": pixels }
+            })
+        };
+
+        match self.exchange(guard.as_mut().expect("just started"), &request, &|_| {}) {
+            Ok(answer) => {
+                if let Some(error) = answer.get("error") {
+                    let message = error
+                        .get("message")
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("the thumbnailer refused without saying why");
+                    return Err(PreviewError::Refused(message.to_string()));
+                }
+                Ok(answer.get("result").cloned().unwrap_or(Value::Null))
+            }
+            Err(PreviewError::Died) => {
+                *guard = None;
+                Err(PreviewError::Died)
+            }
+            Err(other) => Err(other),
+        }
+    }
+
     fn spawn(&self) -> Result<Process, PreviewError> {
         let mut child = Command::new(&self.binary)
             .stdin(Stdio::piped())

@@ -532,6 +532,24 @@
   font-weight: 560;
 }
 
+/* The picture, when there is one.
+ *
+ * Sized in `em` against the row's own font rather than in pixels against the row height, so it
+ * follows both densities without a second rule — and `vertical-align: middle` rather than a
+ * flex child, because the name is text and the thumbnail is a word in it. It never changes the
+ * row's height: `1.35em` inside a 28 px row leaves the line box where it was, which is what
+ * keeps the virtualiser's fixed row height true. */
+.hc-row-thumb {
+  display: inline-block;
+  width: 1.35em;
+  height: 1.35em;
+  margin-right: 7px;
+  vertical-align: -0.35em;
+  object-fit: cover;
+  border-radius: 2px;
+  background: var(--hc-surface-hi);
+}
+
 .hc-row-dirmark {
   display: inline-block;
   width: 0;
