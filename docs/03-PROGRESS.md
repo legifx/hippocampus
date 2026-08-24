@@ -1798,6 +1798,14 @@ attempts to fix it with `overflow-wrap` and `min-width` failed because they neve
 property that was actually wrong. The panel has its own class now — a panel that wraps is a
 different thing from a sidebar that elides.
 
+**The window's own gates still hold with all of this in it.** The full browser suite — 141 cases
+including the perf specs — passes: cold start, keystroke to first row, the 10 000-entry
+directory, 60 fps scrolling, the bounded DOM, and the heartbeat that runs only while there is
+something to report. That is not the same as measuring what the panel costs *while it streams*,
+and it is the half of M11 §10 that could be checked without opening a window: adding the
+Inspector, the memory section in the context panel and the compose row moved none of M4's
+numbers.
+
 The cost half is still not measured. The panel does not poll while it is shut and does not poll a
 tab that is not showing, and both are asserted. Nothing has measured what it costs while the
 Live tab streams. This project has a recorded case of a hidden window burning a full core that no
