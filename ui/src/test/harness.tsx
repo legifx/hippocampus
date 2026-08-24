@@ -153,7 +153,29 @@ setTransport({
             elapsed_ms: 3,
           } as T;
         }
-        const listing = listOf(String(source.path ?? "/"));
+        if (source.kind !== "dir") {
+          // A place the index made: rows from everywhere, in the order the source decided, with
+          // a sentence saying what the rule was.
+          const rows = ALL.slice(0, 6);
+          const basis =
+            source.kind === "tier"
+              ? "6 von 12 Dateien in der kalten Ebene: das Gedächtnis hat ihren Inhalt vergessen und nur die Metadaten behalten. Gelöscht ist nichts."
+              : source.kind === "concept"
+                ? `6 von 6 Dateien im Begriff „${source.label}“ — die Konsolidierung hat sie zusammengefasst`
+                : "6 Dateien, an denen zuletzt etwas passiert ist, neueste zuerst — aus dem Episodenprotokoll";
+          return {
+            rows,
+            origin: source,
+            order: "none",
+            basis,
+            total: rows.length,
+            truncated: false,
+            hidden: 0,
+            refining: false,
+            elapsed_ms: 2,
+          } as T;
+        }
+        const listing = listOf(source.path);
         if (listing.error) throw new Error(listing.error);
         return {
           rows: listing.entries,
@@ -268,6 +290,33 @@ setTransport({
                   name: "backup auf server",
                   kind: "network",
                   device: "server:/export/backup",
+                },
+              ],
+            },
+            {
+              // The places the index made (M10 step 3): a concept, the working set, the tier
+              // that is a subject rather than a brightness.
+              title: "Gedächtnis",
+              places: [
+                {
+                  path: "",
+                  name: "Woran ich gerade arbeite",
+                  kind: "view",
+                  source: { kind: "working_set" },
+                },
+                {
+                  path: "",
+                  name: "parser · grammar",
+                  kind: "view",
+                  device: "4 Dateien",
+                  source: { kind: "concept", id: 42, label: "parser · grammar" },
+                },
+                {
+                  path: "",
+                  name: "Vergessen",
+                  kind: "view",
+                  device: "nur noch Metadaten",
+                  source: { kind: "tier", tier: "cold" },
                 },
               ],
             },

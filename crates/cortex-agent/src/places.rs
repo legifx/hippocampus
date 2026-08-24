@@ -160,6 +160,7 @@ pub fn build_with(
             capacity: measure(Path::new("/")),
             device: root_device(mounts),
             volume: None,
+            source: None,
         }],
     });
 
@@ -191,6 +192,7 @@ fn personal_places(home: &Path) -> Vec<Place> {
         capacity: None,
         device: None,
         volume: None,
+        source: None,
     }];
 
     let configured = user_dirs(home);
@@ -209,6 +211,7 @@ fn personal_places(home: &Path) -> Vec<Place> {
                 capacity: None,
                 device: None,
                 volume: None,
+            source: None,
             });
         }
     }
@@ -222,6 +225,7 @@ fn personal_places(home: &Path) -> Vec<Place> {
             capacity: None,
             device: None,
             volume: None,
+            source: None,
         });
     }
 
@@ -302,6 +306,7 @@ fn bookmarks(home: &Path) -> Vec<Place> {
             capacity: None,
             device: None,
             volume: None,
+            source: None,
         });
     }
     places
@@ -347,6 +352,7 @@ fn drive_places(
             capacity: measure(&mount.point),
             device: Some(mount.device.clone()),
             volume: volume_of(idle, &mount.device),
+            source: None,
         });
     }
 
@@ -370,6 +376,7 @@ fn drive_places(
                 size_bytes: volume.size_bytes,
                 removable: volume.removable,
             }),
+            source: None,
         });
     }
 
@@ -414,6 +421,7 @@ fn network_places(mounts: &[Mount], read_dir: &dyn Fn(&Path) -> Vec<String>) -> 
                     // chose to spell it in a directory name.
                     device: Some(gvfs_address(&name)),
                     volume: None,
+                    source: None,
                 });
             }
             continue;
@@ -426,6 +434,7 @@ fn network_places(mounts: &[Mount], read_dir: &dyn Fn(&Path) -> Vec<String>) -> 
             capacity: None,
             device: Some(mount.device.clone()),
             volume: None,
+            source: None,
         });
     }
 

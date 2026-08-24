@@ -39,6 +39,16 @@ const chrome = existingChrome();
 
 export default defineConfig({
   testDir: "./tests",
+  /**
+   * The perf suite is not part of this run, and that is the point.
+   *
+   * Its budgets are latency numbers, and a latency number measured while four other browsers
+   * are driving ten-thousand-row lists on the same machine measures the machine. Alone it is
+   * 6 ms p95; in a parallel run it has been seen at 31 ms against a 24 ms budget — three times
+   * in one session, each time read as a regression first. `npm run test:perf` runs it through
+   * `playwright.perf.config.ts`, one worker, nothing else in flight.
+   */
+  testIgnore: /perf\.spec\.ts/,
   fullyParallel: true,
   reporter: process.env.CI ? "line" : "list",
   use: {

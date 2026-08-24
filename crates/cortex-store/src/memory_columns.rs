@@ -114,6 +114,138 @@ pub fn for_nodes(store: &Store, ids: &[NodeId]) -> Result<HashMap<NodeId, Memory
     Ok(out)
 }
 
+/// A row built from what the index knows, for the sources that have no directory behind them.
+///
+/// A concept, the working set, a tier and a slice of time all answer the same way: *these
+/// nodes*. So they all go through here — one query that turns a set of ids into rows, with the
+/// filesystem facts the index already stores beside the memory ones. The alternative was a row
+/// builder per source, which is four more places for "what a row is" to drift.
+///
+/// **No `stat` happens here.** The size and the modification time are the index's, which is what
+/// a view of things you touched last week is *about*; a listing that went to the disk for each
+/// of fifty rows scattered over a home directory would be fifty seeks to tell somebody something
+/// they can already see.
+#[derive(Debug, Clone)]
+pub struct IndexRow {
+    pub node_id: NodeId,
+    pub path: PathBuf,
+    pub kind: String,
+    pub size: i64,
+    pub mtime: i64,
+    pub columns: MemoryColumns,
+}
+
+pub fn rows_for(store: &Store, ids: &[NodeId]) -> Result<Vec<IndexRow>> {
+    let conn = store.conn();
+    let mut found: HashMap<NodeId, IndexRow> = HashMap::new();
+
+    for chunk in ids.chunks(900) {
+        let placeholders = std::iter::repeat_n("?", chunk.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT n.id, n.path, n.tier, n.salience, n.pinned, n.zone_id,
+                    (SELECT COUNT(*) FROM edges e WHERE e.src = n.id)
+                  + (SELECT COUNT(*) FROM edges e WHERE e.dst = n.id) AS degree,
+                    (SELECT MAX(ep.ts) FROM episodes ep WHERE ep.node_id = n.id) AS last_episode,
+                    n.kind, n.size, n.mtime
+             FROM nodes n
+             WHERE n.id IN ({placeholders}) AND n.path IS NOT NULL"
+        );
+        let mut statement = conn.prepare_cached(&sql)?;
+        let values: Vec<i64> = chunk.iter().map(|id| id.0).collect();
+        let rows = statement.query_map(rusqlite::params_from_iter(values), |row| {
+            let (path, columns) = row_to_columns(row)?;
+            Ok(IndexRow {
+                node_id: columns.node_id,
+                path,
+                kind: row.get(8)?,
+                size: row.get(9)?,
+                mtime: row.get(10)?,
+                columns,
+            })
+        })?;
+        for row in rows {
+            let row = row?;
+            found.insert(row.node_id, row);
+        }
+    }
+
+    // In the order the caller asked for. Every one of these sources *is* an ordering — most
+    // recently touched, most connected, most salient — and returning them in whatever order
+    // SQLite felt like would throw that away and leave the list looking arbitrary.
+    let mut out = Vec::with_capacity(ids.len());
+    for id in ids {
+        if let Some(row) = found.remove(id) {
+            out.push(row);
+        }
+    }
+    Ok(out)
+}
+
+/// The nodes in a tier, most salient first.
+///
+/// For the one view that is *about* tiers (§4.4): everywhere else a tier is brightness, and here
+/// it is the whole question — "what has been forgotten, and is any of it something I want back".
+pub fn in_tier(store: &Store, tier: Tier, limit: usize) -> Result<Vec<NodeId>> {
+    let conn = store.conn();
+    let mut statement = conn.prepare_cached(
+        "SELECT id FROM nodes
+         WHERE tier = ?1 AND path IS NOT NULL
+         ORDER BY salience DESC, path ASC
+         LIMIT ?2",
+    )?;
+    let rows = statement.query_map(
+        rusqlite::params![tier.as_str(), limit as i64],
+        |row| Ok(NodeId(row.get(0)?)),
+    )?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
+/// How many nodes are in a tier. What the cold view's basis line counts before it says anything
+/// about what "cold" means.
+pub fn tier_total(store: &Store, tier: Tier) -> Result<u64> {
+    let conn = store.conn();
+    let total: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM nodes WHERE tier = ?1 AND path IS NOT NULL",
+        [tier.as_str()],
+        |row| row.get(0),
+    )?;
+    Ok(total.max(0) as u64)
+}
+
+/// The concepts the last consolidation pass named, with how many members each has.
+///
+/// For the places screen: a concept is somewhere to go, and a list of them with no sizes would
+/// make somebody open each one to find out which is worth opening.
+pub fn concepts(store: &Store, limit: usize) -> Result<Vec<(NodeId, String, u64)>> {
+    let conn = store.conn();
+    let mut statement = conn.prepare_cached(
+        "SELECT n.id, COALESCE(n.label, '?'),
+                (SELECT COUNT(*) FROM edges e WHERE e.src = n.id AND e.type = 'derived_from')
+         FROM nodes n
+         WHERE n.kind = 'concept'
+         ORDER BY 3 DESC, 2 ASC
+         LIMIT ?1",
+    )?;
+    let rows = statement.query_map([limit as i64], |row| {
+        Ok((
+            NodeId(row.get(0)?),
+            row.get::<_, String>(1)?,
+            row.get::<_, i64>(2)?.max(0) as u64,
+        ))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
 /// One node's columns, for a caller that has exactly one — the sidebar asking about a selection.
 pub fn for_path(store: &Store, path: &Path) -> Result<Option<MemoryColumns>> {
     let conn = store.conn();

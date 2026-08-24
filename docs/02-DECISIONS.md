@@ -2600,3 +2600,47 @@ by name and is reordered once the columns are attached, with the path as the tie
 listings of one directory must never disagree, which is the same rule `fs.list` already has for names.
 Nothing in the listing path waits on a model, which is §7's rule and the reason salience is
 arithmetic rather than a ranking call.
+
+### D87 — A concept is a place, and a place without a directory has to say so
+
+**Status:** accepted · 2026-08-24 · M10 step 3
+
+Five sources join the two from step 1: `concept`, `working_set`, `neighbours`, `timeline` and
+`tier`. Each is a variant of `Source`, each answers `view.open` in the same row shape, each
+appears in the places screen, and each says in words what rule it applied.
+
+**They differ only in which nodes and in what order.** Concept membership is a `derived_from`
+walk, the working set is the episode log asked "what lately", neighbours is the graph one step
+out, a timeline is the episode log windowed, and a tier is `nodes` ordered by salience. After
+that they all go through one function that turns a set of ids into rows — the alternative was a
+row builder per source, which is five more places for "what a row is" to drift.
+
+**No `stat` in these views.** The size and the modification time come from the index. That is
+what a view of things you touched last week is *about*, and going to the disk for fifty rows
+scattered across a home directory would be fifty seeks to tell somebody something they can
+already see. A directory listing still stats, because there the disk is the subject.
+
+**The window's place is a `Source` now, not a path.** This is the revisit D85 predicted. A
+concept is somewhere you can *be*: it has a name, rows you can act on, and a way back out. The
+history stack holds sources, so Alt+Left walks out of a concept exactly as it walks out of a
+folder — which is this step's Definition of Done and the thing a path-shaped stack could not do.
+
+**Up and back are different questions.** Only a directory has a parent. From a concept, "up" is
+the way you came, so `goUp` falls through to `goBack` rather than inventing a hierarchy the
+index does not have.
+
+**A place without a directory refuses what needs one.** Paste, drop and "new folder" have
+nowhere to land in a concept or a tier. They say so — *"dieser Ort ist kein Ordner"* — rather
+than doing nothing, and there is one implementation of that refusal for the key and for the
+palette entry. There were two for about an hour, and they had already drifted: the command said
+so and the key silently did nothing, which is the worse half of the same bug.
+
+**The basis line is rendered, and only where it earns its place.** A directory's basis repeats
+what the status line says in three characters; a concept's says how the cluster was named and a
+tier's says that nothing has been deleted, and there is nowhere else to learn either. So it shows
+for the places the index made and not for a directory or a query.
+
+**A tier is a subject in exactly one view.** Everywhere else it is brightness (D86). The cold
+view is the exception because "what has been forgotten" is a question, and its basis line answers
+the one that follows immediately: **nothing was deleted** — the files are on the disk, unchanged,
+and opening or pinning one brings it back.

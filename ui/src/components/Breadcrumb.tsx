@@ -9,7 +9,10 @@
 import { zoneAccent } from "../zone";
 
 export type BreadcrumbProps = {
-  path: string;
+  /** The directory, when the place is one. Null in a concept, a tier or the working set. */
+  path: string | null;
+  /** What to call a place that has no path. Ignored when there is one. */
+  label?: string;
   onNavigate: (path: string) => void;
   /** Back to the places screen, which is what sits above `/`. */
   onPlaces: () => void;
@@ -21,12 +24,16 @@ export type BreadcrumbProps = {
 
 export function Breadcrumb({
   path,
+  label,
   onNavigate,
   onPlaces,
   hue,
   maxSegments = 4,
 }: BreadcrumbProps) {
-  const segments = toSegments(path);
+  // A place the index made has a name and no parents: a concept is not inside anything, and
+  // segments for it would be a hierarchy this window invented (§4.2). One crumb, and the way
+  // back is the way you came.
+  const segments = path === null ? [] : toSegments(path);
   const shown = segments.slice(-maxSegments);
   const elided = segments.length - shown.length;
 
@@ -47,6 +54,14 @@ export function Breadcrumb({
         </button>
         <span className="hc-crumb-sep">/</span>
       </span>
+      {path === null && label !== undefined && (
+        // One crumb, current, not a button: there is nothing above a concept to navigate to.
+        <span className="hc-crumb-group">
+          <span className="hc-crumb hc-crumb-view" aria-current="page">
+            {label}
+          </span>
+        </span>
+      )}
       {elided > 0 && (
         <button
           type="button"

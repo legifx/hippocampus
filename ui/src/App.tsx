@@ -40,6 +40,7 @@ import {
   type Place,
   type SearchHit,
   type Order,
+  type Source,
 } from "./ipc";
 import { isArchive, type Row } from "./row";
 import { codeOf, messageOf } from "./format";
@@ -76,6 +77,29 @@ const SORT_LABELS: Record<Order, string> = {
   salience: "Salienz",
   none: "unsortiert",
 };
+
+/**
+ * What to call a place that has no path.
+ *
+ * The daemon names every source — it is the same name the places screen shows and the same one
+ * the basis line uses — so this reads it rather than deciding it. A `dir` never reaches here.
+ */
+function sourceLabel(source: Source): string {
+  switch (source.kind) {
+    case "concept":
+      return source.label;
+    case "working_set":
+      return "Woran ich gerade arbeite";
+    case "neighbours":
+      return `Verwendet mit ${source.path.split("/").pop() ?? source.path}`;
+    case "timeline":
+      return "Zeitraum";
+    case "tier":
+      return source.tier === "cold" ? "Vergessen" : source.tier === "ltm" ? "Archiv" : source.tier;
+    default:
+      return "";
+  }
+}
 
 /** What an empty list says. Which of the two modes is empty changes what is worth saying. */
 function emptyMessage(
@@ -164,7 +188,10 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
   // The selection resets whenever the list underneath it changes: a different directory, or a
   // different query. Otherwise "delete the three selected" would delete whatever landed in
   // those three positions.
-  const selection = useSelection(rows.length, `${searching}:${browse.state.path}:${query}`);
+  const selection = useSelection(
+    rows.length,
+    `${searching}:${JSON.stringify(browse.state.place)}:${query}`,
+  );
   const selected = selection.state.cursor;
   const current: Row | null = rows[selected] ?? null;
 
@@ -389,6 +416,22 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
    * reached by pressing a key rather than by choosing a menu entry — a notice saying "that is
    * not an archive" for every stray Ctrl+E would be noise for a mistake nobody makes twice.
    */
+  /**
+   * Paste into the place, or say why not.
+   *
+   * One implementation for the key and for the palette entry: they had drifted apart the moment
+   * a place without a directory existed — the command said so and the key did nothing, which is
+   * the worse half of the same bug.
+   */
+  const pasteHere = useCallback(() => {
+    if (searching) return;
+    if (browse.state.path === null) {
+      operations.setNotice({ text: "dieser Ort ist kein Ordner — erst einen öffnen", kind: "info" });
+      return;
+    }
+    operations.paste(browse.state.path);
+  }, [searching, browse.state.path, operations]);
+
   const extractSelected = useCallback(() => {
     if (current && isArchive(current.name)) operations.extract(current.path);
   }, [current, operations]);
@@ -481,8 +524,12 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
         id: "paste",
         label: "Einfügen",
         binding: "Ctrl+V",
-        detail: operations.clipboard ? undefined : "die Zwischenablage ist leer",
-        run: () => !searching && operations.paste(browse.state.path),
+        detail: operations.clipboard
+          ? browse.state.path === null
+            ? "hierher nicht — dieser Ort ist kein Ordner"
+            : undefined
+          : "die Zwischenablage ist leer",
+        run: pasteHere,
       },
       { id: "trash", label: "In den Papierkorb", binding: "Entf", run: () => operations.trash(targets) },
       {
@@ -495,7 +542,7 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
         id: "mkdir",
         label: "Neuer Ordner",
         binding: "Ctrl+Shift+N",
-        run: () => !searching && setCreating(""),
+        run: () => !searching && browse.state.path !== null && setCreating(""),
       },
       { id: "undo", label: "Rückgängig", binding: "Ctrl+Z", run: () => operations.undo() },
       { id: "dismiss", label: "Schließen", binding: "Esc", run: () => ipc.dismiss().catch(() => {}) },
@@ -512,12 +559,19 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
       targets,
       current,
       extractSelected,
+      pasteHere,
     ],
   );
 
   const openPlace = useCallback(
     (place: Place | undefined) => {
       if (!place) return;
+      // A place the index made carries how to open it: a concept, the working set, a tier. It
+      // has no path, and Enter on it goes to a view rather than to a directory (M10 §4.3).
+      if (place.source) {
+        browse.goTo(place.source);
+        return;
+      }
       // A drive that is not mounted has no directory to go to: its path is a device node. So
       // opening it is two steps, and the second one uses the mount point the daemon answers
       // with rather than a path guessed from the label — udisks2 chooses where it lands, and
@@ -690,14 +744,14 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
             return;
           case "v":
             event.preventDefault();
-            if (!searching) operations.paste(browse.state.path);
+            pasteHere();
             return;
           case "z":
             event.preventDefault();
             operations.undo();
             return;
           case "n":
-            if (event.shiftKey && !searching) {
+            if (event.shiftKey && !searching && browse.state.path !== null) {
               event.preventDefault();
               setCreating("");
             }
@@ -805,6 +859,7 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
       flatPlaces,
       openPlace,
       extractSelected,
+      pasteHere,
     ],
   );
 
@@ -893,7 +948,8 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
             const name = typeof value === "string" ? value.trim() : "";
             if (name !== "") {
               if (renaming) operations.rename(renaming.path, name);
-              else operations.mkdir(joinPath(browse.state.path, name));
+              else if (browse.state.path !== null)
+                operations.mkdir(joinPath(browse.state.path, name));
             }
             setRenaming(null);
             setCreating(null);
@@ -960,9 +1016,21 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
 
       <main className="hc-body">
         <div className="hc-column">
+          {/* What this list is, in the daemon's words.
+            *
+            * Only for the places the index made. A directory's basis says how many entries it
+            * has and how they are ordered, which the status line already says in three
+            * characters; a concept's says how it was named and a tier's says that nothing was
+            * deleted, and there is nowhere else to learn either. */}
+          {!searching && !atPlaces && browse.state.path === null && browse.state.basis !== "" && (
+            <p className="hc-basis hc-meta">{browse.state.basis}</p>
+          )}
           {!searching && !atPlaces && (
             <Breadcrumb
               path={browse.state.path}
+              // A place the index made has a name rather than a path: "Vergessen" is where you
+              // are, and inventing segments for it would be inventing a hierarchy (§4.2).
+              label={browse.state.path === null ? sourceLabel(browse.state.place) : undefined}
               onNavigate={(next) => browse.goTo(next)}
               onPlaces={() => browse.goTo(PLACES)}
               hue={null}

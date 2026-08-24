@@ -237,7 +237,9 @@ export type PlaceKind =
   | "drive"
   | "filesystem"
   | "bookmark"
-  | "network";
+  | "network"
+  /** A place the index made: a concept, the working set, a tier. `source` says how to open it. */
+  | "view";
 
 export type Capacity = {
   total_bytes: number;
@@ -272,6 +274,8 @@ export type Place = {
   kind: PlaceKind;
   capacity?: Capacity | null;
   device?: string | null;
+  /** Present exactly for a `view` place: how to open it. */
+  source?: Source | null;
   /** Drives only. See {@link VolumeInfo} — an unmounted one's `path` is a device node. */
   volume?: VolumeInfo | null;
 };
@@ -356,7 +360,17 @@ export type TransferAnswer =
 /** Where a view's rows come from. More sources arrive in step 3; the shape does not change. */
 export type Source =
   | { kind: "dir"; path: string }
-  | { kind: "query"; text: string };
+  | { kind: "query"; text: string }
+  /** A named cluster the consolidation pass found. */
+  | { kind: "concept"; id: number; label: string }
+  /** What the human has touched lately. */
+  | { kind: "working_set" }
+  /** What is connected to one node, and how. */
+  | { kind: "neighbours"; path: string; edges?: string[] }
+  /** A slice of time, from the episode log. Seconds since the epoch. */
+  | { kind: "timeline"; from: number; to: number }
+  /** One tier, most salient first — the only place a tier is a subject, not a brightness. */
+  | { kind: "tier"; tier: string };
 
 /** What the daemon sorted by. The frontend never sorts (D4). */
 export type Order = "name" | "size" | "modified" | "salience" | "none";

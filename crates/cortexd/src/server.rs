@@ -1230,7 +1230,85 @@ async fn dispatch_inner(
         method::FS_PLACES => {
             let params = parse(params)?;
             let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
-            json(surface(daemon, &ctx.actor, &auditor).places(&params).map_err(tool_error)?)
+            let mut answer = surface(daemon, &ctx.actor, &auditor)
+                .places(&params)
+                .map_err(tool_error)?;
+
+            // The places the index made, beside the ones the filesystem has (M10 §4.3). Built
+            // here rather than in `cortex_agent::places`, which reads files and knows nothing
+            // about a store — and a concept is a row exactly like a folder is: a name, and
+            // somewhere Enter takes you.
+            let mut memory_places = vec![
+                cortex_core::tools::Place {
+                    path: std::path::PathBuf::new(),
+                    name: "Woran ich gerade arbeite".to_string(),
+                    kind: cortex_core::tools::PlaceKind::View,
+                    capacity: None,
+                    device: None,
+                    volume: None,
+                    source: Some(cortex_core::view::Source::WorkingSet),
+                },
+            ];
+
+            // The concepts the last consolidation pass named, biggest first. Only the ones with
+            // members: an empty concept is a row that opens onto nothing.
+            if let Ok(concepts) = cortex_store::memory_columns::concepts(&daemon.store, 8) {
+                for (id, label, members) in concepts {
+                    if members == 0 {
+                        continue;
+                    }
+                    memory_places.push(cortex_core::tools::Place {
+                        path: std::path::PathBuf::new(),
+                        name: label.clone(),
+                        kind: cortex_core::tools::PlaceKind::View,
+                        capacity: None,
+                        // What the sidebar shows under the name: how many files are in it, so
+                        // nobody has to open three concepts to find the one worth opening.
+                        device: Some(format!("{members} Dateien")),
+                        volume: None,
+                        source: Some(cortex_core::view::Source::Concept { id: id.0, label }),
+                    });
+                }
+            }
+
+            // And the tier that is a subject rather than a brightness. Offered only when there
+            // is something in it: a row called "Vergessen" that opens onto an empty list would
+            // teach somebody that the word means nothing.
+            if cortex_store::memory_columns::tier_total(
+                &daemon.store,
+                cortex_core::model::Tier::Cold,
+            )
+            .unwrap_or(0)
+                > 0
+            {
+                memory_places.push(cortex_core::tools::Place {
+                    path: std::path::PathBuf::new(),
+                    name: "Vergessen".to_string(),
+                    kind: cortex_core::tools::PlaceKind::View,
+                    capacity: None,
+                    device: Some("nur noch Metadaten".to_string()),
+                    volume: None,
+                    source: Some(cortex_core::view::Source::Tier {
+                        tier: "cold".to_string(),
+                    }),
+                });
+            }
+
+            // Before "System", which is where everything technical lives: these are places
+            // somebody goes to, and the filesystem root is the one they go to last.
+            let at = answer
+                .sections
+                .iter()
+                .position(|s| s.title == "System")
+                .unwrap_or(answer.sections.len());
+            answer.sections.insert(
+                at,
+                cortex_core::tools::PlaceSection {
+                    title: "Gedächtnis".to_string(),
+                    places: memory_places,
+                },
+            );
+            json(answer)
         }
 
         method::FS_LIST => {
@@ -1993,6 +2071,170 @@ async fn dispatch_inner(
                         *refinable = Some((outcome, Refinement::View));
                     }
                     json(answer)
+                }
+
+                // Everything that is neither a directory nor a search: a concept, the working
+                // set, the graph around a node, a slice of time, a tier. They differ only in
+                // *which* nodes and *in what order* — the rest is one path through `rows_for`,
+                // which is what keeps "what a row is" from drifting five ways.
+                ref other => {
+                    let limit = params.limit.unwrap_or(500).min(5000);
+                    let now = indexer::unix_now();
+                    let store = &daemon.store;
+
+                    let (ids, total): (Vec<cortex_core::ids::NodeId>, u64) = match other {
+                        Source::Concept { id, .. } => {
+                            let members = store
+                                .neighbors(
+                                    cortex_core::ids::NodeId(*id),
+                                    &[cortex_core::model::EdgeType::DerivedFrom],
+                                    1,
+                                    limit,
+                                )
+                                .map_err(internal)?;
+                            let ids: Vec<_> = members
+                                .iter()
+                                .filter(|n| n.path.is_some())
+                                .map(|n| cortex_core::ids::NodeId(n.node_id))
+                                .collect();
+                            let total = ids.len() as u64;
+                            (ids, total)
+                        }
+                        Source::WorkingSet => {
+                            let touched = store
+                                .recently_touched(
+                                    now - cortex_agent::brain_tools::WORKING_SET_WINDOW_SECS,
+                                    limit,
+                                )
+                                .map_err(internal)?;
+                            let ids: Vec<_> = touched
+                                .iter()
+                                .filter(|t| t.path.is_some())
+                                .map(|t| cortex_core::ids::NodeId(t.node_id))
+                                .collect();
+                            let total = ids.len() as u64;
+                            (ids, total)
+                        }
+                        Source::Neighbours { path, edges } => {
+                            let node = store
+                                .node_by_path(path)
+                                .map_err(internal)?
+                                .ok_or_else(|| {
+                                    RpcError::invalid_params(&format!(
+                                        "{} is not in the index, so it has no neighbours yet",
+                                        path.display()
+                                    ))
+                                })?;
+                            let types: Vec<cortex_core::model::EdgeType> = edges
+                                .iter()
+                                .filter_map(|t| cortex_core::model::EdgeType::parse(t))
+                                .collect();
+                            let found = store
+                                .neighbors(node.id, &types, 1, limit)
+                                .map_err(internal)?;
+                            let ids: Vec<_> = found
+                                .iter()
+                                .filter(|n| n.path.is_some())
+                                .map(|n| cortex_core::ids::NodeId(n.node_id))
+                                .collect();
+                            let total = ids.len() as u64;
+                            (ids, total)
+                        }
+                        Source::Timeline { from, to } => {
+                            let episodes = store
+                                .episodes_in_range(Some(*from), Some(*to), None, None, limit * 4)
+                                .map_err(internal)?;
+                            // One row per file, in the order it was last touched inside the
+                            // window: a timeline of episodes would list the same file eleven
+                            // times for eleven saves, which is a log rather than a place.
+                            let mut seen = std::collections::HashSet::new();
+                            let mut ids = Vec::new();
+                            for episode in &episodes {
+                                if let Some(node) = episode.node_id {
+                                    if seen.insert(node.0) {
+                                        ids.push(node);
+                                    }
+                                }
+                            }
+                            ids.truncate(limit);
+                            let total = ids.len() as u64;
+                            (ids, total)
+                        }
+                        Source::Tier { tier } => {
+                            let parsed = cortex_core::model::Tier::parse(tier).ok_or_else(|| {
+                                RpcError::invalid_params(&format!("no such tier: {tier}"))
+                            })?;
+                            let ids = cortex_store::memory_columns::in_tier(store, parsed, limit)
+                                .map_err(internal)?;
+                            let total = cortex_store::memory_columns::tier_total(store, parsed)
+                                .map_err(internal)?;
+                            (ids, total)
+                        }
+                        Source::Dir { .. } | Source::Query { .. } => unreachable!("handled above"),
+                    };
+
+                    let indexed = cortex_store::memory_columns::rows_for(store, &ids)
+                        .map_err(internal)?;
+                    let rows: Vec<ViewRow> = indexed
+                        .into_iter()
+                        .map(|row| {
+                            let mut out = ViewRow {
+                                path: row.path,
+                                kind: if row.kind == "dir" {
+                                    cortex_core::tools::FsKind::Dir
+                                } else {
+                                    cortex_core::tools::FsKind::File
+                                },
+                                size: row.size.max(0) as u64,
+                                mtime: row.mtime,
+                                indexed: true,
+                                node_id: None,
+                                zone_id: None,
+                                tier: None,
+                                snippet: None,
+                                score: None,
+                                salience: None,
+                                degree: None,
+                                last_episode: None,
+                                pinned: false,
+                                mode: None,
+                                owner: None,
+                                group: None,
+                                target: None,
+                                target_kind: None,
+                                broken: false,
+                            };
+                            let c = row.columns;
+                            cortex_core::view::attach_memory(
+                                &mut out,
+                                c.node_id,
+                                c.tier,
+                                c.salience,
+                                c.pinned,
+                                c.zone_id,
+                                c.degree,
+                                c.last_episode,
+                            );
+                            out
+                        })
+                        .collect();
+
+                    let shown = rows.len() as u64;
+                    json(View {
+                        basis: view::basis_for(&origin, shown, total),
+                        rows,
+                        origin,
+                        // The order is the source's own — most recently touched, most connected,
+                        // most salient — and it is already applied. Re-sorting would throw away
+                        // the thing that makes the list a place rather than a bag.
+                        order: Order::None,
+                        total,
+                        truncated: shown < total,
+                        hidden: 0,
+                        refining: false,
+                        elapsed_ms: started.elapsed().as_millis() as u64,
+                        cursor: None,
+                    })
                 }
             }
         }

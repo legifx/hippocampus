@@ -224,7 +224,13 @@ test.describe("the places screen", () => {
     await openAtPlaces(page);
 
     const headings = page.locator(".hc-places-title");
-    await expect(headings).toHaveText(["Persönlich", "Laufwerke", "Netzwerk", "System"]);
+    await expect(headings).toHaveText([
+      "Persönlich",
+      "Laufwerke",
+      "Netzwerk",
+      "Gedächtnis",
+      "System",
+    ]);
 
     // The whole point: one row called what it is, rather than sixteen in the way.
     const system = page.locator(".hc-places-section").last().locator(".hc-place");
@@ -245,7 +251,12 @@ test.describe("the places screen", () => {
 
   test("a drive shows how much room is left", async ({ page }) => {
     await openAtPlaces(page);
-    const drive = page.locator(".hc-place", { hasText: "Arbeit" });
+    // By the exact name rather than by substring: since the memory section arrived, "Arbeit"
+    // also appears inside "Woran ich gerade arbeite", and a substring match resolved to two
+    // rows. A locator that is nearly right is a test that fails for the wrong reason.
+    const drive = page
+      .locator(".hc-place")
+      .filter({ has: page.getByText("Arbeit", { exact: true }) });
     await expect(drive.locator(".hc-place-bar")).toBeVisible();
     await expect(drive).toContainText("frei");
 

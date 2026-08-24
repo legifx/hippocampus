@@ -9,9 +9,9 @@ If you finish work without editing this file, the next agent starts from nothing
 
 | | |
 |---|---|
-| **Active milestone** | **M10 — the explorer restructure**, steps 1 and 2 of four done (2026-08-24, D85/D86). M11, M8 and M5 as below. |
-| **Status** | **M10 steps 1 and 2 landed on 2026-08-24: `view.open` with one row shape from every source (D85), and the memory columns on every row — measured before they were built, and cheaper than the per-row queries they sit beside (D86). Step 2's last criterion needs the owner: salience ordering verified by hand against a real index, once. M6's mandatory list is complete as of the same day: archives (`fs.extract`, D81/D82), thumbnails in the list (D83) and network locations (D84, staged — what is mounted is offered, mounting is not built). What is left of M6 is its own §3, a week of exclusive use by the owner. 1001 Rust tests, 60 vitest, 159 browser tests.** **M11 is ten of its twelve criteria in — see its own scorecard below before anything else, and every benchmark gate is green including the new one.** M4 complete. M6's mandatory list is done; its acceptance now needs a week of use rather than more code. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **A note on counting, kept because it cost a session:** this file once said 399 tests and accused the previous entry's 812 of being unreproducible. The 399 was wrong — the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Count by summing every `test result:` line. Check the measuring tool before disbelieving the measurement; this file already says that about latency, and it applies to counting. |
-| **Last updated** | 2026-08-24 (M10 step 2: the memory columns, measured first — D86) |
+| **Active milestone** | **M10 — the explorer restructure**, steps 1, 2 and 3 of four done (2026-08-24, D85–D87). M11, M8 and M5 as below. |
+| **Status** | **M10 steps 1, 2 and 3 landed on 2026-08-24: `view.open` with one row shape from every source (D85), and the memory columns on every row — measured before they were built, and cheaper than the per-row queries they sit beside (D86). Step 2's last criterion needs the owner: salience ordering verified by hand against a real index, once. M6's mandatory list is complete as of the same day: archives (`fs.extract`, D81/D82), thumbnails in the list (D83) and network locations (D84, staged — what is mounted is offered, mounting is not built). What is left of M6 is its own §3, a week of exclusive use by the owner. 1005 Rust tests, 60 vitest, 152 functional browser tests and 12 perf (run separately, on an idle machine — see the step 3 entry).** **M11 is ten of its twelve criteria in — see its own scorecard below before anything else, and every benchmark gate is green including the new one.** M4 complete. M6's mandatory list is done; its acceptance now needs a week of use rather than more code. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **A note on counting, kept because it cost a session:** this file once said 399 tests and accused the previous entry's 812 of being unreproducible. The 399 was wrong — the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Count by summing every `test result:` line. Check the measuring tool before disbelieving the measurement; this file already says that about latency, and it applies to counting. |
+| **Last updated** | 2026-08-24 (M10 step 3: the places the index makes — D87) |
 | **Blocked on** | nothing |
 
 ## Start here
@@ -792,6 +792,53 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
 
+### 2026-08-24 — M10 step 3: the places the index makes, and a perf gate that was measuring the machine
+
+Step 3 of four. `concept`, `working_set`, `neighbours`, `timeline` and `tier` are sources like a
+directory is: one method, one row shape, one navigation model. **1005 Rust tests** against 1001,
+**60 vitest**, **152 functional browser tests** plus **12 perf** — and those two numbers are
+separate now, for a reason below.
+
+**What is reachable.** The places screen has a *Gedächtnis* section: what you are working on, the
+concepts the last consolidation named (biggest first, with how many files are in each), and
+"Vergessen" when the cold tier has anything in it. Enter opens one like a folder. The rows are
+ordinary rows — selectable, copyable, previewable. Alt+Left walks back out. The basis line is
+rendered above them, which it had not been since step 1 built it: a concept says how it was
+named, and the cold view says that **nothing was deleted**.
+
+**The window's place is a `Source` now**, which is the revisit D85 predicted, and it is what makes
+Alt+Left work out of a concept. Up and back became different questions in the process: only a
+directory has a parent, so `goUp` in a concept falls through to `goBack` rather than inventing a
+hierarchy.
+
+**Three things this session got wrong first, and the tests that said so.**
+
+1. **A match arm in the wrong order.** The catch-all for the new sources was written above
+   `Source::Query`, which made the query branch unreachable — `cargo check` said so as a warning
+   and it would have been a silent behaviour change: every search would have gone through the
+   generic path and answered nothing.
+2. **`hasText: "Arbeit"` matched two rows.** A places test located the drive called *Arbeit* by
+   substring, and the new row *"Woran ich gerade arbeite"* contains it. It fails as a strict-mode
+   violation, which reads as a broken locator rather than as a name collision. It matches the
+   exact name now.
+3. **A stale binary in `target/debug`.** `the_places_are_the_same_through_all_three` failed with
+   *unknown variant `view`* — the CLI could not decode a place kind that had just been added. The
+   CLI shares the type; the *binary* was from before the change. The test's own message says to
+   build the bins first, and that is exactly what it caught.
+
+**And a perf gate that had been measuring the machine.** `a keystroke reaches a painted row` fails
+at 31 ms against its 24 ms render share when the full Playwright suite runs it beside four other
+workers driving ten-thousand-row lists. Alone it is **6.0 ms p95, 2.3 ms median**. It had been
+read as a regression three times in one day. The perf suite is now excluded from the default run
+and has a config of its own — `npm run test:perf`, one worker, nothing else in flight — so the
+mistake is no longer available. The kickoff prompt's rule was already there in words: *measure on
+an idle machine*; now the harness enforces it.
+
+**What step 4 is, for whoever picks this up.** The sidebar's new job: `brain.explain` one
+keystroke away, episodes for the selection, annotate without leaving the window, and "Verbunden"
+removed from the sidebar because it is a place now (`neighbours`). The columns step 2 carries but
+does not draw — salience, degree, last episode — belong there.
+
 ### 2026-08-24 — M10 step 2: the memory on every row, measured first
 
 Step 2 of four. Salience, tier, degree, last episode, pinned and zone on every row from every
@@ -874,9 +921,9 @@ and was simply lost. It waits for a row and then for the panel now. Six repeats 
 pass, and so does a full run under a parallel `cargo test`. **A test that races the thing it is
 testing fails as a mystery rather than as a message.**
 
-**What step 2 needed** is done the same day; see the entry above. Step 3 is the new places —
-`concept`, `working_set`, `neighbours`, `tier(cold)`, `timeline` — each as a `Source` variant,
-each with a basis line, each reachable from the places screen.
+**What step 2 needed** is done the same day, and so is step 3 — see the entries above. Step 4 is
+the sidebar's new job: `brain.explain` a keystroke away, episodes for the selection, annotating
+without leaving the window.
 
 ### 2026-08-24 — M6: network locations, and the calls that do not come back
 

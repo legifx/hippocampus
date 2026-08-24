@@ -334,3 +334,112 @@ fn a_directory_can_be_ordered_by_what_the_brain_thinks_matters() {
     );
     assert_eq!(again["result"]["rows"], view["result"]["rows"]);
 }
+
+/// M10 step 3: the new places. Each is a `Source`, each answers in the same row shape, and each
+/// says what it is.
+#[test]
+fn the_working_set_is_a_place_you_can_open() {
+    let instance = Instance::start();
+    let mut client = Client::connect(&instance.socket());
+    corpus(&instance.work());
+    client.call("reconcile", json!({}));
+
+    // Opening a file is an episode, and the working set is the episode log asked "what lately".
+    let opened = instance.work().join("beta.md").display().to_string();
+    client.call("brain.annotate", json!({ "target": opened, "note": "gerade angesehen" }));
+
+    let view = client.call("view.open", json!({ "source": { "kind": "working_set" } }));
+    let rows = view["result"]["rows"].as_array().unwrap();
+    assert!(!rows.is_empty(), "something was just touched: {view}");
+    // The same row shape as a directory: this is a place, not a report.
+    for field in ["path", "kind", "size", "mtime", "indexed", "tier", "salience"] {
+        assert!(rows[0].get(field).is_some(), "{field} missing: {}", rows[0]);
+    }
+
+    let basis = view["result"]["basis"].as_str().unwrap();
+    assert!(basis.contains("Episodenprotokoll"), "{basis}");
+    assert_eq!(view["result"]["origin"]["kind"], json!("working_set"));
+}
+
+#[test]
+fn the_cold_tier_is_a_view_that_explains_itself() {
+    let instance = Instance::start();
+    let mut client = Client::connect(&instance.socket());
+    corpus(&instance.work());
+    client.call("reconcile", json!({}));
+
+    let view = client.call(
+        "view.open",
+        json!({ "source": { "kind": "tier", "tier": "cold" } }),
+    );
+    assert!(view.get("error").is_none(), "{view}");
+
+    // The sentence is the feature. Somebody looking at a list of files the system has "let go
+    // of" needs to be told, in the same breath, that nothing was deleted.
+    let basis = view["result"]["basis"].as_str().unwrap();
+    assert!(basis.contains("Gelöscht ist nichts"), "{basis}");
+    assert!(basis.contains("Metadaten"), "{basis}");
+    assert_eq!(view["result"]["order"], json!("none"));
+}
+
+#[test]
+fn the_graph_around_a_file_is_a_place_and_a_file_outside_the_index_is_an_error() {
+    let instance = Instance::start();
+    let mut client = Client::connect(&instance.socket());
+    corpus(&instance.work());
+    client.call("reconcile", json!({}));
+
+    let beta = instance.work().join("beta.md").display().to_string();
+    let view = client.call(
+        "view.open",
+        json!({ "source": { "kind": "neighbours", "path": beta } }),
+    );
+    assert!(view.get("error").is_none(), "{view}");
+    let basis = view["result"]["basis"].as_str().unwrap();
+    assert!(basis.contains("verbunden"), "{basis}");
+    assert!(basis.contains("beta.md"), "{basis}");
+
+    // A path the index has never seen has no neighbours, and saying so beats an empty list that
+    // looks like "this file is connected to nothing".
+    let unknown = instance.work().join("nie-gesehen.md").display().to_string();
+    let refused = client.call(
+        "view.open",
+        json!({ "source": { "kind": "neighbours", "path": unknown } }),
+    );
+    assert!(
+        refused["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("not in the index"),
+        "{refused}"
+    );
+}
+
+#[test]
+fn a_slice_of_time_lists_each_file_once() {
+    let instance = Instance::start();
+    let mut client = Client::connect(&instance.socket());
+    corpus(&instance.work());
+    client.call("reconcile", json!({}));
+
+    // Three things happening to one file is one row, not three: a timeline of episodes would be
+    // a log, and a place is a list of things.
+    let beta = instance.work().join("beta.md").display().to_string();
+    for note in ["eins", "zwei", "drei"] {
+        client.call("brain.annotate", json!({ "target": beta, "note": note }));
+    }
+
+    let view = client.call(
+        "view.open",
+        json!({ "source": { "kind": "timeline", "from": 0, "to": 4_000_000_000i64 } }),
+    );
+    let rows = view["result"]["rows"].as_array().unwrap();
+    let betas = rows
+        .iter()
+        .filter(|r| r["path"].as_str().unwrap().ends_with("beta.md"))
+        .count();
+    assert_eq!(betas, 1, "one file, one row: {rows:?}");
+
+    let basis = view["result"]["basis"].as_str().unwrap();
+    assert!(basis.contains("Zeitfenster"), "{basis}");
+}

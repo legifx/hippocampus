@@ -141,11 +141,11 @@ function PlaceRow({
         </span>
       )}
 
-      {/* Which machine it is on, for the case two shares are called the same thing — and as the
-          only visible difference between a folder and a folder that is somewhere else. No
-          capacity is shown for a share: measuring one means a call that can block, and the
-          daemon deliberately does not make it. */}
-      {place.kind === "network" && place.device && (
+      {/* For a share: which machine it is on, for the case two are called the same thing. For a
+          place the index made: what is in it — "4 Dateien", "nur noch Metadaten" — so nobody
+          opens three concepts to find the one worth opening. No capacity is shown for either:
+          measuring a share means a call that can block, and a concept has no size. */}
+      {(place.kind === "network" || place.kind === "view") && place.device && (
         <span className="hc-place-space hc-meta">
           <span className="hc-faint hc-place-address">{place.device}</span>
         </span>

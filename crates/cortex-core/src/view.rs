@@ -31,6 +31,22 @@ pub enum Source {
     Dir { path: PathBuf },
     /// Hybrid search over the index.
     Query { text: String },
+    /// A named cluster the consolidation pass found. Its members, most connected first.
+    Concept { id: i64, label: String },
+    /// What the human has touched lately. The one view that answers "where was I".
+    WorkingSet,
+    /// What is connected to one node, and how. *Used with `parser.rs`* is a place.
+    Neighbours {
+        path: PathBuf,
+        /// Empty means every kind of edge.
+        #[serde(default)]
+        edges: Vec<String>,
+    },
+    /// A slice of time, from the episode log. Both bounds are seconds since the epoch.
+    Timeline { from: i64, to: i64 },
+    /// One tier, most salient first. The only place a tier is a subject rather than a
+    /// brightness — see §4.4 of the paper.
+    Tier { tier: String },
 }
 
 impl Source {
@@ -39,6 +55,21 @@ impl Source {
         match self {
             Source::Dir { path } => path.display().to_string(),
             Source::Query { text } => text.clone(),
+            Source::Concept { label, .. } => label.clone(),
+            Source::WorkingSet => "Woran ich gerade arbeite".to_string(),
+            Source::Neighbours { path, .. } => format!(
+                "Verwendet mit {}",
+                path.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path.display().to_string())
+            ),
+            Source::Timeline { .. } => "Zeitraum".to_string(),
+            Source::Tier { tier } => match tier.as_str() {
+                "cold" => "Vergessen".to_string(),
+                "ltm" => "Archiv".to_string(),
+                "working" => "Arbeitsspeicher".to_string(),
+                other => other.to_string(),
+            },
         }
     }
 
@@ -297,6 +328,56 @@ pub fn basis_for_dir(
         ));
     }
     text
+}
+
+/// What a view built out of the index says about itself.
+///
+/// Every one of these lists is a *judgement* — what was touched lately, what is connected to
+/// what, what has been let go of — and a judgement that cannot say what it is based on invites
+/// the reader to invent one. So each says the rule it applied, in words, including the part that
+/// is easy to mistake: that nothing has been deleted, that a window has an edge, that a cluster
+/// was named by a machine.
+pub fn basis_for(source: &Source, shown: u64, total: u64) -> String {
+    match source {
+        Source::Dir { .. } | Source::Query { .. } => String::new(),
+        Source::Concept { label, .. } => format!(
+            "{shown} von {total} Dateien im Begriff „{label}“ — die Konsolidierung hat sie \
+             zusammengefasst, weil sie gemeinsam benutzt werden; der Name kommt aus dem, was \
+             ihre Pfade gemeinsam haben"
+        ),
+        Source::WorkingSet => format!(
+            "{shown} Dateien, an denen zuletzt etwas passiert ist, neueste zuerst — aus dem \
+             Episodenprotokoll, nicht aus der Änderungszeit: gelesen zählt hier genauso wie \
+             geschrieben"
+        ),
+        Source::Neighbours { path, edges } => {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.display().to_string());
+            let kinds = if edges.is_empty() {
+                "jede Art von Kante".to_string()
+            } else {
+                edges.join(", ")
+            };
+            format!(
+                "{shown} Knoten, die mit {name} verbunden sind ({kinds}), ein Schritt weit — \
+                 das ist der Graph, nicht der Ordner"
+            )
+        }
+        Source::Timeline { from, to } => format!(
+            "{shown} Dateien aus einem Zeitfenster von {} Stunden — was in dieser Zeit \
+             angefasst wurde, nicht was in dieser Zeit geändert wurde",
+            ((to - from).max(0)) / 3600
+        ),
+        Source::Tier { tier } if tier == "cold" => format!(
+            "{shown} von {total} Dateien in der kalten Ebene: das Gedächtnis hat ihren Inhalt \
+             vergessen und nur die Metadaten behalten. **Gelöscht ist nichts** — die Dateien \
+             liegen unverändert auf der Platte, und eine geöffnete oder angeheftete kommt \
+             zurück"
+        ),
+        Source::Tier { tier } => format!("{shown} von {total} Dateien in der Ebene „{tier}“"),
+    }
 }
 
 /// The sentence a query view says about itself.

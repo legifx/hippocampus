@@ -23,8 +23,10 @@ export type SortChoice = Order;
 export type ViewState = {
   /** What is showing: the overlay if there is one, the place otherwise. */
   source: Source;
-  /** The directory the window is *in*, whatever is showing over it. */
-  path: string;
+  /** The place underneath, whatever is showing over it. */
+  place: Source;
+  /** The directory the window is in, or null when the place is not one. */
+  path: string | null;
   /** True when a query is showing. A fact about the window, never about a row. */
   searching: boolean;
   basis: string;
@@ -56,15 +58,24 @@ function heldFrom(view: View, commonDir: string | null): Held {
   };
 }
 
+/** A directory, or one of the places the index makes: the same thing to navigate. */
+function asSource(target: Source | string): Source {
+  return typeof target === "string" ? { kind: "dir", path: target } : target;
+}
+
 export function useView(startPath: string) {
-  const [path, setPath] = useState(startPath);
-  const [history, setHistory] = useState<string[]>([]);
+  // The place is a `Source` now, not a path (M10 step 3). A concept, the working set and the
+  // cold tier are places you can be *in* — they have a name, a basis, rows you can act on, and
+  // a way back out — and holding them as anything narrower would mean a second navigation
+  // model beside this one.
+  const [place, setPlace] = useState<Source>({ kind: "dir", path: startPath });
+  const [history, setHistory] = useState<Source[]>([]);
   const [generation, setGeneration] = useState(0);
   const [order, setOrder] = useState<SortChoice>("name");
   const [reverse, setReverse] = useState(false);
   const [query, setQuery] = useState("");
 
-  const [place, setPlace] = useState<Held>(NOTHING);
+  const [held, setHeld] = useState<Held>(NOTHING);
   const [overlay, setOverlay] = useState<Held>(NOTHING);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -77,12 +88,16 @@ export function useView(startPath: string) {
   const currentQuery = useRef("");
 
   const searching = query.trim() !== "";
+  // Where the window *is*, when that is a directory. Null in a concept, a tier or the working
+  // set — which is what stops a drop, a paste or a new folder from landing in a place that has
+  // no directory behind it.
+  const path = place.kind === "dir" ? place.path : null;
 
   // The place. Not fetched for the places screen, which is not a directory: asking the daemon
   // to list `places:` would be asking a question with no answer.
   useEffect(() => {
-    if (path === PLACES) {
-      setPlace(NOTHING);
+    if (place.kind === "dir" && place.path === PLACES) {
+      setHeld(NOTHING);
       setLoading(false);
       setError(null);
       return;
@@ -92,19 +107,23 @@ export function useView(startPath: string) {
     setLoading(true);
     setError(null);
 
+    // A directory repeats itself on every row, so its rows show bare names; the places the
+    // index makes gather files from everywhere, so theirs say where they live.
+    const commonDir =
+      place.kind === "dir" ? (place.path.endsWith("/") ? place.path : `${place.path}/`) : null;
+
     ipc
-      .viewOpen({ kind: "dir", path }, { order, reverse })
+      .viewOpen(place, { order, reverse })
       .then((view) => {
         if (!current) return;
-        // The directory every row would otherwise repeat — so a listing shows bare names.
-        setPlace(heldFrom(view, path.endsWith("/") ? path : `${path}/`));
+        setHeld(heldFrom(view, commonDir));
         setLoading(false);
       })
       .catch((e: unknown) => {
         if (!current) return;
         // A place that cannot be read is a fact about the place, not a broken window. Saying
         // which one and why is the difference between an error and a dead end.
-        setPlace(NOTHING);
+        setHeld(NOTHING);
         setError(e instanceof Error ? e.message : String(e));
         setLoading(false);
       });
@@ -112,7 +131,8 @@ export function useView(startPath: string) {
     return () => {
       current = false;
     };
-  }, [path, order, reverse, generation]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(place), order, reverse, generation]);
 
   // The overlay. No debounce, deliberately: the budget is 80 ms from keystroke to first row and
   // a 150 ms debounce spends twice that doing nothing (M4 §2).
@@ -180,19 +200,26 @@ export function useView(startPath: string) {
     };
   }, []);
 
+  /**
+   * Go somewhere. A string is a directory; anything else is one of the places the index makes.
+   *
+   * The history holds sources, so Alt+Left walks back out of a concept the same way it walks
+   * out of a folder — which is §6's Definition of Done for this step, and the reason the stack
+   * could not stay a list of paths.
+   */
   const goTo = useCallback(
-    (next: string) => {
-      setHistory((h) => [...h, path]);
-      setPath(next);
+    (target: Source | string) => {
+      setHistory((h) => [...h, place]);
+      setPlace(asSource(target));
     },
-    [path],
+    [place],
   );
 
   const goBack = useCallback(() => {
     setHistory((h) => {
       const previous = h[h.length - 1];
       if (previous === undefined) return h;
-      setPath(previous);
+      setPlace(previous);
       return h.slice(0, -1);
     });
   }, []);
@@ -213,10 +240,21 @@ export function useView(startPath: string) {
     return cut === 0 ? "/" : trimmed.slice(0, cut);
   }, []);
 
+  /**
+   * Up, when up means something.
+   *
+   * Only a directory has a parent. A concept's parent is not a concept and a tier's is not a
+   * tier: from those, "up" is the way you came — which is what `goBack` is for, and pretending
+   * otherwise would invent a hierarchy the index does not have.
+   */
   const goUp = useCallback(() => {
+    if (path === null) {
+      goBack();
+      return;
+    }
     const parent = parentOf(path);
     if (parent) goTo(parent);
-  }, [path, parentOf, goTo]);
+  }, [path, parentOf, goTo, goBack]);
 
   /** Clicking the same column again reverses it, which is what every file manager does. */
   const orderBy = useCallback(
@@ -233,9 +271,10 @@ export function useView(startPath: string) {
 
   const reload = useCallback(() => setGeneration((g) => g + 1), []);
 
-  const showing = searching ? overlay : place;
+  const showing = searching ? overlay : held;
   const state: ViewState = {
-    source: searching ? { kind: "query", text: query.trim() } : { kind: "dir", path },
+    source: searching ? { kind: "query", text: query.trim() } : place,
+    place,
     path,
     searching,
     basis: showing.basis,

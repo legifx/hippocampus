@@ -852,6 +852,9 @@ pub enum PlaceKind {
     /// capacity worth measuring, it is not indexed, and it can stop answering while somebody is
     /// looking at it.
     Network,
+    /// A place the index made rather than the filesystem: a concept, the working set, a tier
+    /// (M10 step 3). It has no path; `source` says how to open it.
+    View,
 }
 
 /// How full a volume is. `None` for anything that is not one.
@@ -907,6 +910,10 @@ pub struct Place {
     /// an unmounted volume's `path` is a device node and not a directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub volume: Option<VolumeInfo>,
+    /// How to open a place the index made. Present exactly when `kind` is `View`, and it is what
+    /// makes a concept somewhere you can go rather than a word in a report (M10 §4.3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<crate::view::Source>,
 }
 
 /// One heading and what is under it.
