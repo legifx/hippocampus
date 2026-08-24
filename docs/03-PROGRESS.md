@@ -1857,6 +1857,16 @@ dismissed the window left four calls a second and a half running against the dae
 next reboot. It listens now, and the test that says so was checked against the version without
 the guard.
 
+**What the panel asks for, before anybody measures what it costs.** Two things were wasteful in
+a way that reading the code makes obvious and reading a CPU number would not have attributed.
+The Live tab re-read the last eighty audit entries *and* the last eighty refusals on every
+two-second poll — with `args_json`, the largest column in that table and one it never displays —
+for a daemon on which usually nothing had happened. `audit.recent` takes a cursor now, which is
+`brain.diff`'s own argument applied to the other thing a client watches, and the panel appends
+instead of replacing. The session list cannot be cursored the same way, because the counts
+inside a session are the part that changes; it asks for twenty rather than fifty, which is what a
+live view needs, and `cortex sessions` is where the rest of them live.
+
 The cost half is still not measured. The panel does not poll while it is shut and does not poll a
 tab that is not showing, and both are asserted. Nothing has measured what it costs while the
 Live tab streams. This project has a recorded case of a hidden window burning a full core that no
