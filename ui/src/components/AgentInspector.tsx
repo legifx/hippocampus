@@ -164,6 +164,21 @@ export function AgentInspector({ open, onClose, tab, onTab }: AgentInspectorProp
     [fail, loadMemories],
   );
 
+  const supersede = useCallback(
+    async (oldId: number, newId: number) => {
+      setBusy(true);
+      try {
+        await ipc.supersedeMemory(oldId, newId);
+        await loadMemories();
+      } catch (e) {
+        fail(e);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [fail, loadMemories],
+  );
+
   const toggleSurface = useCallback(async () => {
     if (!status) return;
     setBusy(true);
@@ -240,6 +255,7 @@ export function AgentInspector({ open, onClose, tab, onTab }: AgentInspectorProp
             busy={busy}
             now={now}
             onForget={forget}
+            onSupersede={supersede}
           />
         )}
         {tab === "policy" && <PolicyTab status={status} refused={refused} />}
@@ -337,14 +353,24 @@ function MemoryTab({
   busy,
   now,
   onForget,
+  onSupersede,
 }: {
   memories: Memory[];
   basis: string;
   busy: boolean;
   now: number;
   onForget: (memory: Memory) => void;
+  onSupersede: (oldId: number, newId: number) => void;
 }) {
   const [confirming, setConfirming] = useState<number | null>(null);
+  /**
+   * The memory a supersession is being built from, if one is.
+   *
+   * Two clicks rather than a form: pick the one that is out of date, then the one that replaces
+   * it. A text field would need the human to know an id, and the ids are the least memorable
+   * thing on this screen.
+   */
+  const [replacing, setReplacing] = useState<Memory | null>(null);
   return (
     <div className="hc-inspector-pane">
       <h2 className="hc-meta">
@@ -352,6 +378,14 @@ function MemoryTab({
       </h2>
       {/* Every view states its own basis — what this list is, and what it is not. */}
       <p className="hc-faint hc-basis">{basis}</p>
+      {replacing && (
+        <p className="hc-banner" role="status">
+          Welche Erinnerung ersetzt „{replacing.text.slice(0, 60)}…“? Die passende auswählen.{" "}
+          <button type="button" className="hc-pill" onMouseDown={() => setReplacing(null)}>
+            Abbrechen
+          </button>
+        </p>
+      )}
       {memories.length === 0 && (
         <p className="hc-faint">
           Noch hat kein Agent etwas gelernt, das nicht in einer Datei steht.
@@ -392,7 +426,22 @@ function MemoryTab({
               )}
               {" · vor "}
               {ago(memory.ts, now)}
-              {confirming === memory.node_id ? (
+              {replacing && replacing.node_id !== memory.node_id ? (
+                <>
+                  {" "}
+                  <button
+                    type="button"
+                    className="hc-pill hc-pill-on"
+                    disabled={busy}
+                    onMouseDown={() => {
+                      onSupersede(replacing.node_id, memory.node_id);
+                      setReplacing(null);
+                    }}
+                  >
+                    Ersetzt sie
+                  </button>
+                </>
+              ) : confirming === memory.node_id ? (
                 <>
                   {" "}
                   <button
@@ -417,11 +466,22 @@ function MemoryTab({
               ) : (
                 <>
                   {" "}
+                  {!memory.superseded_by && (
+                    <button
+                      type="button"
+                      className="hc-pill"
+                      disabled={busy || replacing !== null}
+                      title="Sie war einmal richtig und ist es nicht mehr: eine andere tritt an ihre Stelle, die Historie bleibt"
+                      onMouseDown={() => setReplacing(memory)}
+                    >
+                      Ersetzen
+                    </button>
+                  )}{" "}
                   <button
                     type="button"
                     className="hc-pill"
                     disabled={busy}
-                    title="Löscht sie endgültig — auch über einen Neuaufbau des Index hinweg"
+                    title="Löscht sie endgültig — auch über einen Neuaufbau des Index hinweg. Für etwas, das nie richtig war."
                     onMouseDown={() => setConfirming(memory.node_id)}
                   >
                     Löschen

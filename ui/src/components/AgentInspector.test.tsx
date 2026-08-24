@@ -30,14 +30,35 @@ const MEMORY: Memory = {
   pinned: false,
 };
 
+/** A second memory, so that superseding has something to supersede *with*. */
+const REPLACEMENT: Memory = {
+  ...({} as Memory),
+  node_id: 8,
+  scope: { kind: "agent", id: "claude" },
+  kind: "fact",
+  text: "the corpus is generated before the goldset runs, which is what fixes it",
+  confidence: 0.9,
+  usefulness: 0,
+  helped_count: 0,
+  noise_count: 0,
+  retrieved_count: 0,
+  human_confirmed: false,
+  actor: "human",
+  ts: 1_700_000_100,
+  salience: 0.1,
+  pinned: false,
+};
+
 type Call = { command: string; args: Record<string, unknown> };
 
 let calls: Call[] = [];
 let forgotten: number[] = [];
+let superseded: [number, number][] = [];
 
 function fixture(): void {
   calls = [];
   forgotten = [];
+  superseded = [];
   setTransport({
     async invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
       calls.push({ command, args: args ?? {} });
@@ -93,11 +114,14 @@ function fixture(): void {
           } as T;
         case "memories":
           return {
-            memories: forgotten.includes(MEMORY.node_id) ? [] : [MEMORY],
+            memories: forgotten.includes(MEMORY.node_id) ? [] : [MEMORY, REPLACEMENT],
             basis: "every memory in the index, in every scope",
           } as T;
         case "forget_memory":
           forgotten.push(Number(args?.memoryId));
+          return { changed: true } as T;
+        case "supersede_memory":
+          superseded.push([Number(args?.old), Number(args?.new)]);
           return { changed: true } as T;
         default:
           throw new Error(`the fixture has no answer for ${command}`);
@@ -157,13 +181,15 @@ describe("AgentInspector", () => {
   });
 
   it("deletes a memory only after the deletion is confirmed", async () => {
-    const { getByText } = render(<Harness open tab="memory" />);
+    const { getAllByText, getByText } = render(<Harness open tab="memory" />);
     await waitFor(() => expect(screen.getByText(/empty goldset/)).toBeTruthy());
 
     // One click arms it and deletes nothing. A memory is durable and a mis-click is not a
-    // reason to lose one.
+    // reason to lose one. The first row is the one the fixture puts first.
     await act(async () => {
-      getByText("Löschen").dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      getAllByText("Löschen")[0]!.dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true }),
+      );
     });
     expect(forgotten).toEqual([]);
 
@@ -174,6 +200,30 @@ describe("AgentInspector", () => {
     });
     await waitFor(() => expect(forgotten).toEqual([MEMORY.node_id]));
     await waitFor(() => expect(screen.queryByText(/empty goldset/)).toBeNull());
+  });
+
+  // D78 gives the human three verbs and the first version of this panel wired one of them.
+  it("supersedes one memory with another, in two clicks", async () => {
+    const { getAllByText, getByText } = render(<Harness open tab="memory" />);
+    await waitFor(() => expect(screen.getByText(/empty goldset/)).toBeTruthy());
+
+    // Click one: the memory that is out of date. Nothing has happened yet.
+    await act(async () => {
+      getAllByText("Ersetzen")[0]!.dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true }),
+      );
+    });
+    expect(superseded).toEqual([]);
+    expect(screen.getByText(/Welche Erinnerung ersetzt/)).toBeTruthy();
+
+    // Click two: the one that replaces it. Only the *other* rows offer it, because a memory
+    // cannot supersede itself.
+    await act(async () => {
+      getByText("Ersetzt sie").dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+    await waitFor(() => expect(superseded).toEqual([[MEMORY.node_id, REPLACEMENT.node_id]]));
+    // Superseding is not deleting: the history is the reason it exists.
+    expect(forgotten).toEqual([]);
   });
 
   it("asks the daemon for refusals rather than sieving them out of everything", async () => {

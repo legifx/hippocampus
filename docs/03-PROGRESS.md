@@ -1692,7 +1692,7 @@ partial in ways worth reading rather than in ways worth rounding up.
 | 8 | Supersession: absent, present with history, detected without deciding | **met** |
 | 9 | The kill switch reaches every memory tool | **met** — asserted per tool over the socket |
 | 10 | The Inspector renders at 400 px, costs under 1 % of a core, and gives the window back | **partly — the width and the give-back are measured; the cost is not** |
-| 11 | A human's deletion is immediate and survives a rebuild | **met**, live as well as in a test |
+| 11 | A human's deletion is immediate and survives a rebuild | **met**, live as well as in a test — and superseding is wired now too, which the first version of the panel had not been |
 | 12 | A real task, twice, by a human, measurably better the second time | **not done — this one needs the owner** |
 
 **§2, at scale.** Two tests, and they are about different things. The dozen-memory one is about
