@@ -5,7 +5,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
-use cortex_core::memory::{AgentSession, ContextPack};
+use cortex_core::memory::ContextPack;
 use cortex_core::paths::Paths;
 use cortex_core::tools::{
     AnnotateParams, AnnotateResult, AppsForPathParams, AppsForPathResult, AppsSetDefaultParams,
@@ -20,7 +20,7 @@ use cortex_core::tools::{
 use cortex_core::tools::{
     ChangedResult, ContextParams, ForgetMemoryParams, MemoriesParams, MemoriesResult,
     OutcomeParams, OutcomeResult, RememberParams, RememberResult, ScopeRequest, SessionsParams,
-    SupersedeParams,
+    SessionsResult, SupersedeParams,
 };
 use cortex_rpc::client::Client;
 use cortex_rpc::protocol::{
@@ -1195,13 +1195,15 @@ async fn run(args: Args) -> Result<()> {
         },
 
         Command::Sessions { limit } => {
-            let sessions: Vec<AgentSession> = client
+            let result: SessionsResult = client
                 .call(method::AGENT_SESSIONS, SessionsParams { limit: Some(limit) })
                 .await?;
+            let sessions = &result.sessions;
             if args.json {
-                print_json(&sessions)?;
+                print_json(&result)?;
             } else {
-                for session in &sessions {
+                println!("{}", result.basis);
+                for session in sessions {
                     println!(
                         "{:<28} {:<12} {:>5} calls {:>4} refused {:>4} memories  {}",
                         session.id,

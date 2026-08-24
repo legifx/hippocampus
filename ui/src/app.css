@@ -910,3 +910,251 @@
   grid-row: 1 / span 2;
   font-family: var(--hc-mono);
 }
+
+/* ---------------------------------------------------------------------------
+   The Agent Inspector (M11 §8)
+
+   A panel inside the one toplevel, never a second window — niri owns the layout, and M4's
+   constraints are requirements rather than preferences. It covers the body rather than sitting
+   beside it, because at 400 px there is no beside.
+
+   Every colour here is a token. Nothing animates: this panel is opened to watch something, and
+   a running animation recomposites the whole window every frame — which is what cost this
+   project a full core once already (D59).
+   --------------------------------------------------------------------------- */
+
+.hc-inspector {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  background: var(--hc-bg);
+  border-radius: var(--hc-radius-overlay);
+  overflow: hidden;
+}
+
+.hc-inspector-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--hc-stroke);
+  background: var(--hc-surface);
+  flex: none;
+}
+
+.hc-tabs {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.hc-tab {
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 3px 9px;
+  border-radius: var(--hc-radius-pill);
+  border: 1px solid transparent;
+  color: var(--hc-text-dim);
+  white-space: nowrap;
+}
+
+.hc-tab-on {
+  color: var(--hc-text);
+  border-color: var(--hc-stroke-lift);
+  background: var(--hc-surface-hi);
+}
+
+.hc-inspector-head .hc-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.hc-pill-on {
+  color: var(--hc-success);
+  border-color: color-mix(in srgb, var(--hc-success) 45%, transparent);
+}
+
+.hc-pill-off {
+  color: var(--hc-error);
+  border-color: color-mix(in srgb, var(--hc-error) 55%, transparent);
+}
+
+.hc-pill-danger {
+  color: var(--hc-error);
+  border-color: color-mix(in srgb, var(--hc-error) 55%, transparent);
+}
+
+.hc-inspector-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Two panes side by side when there is room, and stacked when there is not. The panel has to
+   work from 400 px to full width, and 400 px is the common case in a tiling column. */
+.hc-inspector-split {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+  min-height: 0;
+}
+
+@media (min-width: 900px) {
+  .hc-inspector-split {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .hc-inspector-split > .hc-inspector-pane + .hc-inspector-pane {
+    border-left: 1px solid var(--hc-stroke);
+    border-top: none;
+  }
+}
+
+.hc-inspector-pane {
+  padding: 12px 14px;
+  min-width: 0;
+}
+
+.hc-inspector-split > .hc-inspector-pane + .hc-inspector-pane {
+  border-top: 1px solid var(--hc-stroke);
+}
+
+.hc-inspector-pane h2 {
+  margin: 0 0 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+}
+
+.hc-basis {
+  margin: -4px 0 10px;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.hc-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hc-rows-dense {
+  gap: 2px;
+}
+
+.hc-row-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  padding: 5px 8px;
+  border-radius: var(--hc-radius-row);
+  background: var(--hc-surface);
+  border: 1px solid var(--hc-stroke);
+  font-size: 12.5px;
+  line-height: 1.4;
+  min-width: 0;
+}
+
+.hc-row-main {
+  flex: 1 1 260px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.hc-row-side {
+  flex: 0 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+}
+
+/* A refused call is the one a person opens this panel to find. */
+.hc-row-refused {
+  border-color: color-mix(in srgb, var(--hc-error) 40%, var(--hc-stroke));
+}
+
+/* Superseded: still there, no longer believed. Dimmed rather than hidden — the history is the
+   reason supersession exists instead of deletion. */
+.hc-row-old {
+  opacity: 0.5;
+}
+
+.hc-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--hc-text-faint);
+  flex: none;
+  align-self: center;
+}
+
+.hc-dot-live {
+  background: var(--hc-success);
+}
+
+.hc-kind {
+  font-size: 11px;
+  margin-right: 6px;
+}
+
+.hc-memory-text {
+  color: var(--hc-text);
+  overflow-wrap: anywhere;
+}
+
+.hc-facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 12px;
+  font-size: 12.5px;
+}
+
+.hc-facts dt {
+  color: var(--hc-text-dim);
+}
+
+.hc-facts dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The three-dimensional tab. A fixed aspect rather than a fixed height, so it is usable in a
+   narrow column without becoming a letterbox. */
+.hc-architecture {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+}
+
+.hc-scene {
+  flex: 1 1 auto;
+  min-height: 240px;
+  border-radius: var(--hc-radius-panel);
+  border: 1px solid var(--hc-stroke);
+  background: #000;
+  overflow: hidden;
+}
+
+.hc-scene canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.hc-scene[data-state="failed"] {
+  display: none;
+}

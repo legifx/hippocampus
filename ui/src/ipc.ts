@@ -58,6 +58,88 @@ export function setTransport(next: Transport): void {
 // because a frontend model that differs from the protocol is a place for the two to drift.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// The Agent Inspector (M11 §8). Read-only, apart from the three writes that are the point of
+// it: the kill switch, undo, and the human's right to delete what a machine believes.
+// ---------------------------------------------------------------------------
+
+export type MemoryKind =
+  | "fact"
+  | "preference"
+  | "procedure"
+  | "decision"
+  | "failure"
+  | "observation";
+
+/** The daemon serialises a scope as `{ kind, id }`, with `id` absent for `global`. */
+export type MemoryScope = { kind: "session" | "agent" | "project" | "global"; id?: string | number };
+
+export type Memory = {
+  node_id: number;
+  scope: MemoryScope;
+  kind: MemoryKind;
+  text: string;
+  subject_id?: number;
+  subject_path?: string;
+  confidence: number;
+  /** Earned by outcome reports. Negative means it has cost more than it has given. */
+  usefulness: number;
+  helped_count: number;
+  noise_count: number;
+  retrieved_count: number;
+  human_confirmed: boolean;
+  expires_at?: number;
+  superseded_by?: number;
+  session_id?: string;
+  actor: string;
+  ts: number;
+  salience: number;
+  pinned: boolean;
+};
+
+export type MemoriesResult = {
+  memories: Memory[];
+  /** What this list is, and what it is not. Every view states its own basis. */
+  basis: string;
+};
+
+export type SessionsResult = {
+  sessions: AgentSession[];
+  /** How many are still running. Counted by the daemon, like every other decision. */
+  open: number;
+  basis: string;
+};
+
+export type AgentSession = {
+  id: string;
+  name: string;
+  task?: string;
+  started_at: number;
+  ended_at?: number;
+  calls: number;
+  refusals: number;
+  memories: number;
+};
+
+export type AuditEntry = {
+  id: number;
+  ts: number;
+  actor: string;
+  tool: string;
+  args_json: string;
+  result_summary?: string;
+  allowed: boolean;
+};
+
+export type AuditRecentResult = { entries: AuditEntry[] };
+
+export type AgentStatusResult = {
+  enabled: boolean;
+  indexing_paused: boolean;
+  write_allowlist: string[];
+  require_dry_run: boolean;
+};
+
 export type QueryMode = "auto" | "locate" | "recall" | "reference";
 
 export type ScoreBreakdown = {
@@ -583,6 +665,50 @@ export const ipc = {
           };
     return transport.invoke<number>("mark_interactive", timing);
   },
+
+  // ---- The Agent Inspector -------------------------------------------------------------
+
+  agentSessions: (limit = 50) =>
+    transport.invoke<SessionsResult>("agent_sessions", { limit }),
+
+  /**
+   * Every memory in the index, in every scope, including superseded ones.
+   *
+   * The agent surface refuses this listing and the window is permitted it, and that asymmetry
+   * is the whole point of the panel (D78): a system that lets a machine form durable beliefs
+   * about a person's work and does not let the person read them is a system keeping secrets.
+   */
+  memories: (limit = 500, includeSuperseded = true) =>
+    transport.invoke<MemoriesResult>("memories", {
+      limit,
+      includeSuperseded,
+    }),
+
+  forgetMemory: (memoryId: number) =>
+    transport.invoke<{ changed: boolean }>("forget_memory", { memoryId }),
+
+  supersedeMemory: (oldId: number, newId: number) =>
+    transport.invoke<{ changed: boolean }>("supersede_memory", { old: oldId, new: newId }),
+
+  agentStatus: () => transport.invoke<AgentStatusResult>("agent_status"),
+
+  agentSetEnabled: (enabled: boolean) =>
+    transport.invoke<AgentStatusResult>("agent_set_enabled", { enabled }),
+
+  /**
+   * The audit log, newest first (R8).
+   *
+   * `refusedOnly` is the daemon's filter and not this window's. D4: the frontend renders what
+   * it is sent, so "only the refused ones" is a different call rather than a different view of
+   * one answer — and there is an architectural test that fails if that slips.
+   */
+  auditRecent: (limit = 100, refusedOnly = false) =>
+    transport.invoke<AuditRecentResult>("audit_recent", { limit, refusedOnly }),
+
+  /** The whole brain, for the three-dimensional view. Large; asked for only when it is shown. */
+  brainGraph: (limit = 4000) => transport.invoke<unknown>("brain_graph", { limit }),
+
+  brainReport: () => transport.invoke<unknown>("brain_report"),
 
   startupReport: () => transport.invoke<StartupReport>("startup_report"),
 

@@ -426,21 +426,27 @@ impl Surface<'_> {
         Ok(ChangedResult { changed })
     }
 
-    pub fn sessions(
-        &self,
-        params: &SessionsParams,
-    ) -> ToolResult<Vec<cortex_store::memories::AgentSession>> {
+    pub fn sessions(&self, params: &SessionsParams) -> ToolResult<SessionsResult> {
         let tool = "agent.sessions";
         let args = serde_json::to_value(params).unwrap_or_default();
         self.gate_args(tool, &args)?;
 
+        let limit = params.limit.unwrap_or(50);
         let sessions = self
             .store
-            .agent_sessions(params.limit.unwrap_or(50))
+            .agent_sessions(limit)
             .map_err(|e| ToolError::Store(e.to_string()))?;
+        let open = sessions.iter().filter(|s| s.ended_at.is_none()).count();
         self.auditor
             .allowed(self.now, tool, &args, &summarize("sessions", sessions.len(), None));
-        Ok(sessions)
+        Ok(SessionsResult {
+            basis: format!(
+                "the {} most recent agent sessions, newest first; {open} still running",
+                sessions.len().min(limit)
+            ),
+            open,
+            sessions,
+        })
     }
 }
 

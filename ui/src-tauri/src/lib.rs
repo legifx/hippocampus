@@ -30,6 +30,150 @@ pub struct AppState {
 // Commands. Each is one line of forwarding plus the argument the frontend finds natural.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// The Agent Inspector (M11 §8).
+//
+// Reads, plus the three writes that exist on purpose: the kill switch, undo, and the human's
+// right to delete what a machine believes about their work (D78). Everything else the panel
+// shows is a projection of what the daemon already answers to every other client.
+// ---------------------------------------------------------------------------
+
+/// Sessions an agent has opened against this daemon, newest first.
+#[tauri::command]
+async fn agent_sessions(
+    state: tauri::State<'_, AppState>,
+    limit: Option<usize>,
+) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(
+            cortex_rpc::protocol::method::AGENT_SESSIONS,
+            json!({ "limit": limit }),
+        )
+        .await
+}
+
+/// Every memory in the index, in every scope.
+///
+/// `everything` is refused for an agent and permitted here, and that asymmetry is the point of
+/// the panel: a system that lets a machine form durable beliefs about a person's work and does
+/// not let the person read them is a system keeping secrets.
+#[tauri::command]
+async fn memories(
+    state: tauri::State<'_, AppState>,
+    limit: Option<usize>,
+    kinds: Option<Vec<String>>,
+    include_superseded: Option<bool>,
+) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(
+            cortex_rpc::protocol::method::BRAIN_MEMORIES,
+            json!({
+                "everything": true,
+                "limit": limit,
+                "kinds": kinds.unwrap_or_default(),
+                "include_superseded": include_superseded.unwrap_or(true),
+            }),
+        )
+        .await
+}
+
+/// Delete a memory. Writes a `forget_memory` episode, so it stays deleted through a rebuild.
+#[tauri::command]
+async fn forget_memory(
+    state: tauri::State<'_, AppState>,
+    memory_id: i64,
+) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(
+            cortex_rpc::protocol::method::BRAIN_FORGET_MEMORY,
+            json!({ "memory_id": memory_id }),
+        )
+        .await
+}
+
+/// Mark one memory as replaced by another.
+#[tauri::command]
+async fn supersede_memory(
+    state: tauri::State<'_, AppState>,
+    old: i64,
+    new: i64,
+) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(
+            cortex_rpc::protocol::method::BRAIN_SUPERSEDE,
+            json!({ "old": old, "new": new }),
+        )
+        .await
+}
+
+/// The kill switch's current state, and the policy behind it.
+#[tauri::command]
+async fn agent_status(state: tauri::State<'_, AppState>) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(cortex_rpc::protocol::method::AGENT_STATUS, json!({}))
+        .await
+}
+
+/// Switch the Agent Surface on or off (R7). One of the three writes this panel has.
+#[tauri::command]
+async fn agent_set_enabled(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(
+            cortex_rpc::protocol::method::AGENT_SET_ENABLED,
+            json!({ "enabled": enabled }),
+        )
+        .await
+}
+
+/// The audit log, newest first (R8).
+#[tauri::command]
+async fn audit_recent(
+    state: tauri::State<'_, AppState>,
+    limit: Option<usize>,
+    refused_only: Option<bool>,
+) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(
+            cortex_rpc::protocol::method::AUDIT_RECENT,
+            json!({ "limit": limit, "refused_only": refused_only.unwrap_or(false) }),
+        )
+        .await
+}
+
+/// The brain, as the three-dimensional view draws it.
+#[tauri::command]
+async fn brain_graph(
+    state: tauri::State<'_, AppState>,
+    limit: Option<usize>,
+) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(
+            cortex_rpc::protocol::method::BRAIN_GRAPH,
+            json!({ "limit": limit }),
+        )
+        .await
+}
+
+/// The last consolidation report, without running a pass.
+#[tauri::command]
+async fn brain_report(state: tauri::State<'_, AppState>) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(cortex_rpc::protocol::method::BRAIN_REPORT, json!({}))
+        .await
+}
+
 #[tauri::command]
 async fn search(
     state: tauri::State<'_, AppState>,
@@ -946,6 +1090,15 @@ pub fn run() {
             clipboard_clear,
             mark_interactive,
             startup_report,
+            agent_sessions,
+            memories,
+            forget_memory,
+            supersede_memory,
+            agent_status,
+            agent_set_enabled,
+            audit_recent,
+            brain_graph,
+            brain_report,
         ])
         .run(tauri::generate_context!())
         .expect("the overlay failed to start");

@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Ambient } from "./components/Ambient";
 import { Breadcrumb } from "./components/Breadcrumb";
+import { AgentInspector, type InspectorTab } from "./components/AgentInspector";
 import { CommandPalette, type Command } from "./components/CommandPalette";
 import { ConflictDialog } from "./components/ConflictDialog";
 import { OpenWith } from "./components/OpenWith";
@@ -120,6 +121,11 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
   const [query, setQuery] = useState("");
   const [pane, setPane] = useState<Pane>("preview");
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // The Agent Inspector. Which tab is held here rather than inside it, so that closing the
+  // panel and opening it again lands where it was left — a person checking on a running agent
+  // does that several times a minute.
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>("live");
   /// The row being renamed, and the name of a folder being created. Both are one small input
   /// in the header rather than a dialog: M4's niri constraints forbid a second toplevel, and a
   /// modal over the list would hide the thing being named.
@@ -381,6 +387,13 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
     () => [
       { id: "open", label: "Öffnen", binding: "Enter", run: openSelected },
       {
+        id: "agents",
+        label: "Agenten-Inspektor",
+        binding: "Ctrl+Shift+A",
+        detail: "Sitzungen, Gedächtnis, Regeln, Rückgängig, Architektur",
+        run: () => setInspectorOpen(true),
+      },
+      {
         id: "open-with",
         label: "Öffnen mit …",
         binding: "Ctrl+Enter",
@@ -527,6 +540,7 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
       if (event.key === "Escape") {
         event.preventDefault();
         if (paletteOpen) setPaletteOpen(false);
+        else if (inspectorOpen) setInspectorOpen(false);
         else if (renaming || creating !== null) {
           setRenaming(null);
           setCreating(null);
@@ -541,7 +555,23 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
         setPaletteOpen((open) => !open);
         return;
       }
+      // Ctrl+Shift+A: the Agent Inspector. Checked on the lower-case key as well, because a
+      // shifted `a` arrives as `A` on some layouts and as `a` on others, and a binding that
+      // works on one keyboard is a binding that does not work.
+      if (
+        (event.key === "A" || event.key === "a") &&
+        event.shiftKey &&
+        (event.ctrlKey || event.metaKey)
+      ) {
+        event.preventDefault();
+        setInspectorOpen((open) => !open);
+        return;
+      }
       if (paletteOpen) return;
+      // The panel owns the keyboard while it is open, except for the two bindings above. It is
+      // a dialog inside the one toplevel, not a mode: arrow keys inside it must not also move
+      // the cursor in the result list behind it.
+      if (inspectorOpen) return;
 
       // While the conflict question is open, nothing else may act: the answer decides what
       // happens to files, and an arrow key that moved the selection underneath it would change
@@ -791,6 +821,21 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
               )}
             </>
           )}
+          <button
+            type="button"
+            className={inspectorOpen ? "hc-pill hc-pill-on" : "hc-pill"}
+            title="Agenten-Inspektor (Ctrl+Shift+A)"
+            aria-label="Agenten-Inspektor"
+            aria-pressed={inspectorOpen}
+            onMouseDown={(event) => {
+              // The search field must keep the caret: a person clicks this, looks, closes it,
+              // and goes on typing. Taking focus would cost them the next keystroke.
+              event.preventDefault();
+              setInspectorOpen((open) => !open);
+            }}
+          >
+            Agenten
+          </button>
         </span>
       </header>
 
@@ -945,6 +990,16 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
           onCancel={closeChooser}
         />
       )}
+
+      <AgentInspector
+        open={inspectorOpen}
+        tab={inspectorTab}
+        onTab={setInspectorTab}
+        onClose={() => {
+          setInspectorOpen(false);
+          input.current?.focus();
+        }}
+      />
 
       <CommandPalette
         open={paletteOpen}

@@ -1516,3 +1516,16 @@ pub struct SessionsParams {
 pub struct SessionEndParams {
     pub session_id: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionsResult {
+    pub sessions: Vec<crate::memory::AgentSession>,
+    /// How many of them are still running.
+    ///
+    /// Counted here rather than by whoever renders the list. D4's condition is that the
+    /// frontend renders and does not decide, and "how many of these are open" is a decision
+    /// made from data — the sort that two clients eventually disagree about.
+    pub open: usize,
+    /// What this list is, and what it is not.
+    pub basis: String,
+}
