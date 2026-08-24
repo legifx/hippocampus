@@ -1164,10 +1164,20 @@ async fn dispatch_inner(
                 .map(serde_json::from_value)
                 .transpose()
                 .map_err(|e| RpcError::invalid_params(e.to_string()))?
-                .unwrap_or(AuditRecentParams { limit: None, actor: None, refused_only: false });
+                .unwrap_or(AuditRecentParams {
+                    limit: None,
+                    actor: None,
+                    refused_only: false,
+                    after: None,
+                });
             let entries = daemon
                 .store
-                .recent_audit(params.limit.unwrap_or(50).min(1000), params.actor.as_deref(), params.refused_only)
+                .recent_audit(
+                    params.limit.unwrap_or(50).min(1000),
+                    params.actor.as_deref(),
+                    params.refused_only,
+                    params.after,
+                )
                 .map_err(internal)?;
             json(AuditRecentResult {
                 entries,

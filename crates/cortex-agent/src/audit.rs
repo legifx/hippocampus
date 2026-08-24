@@ -150,7 +150,7 @@ mod tests {
         );
         assert_eq!(refusal.tag(), "denied");
 
-        let entries = store.recent_audit(10, None, true).unwrap();
+        let entries = store.recent_audit(10, None, true, None).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].actor, "agent:test");
         assert_eq!(entries[0].tool, "fs.read");
@@ -169,7 +169,7 @@ mod tests {
             &summarize("bytes read", 0, Some(1200)),
         );
 
-        let entries = store.recent_audit(10, None, false).unwrap();
+        let entries = store.recent_audit(10, None, false, None).unwrap();
         assert!(entries[0].allowed);
         assert!(entries[0].result_summary.as_ref().unwrap().contains("1200"));
     }

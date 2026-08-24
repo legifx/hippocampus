@@ -50,11 +50,19 @@ impl Store {
     ///
     /// `actor` and `refused_only` narrow the answer in SQL rather than in the caller, because
     /// "show me every refusal" over a long-running index must not have to read the whole log.
+    ///
+    /// `after` is the same argument applied to time: a live view polls, and a poll that asks
+    /// for the last eighty entries every two seconds re-reads seventy-nine it already has —
+    /// with their arguments, which are the largest column in the table and which no live view
+    /// displays. Passing the highest id it has seen turns that into an empty answer whenever
+    /// nothing happened, which is almost always. This is `brain.diff`'s reasoning applied to
+    /// the one other thing a client watches.
     pub fn recent_audit(
         &self,
         limit: usize,
         actor: Option<&str>,
         refused_only: bool,
+        after: Option<i64>,
     ) -> Result<Vec<AuditEntry>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
@@ -62,11 +70,12 @@ impl Store {
              FROM audit_log
              WHERE (?1 IS NULL OR actor = ?1)
                AND (?2 = 0 OR allowed = 0)
+               AND (?4 IS NULL OR id > ?4)
              ORDER BY ts DESC, id DESC
              LIMIT ?3",
         )?;
 
-        let rows = stmt.query_map(params![actor, refused_only as i64, limit as i64], |row| {
+        let rows = stmt.query_map(params![actor, refused_only as i64, limit as i64, after], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, i64>(1)?,
@@ -233,6 +242,44 @@ mod tests {
         Store::open_in_memory().unwrap()
     }
 
+    /// A cursor turns a poll of a quiet daemon into an empty answer.
+    ///
+    /// The Live tab asks twice every two seconds. Without this it re-read the last eighty rows
+    /// each time — with `args_json`, the largest column in the table and one no live view
+    /// displays — for a daemon on which nothing had happened.
+    #[test]
+    fn the_audit_log_can_be_read_from_a_cursor() {
+        let s = store();
+        for tool in ["fs.list", "fs.read", "brain.context"] {
+            s.append_audit(1, "agent:a", tool, &serde_json::json!({}), Some("ok"), true)
+                .unwrap();
+        }
+
+        let all = s.recent_audit(10, None, false, None).unwrap();
+        assert_eq!(all.len(), 3);
+        let newest = all.iter().map(|e| e.id).max().unwrap();
+
+        // Nothing has happened since.
+        assert!(s
+            .recent_audit(10, None, false, Some(newest))
+            .unwrap()
+            .is_empty());
+
+        // And then something does.
+        s.append_audit(
+            2,
+            "agent:a",
+            "brain.remember",
+            &serde_json::json!({}),
+            Some("ok"),
+            true,
+        )
+        .unwrap();
+        let fresh = s.recent_audit(10, None, false, Some(newest)).unwrap();
+        assert_eq!(fresh.len(), 1, "a cursor returned more than what is new");
+        assert_eq!(fresh[0].tool, "brain.remember");
+    }
+
     #[test]
     fn audit_records_refusals_and_reads_them_back() {
         let s = store();
@@ -248,16 +295,16 @@ mod tests {
         )
         .unwrap();
 
-        let all = s.recent_audit(10, None, false).unwrap();
+        let all = s.recent_audit(10, None, false, None).unwrap();
         assert_eq!(all.len(), 2);
         assert_eq!(all[0].tool, "fs.write", "newest first");
 
-        let refused = s.recent_audit(10, None, true).unwrap();
+        let refused = s.recent_audit(10, None, true, None).unwrap();
         assert_eq!(refused.len(), 1);
         assert!(!refused[0].allowed);
         assert_eq!(refused[0].args["path"], "/x");
 
-        let other = s.recent_audit(10, Some("agent:other"), false).unwrap();
+        let other = s.recent_audit(10, Some("agent:other"), false, None).unwrap();
         assert!(other.is_empty());
     }
 

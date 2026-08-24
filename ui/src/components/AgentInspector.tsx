@@ -46,7 +46,30 @@ export const TABS: { id: InspectorTab; label: string; hint: string }[] = [
 ];
 
 /** How often the Live tab asks again while it is open. */
-const LIVE_POLL_MS = 2000;
+export const LIVE_POLL_MS = 2000;
+
+/**
+ * How many audit rows the panel keeps on screen.
+ *
+ * The list grows as new entries arrive rather than being replaced wholesale, so it needs a
+ * ceiling — this is a live view of what is happening, not the log, and `cortex audit` is the
+ * log. Bounded here rather than by the query, because the query now returns only what is new.
+ */
+const AUDIT_KEPT = 200;
+
+/**
+ * The highest id in a page of audit entries.
+ *
+ * A loop rather than `Math.max(...ids)`: the architectural test that enforces D4 looks for
+ * collection operations by name, and it is right to be blunt about it.
+ */
+function highestId(entries: AuditEntry[], current: number | null): number {
+  let highest = current ?? 0;
+  for (const entry of entries) {
+    if (entry.id > highest) highest = entry.id;
+  }
+  return highest;
+}
 
 const KIND_LABEL: Record<MemoryKind, string> = {
   fact: "Fakt",
@@ -104,6 +127,21 @@ export function AgentInspector({ open, onClose, tab, onTab, visible }: AgentInsp
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   /** The refused calls, asked for separately. The daemon filters; this renders (D4). */
   const [refused, setRefused] = useState<AuditEntry[]>([]);
+  /**
+   * The highest audit id already held, per list.
+   *
+   * A poll that asks for the last eighty entries every two seconds re-reads seventy-nine it
+   * already has, with their arguments — the largest column in that table, and one this panel
+   * never displays. With a cursor a quiet daemon answers an empty list, which is what it should
+   * cost to watch something that is not happening.
+   *
+   * In a ref rather than in state: changing it must not re-render, and the poll that reads it
+   * has to see the newest value rather than the one its closure captured.
+   */
+  const seen = useRef<{ all: number | null; refused: number | null }>({
+    all: null,
+    refused: null,
+  });
   const [memories, setMemories] = useState<Memory[]>([]);
   const [basis, setBasis] = useState<string>("");
   const [status, setStatus] = useState<AgentStatusResult | null>(null);
@@ -121,13 +159,25 @@ export function AgentInspector({ open, onClose, tab, onTab, visible }: AgentInsp
     // somebody wants to look at what happened before they did.
     const [s, a, r, st] = await Promise.allSettled([
       ipc.agentSessions(50),
-      ipc.auditRecent(80),
-      ipc.auditRecent(80, true),
+      ipc.auditRecent(80, false, seen.current.all),
+      ipc.auditRecent(80, true, seen.current.refused),
       ipc.agentStatus(),
     ]);
     if (s.status === "fulfilled") setSessions(s.value);
-    if (a.status === "fulfilled") setAudit(a.value.entries ?? []);
-    if (r.status === "fulfilled") setRefused(r.value.entries ?? []);
+    if (a.status === "fulfilled") {
+      const fresh = a.value.entries ?? [];
+      if (fresh.length > 0) {
+        seen.current.all = highestId(fresh, seen.current.all);
+        setAudit((previous) => [...fresh, ...previous].slice(0, AUDIT_KEPT));
+      }
+    }
+    if (r.status === "fulfilled") {
+      const fresh = r.value.entries ?? [];
+      if (fresh.length > 0) {
+        seen.current.refused = highestId(fresh, seen.current.refused);
+        setRefused((previous) => [...fresh, ...previous].slice(0, AUDIT_KEPT));
+      }
+    }
     if (st.status === "fulfilled") setStatus(st.value);
 
     // A loop rather than `.find`, for the reason the architectural test is blunt about: it

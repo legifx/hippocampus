@@ -57,6 +57,7 @@ two are different questions and the second one is the one this system is unusual
 | `brain_working_set()` | what the human is doing right now, with the basis it was derived from |
 | `brain_explain(query, target)` | why something ranked where it did — or, for a memory, what it has earned and whether it is still believed |
 | `brain_diff(since)` | everything that changed since a cursor. **Exists so that you do not poll** |
+| `audit_recent(after)` | the same idea applied to the audit log: pass the highest id you have, get only what is newer |
 | `brain_graph(limit)` | the whole brain, for something that draws it. The one call documented as large |
 
 ## The agent's own memory

@@ -822,6 +822,10 @@ pub struct AuditRecentParams {
     /// Only the calls that were turned away. Usually the interesting ones.
     #[serde(default)]
     pub refused_only: bool,
+    /// Only entries newer than this id. What a live view passes so that a poll on a quiet
+    /// daemon costs an empty answer instead of the last eighty rows and their arguments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

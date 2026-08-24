@@ -203,7 +203,7 @@ fn every_brain_tool_refuses_while_the_surface_is_off() {
         );
     }
 
-    let refused = env.store.recent_audit(100, None, true).unwrap();
+    let refused = env.store.recent_audit(100, None, true, None).unwrap();
     assert_eq!(refused.len(), calls.len(), "a refusal went unaudited");
 }
 

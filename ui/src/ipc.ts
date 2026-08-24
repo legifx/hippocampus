@@ -745,8 +745,8 @@ export const ipc = {
    * it is sent, so "only the refused ones" is a different call rather than a different view of
    * one answer — and there is an architectural test that fails if that slips.
    */
-  auditRecent: (limit = 100, refusedOnly = false) =>
-    transport.invoke<AuditRecentResult>("audit_recent", { limit, refusedOnly }),
+  auditRecent: (limit = 100, refusedOnly = false, after: number | null = null) =>
+    transport.invoke<AuditRecentResult>("audit_recent", { limit, refusedOnly, after }),
 
   /** The whole brain, for the three-dimensional view. Large; asked for only when it is shown. */
   brainGraph: (limit = 4000) => transport.invoke<unknown>("brain_graph", { limit }),

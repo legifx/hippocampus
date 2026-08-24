@@ -175,12 +175,17 @@ async fn audit_recent(
     state: tauri::State<'_, AppState>,
     limit: Option<usize>,
     refused_only: Option<bool>,
+    after: Option<i64>,
 ) -> Result<Value, BridgeError> {
     state
         .bridge
         .call(
             cortex_rpc::protocol::method::AUDIT_RECENT,
-            json!({ "limit": limit, "refused_only": refused_only.unwrap_or(false) }),
+            json!({
+                "limit": limit,
+                "refused_only": refused_only.unwrap_or(false),
+                "after": after,
+            }),
         )
         .await
 }

@@ -1895,7 +1895,12 @@ async fn run(args: Args) -> Result<()> {
             let result: AuditRecentResult = client
                 .call(
                     method::AUDIT_RECENT,
-                    AuditRecentParams { limit: Some(limit), actor, refused_only: refused },
+                    AuditRecentParams {
+                        limit: Some(limit),
+                        actor,
+                        refused_only: refused,
+                        after: None,
+                    },
                 )
                 .await?;
 

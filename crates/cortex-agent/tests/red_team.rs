@@ -83,7 +83,7 @@ impl Fixture {
 
     fn refusals(&self) -> Vec<String> {
         self.store
-            .recent_audit(1000, None, true)
+            .recent_audit(1000, None, true, None)
             .unwrap()
             .into_iter()
             .map(|e| e.result_summary.unwrap_or_default())
@@ -695,7 +695,7 @@ fn a_mount_that_fails_leaves_a_trace() {
         .unwrap_err();
     assert!(error.to_string().contains("no such volume"), "{error}");
 
-    let entries = f.store.recent_audit(10, None, false).unwrap();
+    let entries = f.store.recent_audit(10, None, false, None).unwrap();
     let mount = entries
         .iter()
         .find(|e| e.tool == "fs.mount")

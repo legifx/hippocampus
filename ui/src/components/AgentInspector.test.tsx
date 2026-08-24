@@ -16,7 +16,7 @@
 
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AgentInspector, type InspectorTab } from "./AgentInspector";
+import { AgentInspector, LIVE_POLL_MS, type InspectorTab } from "./AgentInspector";
 import { setTransport, type Memory } from "../ipc";
 
 const MEMORY: Memory = {
@@ -268,6 +268,31 @@ describe("AgentInspector", () => {
     await waitFor(() => expect(superseded).toEqual([[MEMORY.node_id, REPLACEMENT.node_id]]));
     // Superseding is not deleting: the history is the reason it exists.
     expect(forgotten).toEqual([]);
+  });
+
+  // A poll of a quiet daemon should cost an empty answer, not the last eighty rows again.
+  it("polls the audit log from a cursor and keeps what it already had", async () => {
+    render(<Harness open tab="live" />);
+    // The fixture answers twenty entries, all of them the same tool, so this counts rather than
+    // looks up: `getByText` would fail on the multiple it is here to observe.
+    const shown = () => screen.getAllByText("brain.context").length;
+    await waitFor(() => expect(shown()).toBeGreaterThan(0));
+    const before = shown();
+    const first = calls.filter((call) => call.command === "audit_recent").length;
+
+    await act(async () => {
+      vi.advanceTimersByTime(LIVE_POLL_MS * 2 + 100);
+    });
+
+    const later = calls.filter((call) => call.command === "audit_recent");
+    expect(later.length).toBeGreaterThan(first);
+    // Every poll after the first carries a cursor…
+    expect(later[later.length - 1]!.args.after).not.toBeNull();
+    // …and what was on screen is still on screen. The property is that an empty answer does
+    // not empty the list; the exact count is the fixture's bookkeeping, and asserting it would
+    // be asserting how many polls happened to land inside the window.
+    expect(shown()).toBeGreaterThanOrEqual(before);
+    expect(shown()).toBeGreaterThan(0);
   });
 
   it("asks the daemon for refusals rather than sieving them out of everything", async () => {
