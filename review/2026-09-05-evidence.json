@@ -1,0 +1,67 @@
+{
+  "review_date": "2026-09-05",
+  "commit": "bbef90d",
+  "machine": "owner workstation, RTX 5070 Ti, Ubuntu 26.04, niri/Wayland",
+  "index": {
+    "files": 102913, "dirs": 5774, "chunks": 158037, "embeddings": 160976,
+    "episodes": 13472, "paths_in_memory": 108687, "path_index_mib": 69.2,
+    "extraction": {"done": 102614, "skipped": 298, "failed": 0, "pending": 0},
+    "memories_written_by_agents": 0, "agent_sessions_ever": 0
+  },
+  "tests": {
+    "rust": {"passed": 1054, "failed": 0},
+    "vitest_ui": {"passed": 60, "failed": 0},
+    "vitest_ui_agent": {"passed": 11, "failed": 0},
+    "playwright_functional": {"passed": 159, "failed": 0},
+    "playwright_perf_serial": {"passed": 16, "failed": 0}
+  },
+  "latency_gates_release_build_ms": {
+    "fuzzy_path_literal": {"p95": 1.19, "budget": 10},
+    "keystroke_path_every_prefix": {"p95": 5.88, "budget": 10},
+    "abbreviation_full_scan": {"p95": 4.57, "budget": 25},
+    "bm25_top100": {"p95": 24.14, "budget": 30},
+    "bm25_top100_while_indexer_writes": {"p95": 28.64, "budget": 36.21},
+    "vector_ann_top100": {"p95": 1.05, "budget": 40},
+    "rrf_fusion_salience": {"p95": 0.0107, "budget": 5},
+    "context_pack_2048_tokens_5000_memories": {"p95": 10.36, "budget": 120},
+    "hybrid_search_both_arms_snippets": {"p50": 31.8, "p95": 45.5, "p99": 48.7, "budget_keystroke_to_row": 80},
+    "not_measured": ["query embedding (HIPPOCAMPUS_TEST_RUNTIME/MODEL unset)", "cross-encoder rerank (reranker not installed)"]
+  },
+  "live_measurements": {
+    "search_internal_elapsed_ms": {"report": 26, "rechnung": 19, "steuer 2025": 27},
+    "search_wall_ms_including_cli_process": {"report": 107, "rechnung": 31, "config": 42, "png": 20, "steuer 2025": 33},
+    "brain_context_wall_ms": 38,
+    "daemon_idle_cpu_percent_of_one_core_30s": 0.40, "daemon_idle_cpu_budget": 0.5,
+    "overlay_hidden_cpu_percent_of_one_core_30s": 0.17,
+    "daemon_rss_mib": 1789, "daemon_rss_anon_mib": 1524, "daemon_rss_file_mib": 255,
+    "daemon_anon_budget_mib": 250,
+    "daemon_anon_without_model_documented_mib": 182,
+    "overlay_rss_mib": 158,
+    "path_index_build_ms_at_start": 265,
+    "overlay_cold_start_ms_documented": 265,
+    "slow_calls_over_50ms_last_7_days": {"zones.list": 226, "fs.places": 212, "extract.status": 252, "count": 3}
+  },
+  "agent_surface": {
+    "mcp_tools": 29,
+    "rpc_methods": 85,
+    "surfaces_proven_identical": ["unix socket JSON-RPC", "cortex CLI", "cortex-mcp stdio"],
+    "kill_switch": true, "dry_run_required_for_mutations": true, "audit_log": true, "undo_journal": true
+  },
+  "verdicts": {
+    "human_find_fast": "met, with one gap (no explicit same-name disambiguation test)",
+    "human_overview_and_preview": "met",
+    "agent_brain": "built and proven identical on three surfaces; never used in earnest on this machine (0 memories, 0 sessions)",
+    "performance": "met on every measured gate; one budget exceeded in the GPU configuration (anonymous memory 1524 MiB vs 250 MiB)"
+  },
+  "open_items_needing_a_human": [
+    "drag a row out of the window into another application (built, untested)",
+    "clipboard survives the window hiding (untested)",
+    "one week of exclusive daily use (M6 §3)",
+    "a real task done twice through an agent (M11 §12)",
+    "Inspector CPU while streaming (M11 §10)",
+    "second person installs from the .deb, timed (M9 §1)",
+    "license file (D13)",
+    "3D view under WebKitGTK software GL (does the picture appear)",
+    "the Extension's bridge to the real second brain (a sync plugin)"
+  ]
+}
