@@ -229,12 +229,24 @@ the system is complete without it.
 | M6 | The full file manager | built; its gate is a week of daily use |
 | M7 | Federation with a remote memory | **built** — protocol, two transports, reference peer; a real peer is the Extension's |
 | M8 | Brain-state visualisation | **done** |
-| M9 | Packaging and release | |
+| M9 | Packaging and release | built — `.deb`, AppDir, `cortex setup`, the install guide, the history audit; its gate is a second person's install |
 | M10 | The explorer as a memory browser | **done** |
 | M11 | The agent brain: memories, context packs, the learning signal, the Inspector | ten of twelve criteria; the rest need a human |
 
 Details, including the executable definition of done for each milestone, are in
 `docs/01-BUILD-PROMPT.md`.
+
+## Installing
+
+```sh
+sudo apt install ./hippocampus_<version>_amd64.deb     # built by packaging/deb/build.sh
+cortex setup                                            # three questions, then the first index
+```
+
+Or per user from a checkout with `./scripts/install-user.sh`, then `cortex setup`. Nothing
+starts on your behalf and nothing is downloaded until you answer yes to the third question.
+`docs/09-INSTALL.md` has the details, the configuration reference, and what to do when it does
+not work.
 
 ## Building
 

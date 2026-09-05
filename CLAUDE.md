@@ -17,6 +17,7 @@ Hippocampus is a file manager for Linux/niri whose actual core is a headless mem
 | 6 | `docs/05-HARD-RULES.md` | Security, privacy and repo hygiene. Non-negotiable. |
 | 7 | `docs/07-AGENT-TOOLS.md` | The Agent Surface, tool by tool — and the three rules for adding one. |
 | 8 | `docs/08-FEDERATION.md` | What leaves the machine, in what shape, through what — and what never does. |
+| 9 | `docs/09-INSTALL.md` | For the second user: install, `cortex setup`, the configuration reference, troubleshooting, limitations. |
 
 The source specification this project derives from is `docs/99-SOURCE-SPEC.md`.
 

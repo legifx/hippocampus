@@ -9,9 +9,9 @@ If you finish work without editing this file, the next agent starts from nothing
 
 | | |
 |---|---|
-| **Active milestone** | **M7 — Federation**, built on 2026-09-05 (D93–D95); its scorecard is the first section below. M10 done (D85–D88). M11, M8 and M5 as before. |
-| **Status** | **M7 is built: the wire format, a derived outbox, two transports, a reference peer, and every one of its five criteria asserted by a test — see its scorecard below. What it does not have is a real peer, which is the Extension's to write as a `sync` plugin.** M10 landed in full on 2026-08-24 — all four steps: `view.open` with one row shape from every source (D85), the memory columns on every row — measured before they were built, and cheaper than the per-row queries they sit beside (D86) — and the places the index makes (D87). Step 2 is complete: its by-hand criterion was checked by the owner against their own index and the salience order held. M6's mandatory list is complete as of the same day: archives (`fs.extract`, D81/D82), thumbnails in the list (D83) and network locations (D84, staged — what is mounted is offered, mounting is not built). What is left of M6 is its own §3, a week of exclusive use by the owner. 1048 Rust tests (2026-09-05), 60 vitest, 159 functional browser tests and 12 perf (run separately, on an idle machine — see the step 3 entry).** **M11 is ten of its twelve criteria in — see its own scorecard below before anything else, and every benchmark gate is green including the new one.** M4 complete. M6's mandatory list is done; its acceptance now needs a week of use rather than more code. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **A note on counting, kept because it cost a session:** this file once said 399 tests and accused the previous entry's 812 of being unreproducible. The 399 was wrong — the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Count by summing every `test result:` line. Check the measuring tool before disbelieving the measurement; this file already says that about latency, and it applies to counting. |
-| **Last updated** | 2026-09-05 (M7 built — D93, D94, D95) |
+| **Active milestone** | **M9 — Release**, built on 2026-09-05 (D96, D97) as far as code can build it; its scorecard is the first section below. M7 built the same day (D93–D95). M10 done (D85–D88). M11, M8 and M5 as before. |
+| **Status** | **M9 is built as far as it can be without a second person: `cortex setup`, a `.deb` and an AppDir from scripts that need only what Debian ships, `docs/09-INSTALL.md`, and the hygiene gate run over every tracked file *and every patch in the history* under `cargo test` — see its scorecard. What waits on a human: the timed install by somebody else (§1), and the license (D13).** **M7 is built: the wire format, a derived outbox, two transports, a reference peer, and every one of its five criteria asserted by a test — see its scorecard below. What it does not have is a real peer, which is the Extension's to write as a `sync` plugin.** M10 landed in full on 2026-08-24 — all four steps: `view.open` with one row shape from every source (D85), the memory columns on every row — measured before they were built, and cheaper than the per-row queries they sit beside (D86) — and the places the index makes (D87). Step 2 is complete: its by-hand criterion was checked by the owner against their own index and the salience order held. M6's mandatory list is complete as of the same day: archives (`fs.extract`, D81/D82), thumbnails in the list (D83) and network locations (D84, staged — what is mounted is offered, mounting is not built). What is left of M6 is its own §3, a week of exclusive use by the owner. 1054 Rust tests (2026-09-05), 60 vitest, 159 functional browser tests and 12 perf (run separately, on an idle machine — see the step 3 entry).** **M11 is ten of its twelve criteria in — see its own scorecard below before anything else, and every benchmark gate is green including the new one.** M4 complete. M6's mandatory list is done; its acceptance now needs a week of use rather than more code. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **A note on counting, kept because it cost a session:** this file once said 399 tests and accused the previous entry's 812 of being unreproducible. The 399 was wrong — the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Count by summing every `test result:` line. Check the measuring tool before disbelieving the measurement; this file already says that about latency, and it applies to counting. |
+| **Last updated** | 2026-09-05 (M7 built — D93–D95; M9 built — D96, D97) |
 | **Blocked on** | nothing |
 
 ## Start here
@@ -93,7 +93,29 @@ subshell and `utime + stime` is a process's own time and not its children's. It 
 every good result and could not be distinguished from one. Point it at `yes > /dev/null` first;
 it must read 100%.
 
-## Where M7 stands — built 2026-09-05, read this first
+## Where M9 stands — built 2026-09-05, read this first
+
+### Definition of Done for M9, honestly
+
+| # | criterion | state |
+|---|---|---|
+| 1 | A second person installs it on a clean machine, indexes their home and searches, unaided, under ten minutes | **not done — needs a second person.** Everything they would use exists: the `.deb`, `cortex setup` (three questions, then the first index), `docs/09-INSTALL.md`. Record the time here when it happens |
+| 2 | Running without any Main Brain is a documented, tested, first-class configuration | **met** — it is the default; `09-INSTALL.md` §3 says so; `cortexd/tests/federation.rs` asserts the daemon serves with federation on and its bridge missing |
+| 3 | `git log -p` over the entire public history contains no secret and no private identifier | **met** — `scripts/pre-commit --history` runs the gate's patterns over every patch ever committed, and `tests/hygiene.rs` runs it under `cargo test`; the gate itself is verified against a seeded fake credential, a private home path and an endpoint, assembled at runtime so the test's own source is clean |
+| 4 | Every benchmark gate is green on the release commit | **met for the daemon's gates, this commit, release build, idle machine:** fuzzy path 1.19 ms / 10; keystroke path 5.88 / 10; abbreviation 4.57 / 25; BM25 top-100 24.14 / 30, and 28.64 / 36.21 while the indexer writes; vector ANN 1.05 / 40; fusion 0.01 / 5; context pack 10.36 / 120. Query embedding and reranking were not measured (the test model variables were unset); the browser perf suite was not re-run this session — its twelve tests last passed on 2026-08-24 |
+
+### Scope, item by item
+
+| item | state |
+|---|---|
+| single binary + desktop entry; `.deb`; AppImage or Flatpak | `.deb` built and inspected (`packaging/deb/build.sh`, dpkg-deb only); AppDir built, AppImage when `appimagetool` is present; no Flatpak (D96) |
+| onboarding: folders, model, first index with progress, under ten minutes | `cortex setup` (D97); a throwaway instance under `--root` went from nothing to indexed in under a second on an empty home |
+| configuration separated into defaults, user file, extension | was already so: `Config::default()`, `config.toml`, `plugins/*.toml`; `cortexd --check` prints the effective result; documented in `09-INSTALL.md` §4 |
+| README, installation, configuration reference, MCP tool reference, troubleshooting, limitations | README §Installing; `09-INSTALL.md` §1, §4, §5, §6; `07-AGENT-TOOLS.md` was already the MCP reference |
+| pre-commit secret scanner and the CI gate from R9, verified against a seeded fake secret | `--all` and `--history` modes; three tests in `cortex-sync/tests/hygiene.rs` |
+| license decided (D13) | **open — the owner's.** `Cargo.toml` has declared Apache-2.0 since M0 and the package's copyright file repeats it, but there is no `LICENSE` file, and adding one is the decision, not a formality |
+
+## Where M7 stands — built 2026-09-05
 
 **The shape.** Nothing writes to the outbox. A worker *harvests* it: `episodes` from a cursor, the
 concept nodes by identity, each into an event whose identifier is a hash of this index's origin and
@@ -841,6 +863,24 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
+
+### 2026-09-05 — M9: what a second person would need, built; the second person, not yet
+
+Same day as M7, and the milestone the order left next. What can be built without another human
+is built: `cortex setup` (three questions, every default the safe one — D97), a Debian package
+from a script that needs only `dpkg-deb`, an AppDir, a desktop entry (D96), `docs/09-INSTALL.md`
+for the person who has never seen this repository, and the hygiene gate extended to every
+tracked file and every patch in the history, run by `cargo test` and verified against a seeded
+fake secret.
+
+**What the first run found:** `cortex setup --root /tmp/x` enabled the *real* daemon's systemd
+unit, because "start the daemon" did not know it was talking about a throwaway. Under `--root`
+it now leaves systemd alone. And a backtick inside an unquoted heredoc in the package script ran
+`cortex setup` while writing the control file — the shell was helping.
+
+**Still the owner's:** the timed install by somebody else (§1), and the license (D13). The
+`.deb` is at `target/packaging/` after `packaging/deb/build.sh`; the honest test is handing it to
+someone.
 
 ### 2026-09-05 — M7: a peer the Core never names
 

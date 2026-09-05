@@ -24,6 +24,12 @@ failed=0
 # Only staged, non-deleted files are examined — or, with --all, every tracked file.
 if [[ "${1:-}" == "--all" ]]; then
   mapfile -t files < <(git ls-files)
+elif [[ "${1:-}" == "--history" ]]; then
+  # M9 §3: the whole public history, every patch ever committed, through the same patterns.
+  history_dump="$(mktemp)"
+  trap 'rm -f "$history_dump"' EXIT
+  git log -p --all --format='commit %H' > "$history_dump"
+  files=("$history_dump")
 else
   mapfile -t files < <(git diff --cached --name-only --diff-filter=ACM)
 fi

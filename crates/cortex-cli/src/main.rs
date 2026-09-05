@@ -36,6 +36,8 @@ use cortex_rpc::protocol::{
     ZoneSetColorParams, ZonesListResult,
 };
 
+mod setup;
+
 #[derive(Parser, Debug)]
 #[command(name = "cortex", version, about = "Talk to the Cortex memory daemon")]
 struct Args {
@@ -118,6 +120,25 @@ enum Command {
     Watch {
         #[command(subcommand)]
         command: WatchCommand,
+    },
+    /// First-time setup: what to index, what to read, whether to fetch a model. Then starts
+    /// the daemon and runs the first index.
+    Setup {
+        /// Take the defaults (or the flags) without asking.
+        #[arg(short, long)]
+        yes: bool,
+        /// Replace an existing configuration file.
+        #[arg(long)]
+        force: bool,
+        /// Directories to index (paths and stats). Comma-separated.
+        #[arg(long, value_delimiter = ',')]
+        metadata_roots: Option<Vec<std::path::PathBuf>>,
+        /// Directories whose file contents may be read. Comma-separated.
+        #[arg(long, value_delimiter = ',')]
+        content_roots: Option<Vec<std::path::PathBuf>>,
+        /// none, cpu or gpu.
+        #[arg(long)]
+        model: Option<String>,
     },
     /// Federation: is it syncing, and if not, why not.
     Sync {
@@ -552,6 +573,12 @@ async fn run(args: Args) -> Result<()> {
         return fetch_model(&paths, *yes, *runtime_only, *gpu, *reranker, args.json).await;
     }
 
+    if let Command::Setup { yes, force, metadata_roots, content_roots, model } = &args.command {
+        // An instance under --root is a throwaway; systemd knows only the real one.
+        let use_systemd = args.root.is_none();
+        return run_setup(&paths, *yes, *force, metadata_roots.clone(), content_roots.clone(), model.as_deref(), args.json, use_systemd).await;
+    }
+
     let mut client = Client::connect(&socket).await.with_context(|| {
         format!(
             "no daemon listening on {}. Start it with `cortexd`.",
@@ -904,6 +931,8 @@ async fn run(args: Args) -> Result<()> {
                 }
             }
         },
+
+        Command::Setup { .. } => unreachable!("handled before connecting"),
 
         Command::Sync { command } => match command {
             SyncCommand::Status => {
@@ -2012,6 +2041,82 @@ async fn run(args: Args) -> Result<()> {
 }
 
 /// Download the model, with the user's consent and a progress line.
+/// The onboarding (M9): three questions, a configuration file, a running daemon, a first index.
+async fn run_setup(
+    paths: &Paths,
+    yes: bool,
+    force: bool,
+    metadata_roots: Option<Vec<std::path::PathBuf>>,
+    content_roots: Option<Vec<std::path::PathBuf>>,
+    model: Option<&str>,
+    json: bool,
+    use_systemd: bool,
+) -> Result<()> {
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .context("HOME is not set")?;
+    let model = match model {
+        Some(m) => Some(setup::ModelChoice::parse(m).context("--model must be none, cpu or gpu")?),
+        None => None,
+    };
+    let plan = setup::plan_interactively(&home, yes, metadata_roots, content_roots, model)?;
+    paths.ensure_dirs()?;
+    setup::write_config(&paths.config_file(), &plan, force)?;
+    println!("wrote {}", paths.config_file().display());
+
+    if plan.model != setup::ModelChoice::None {
+        fetch_model(paths, true, false, plan.model == setup::ModelChoice::Gpu, false, json).await?;
+    }
+
+    if use_systemd {
+        println!("{}", setup::start_daemon());
+    }
+
+    // Wait for the socket, then index. A daemon started by hand before this point is fine too.
+    let mut client = None;
+    for _ in 0..50 {
+        if let Ok(c) = Client::connect(&paths.socket()).await {
+            client = Some(c);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    let Some(mut client) = client else {
+        println!(
+            "no daemon is listening on {} yet. Start `cortexd`, then run `cortex index <dir>` for each \
+             directory above.",
+            paths.socket().display()
+        );
+        return Ok(());
+    };
+    let began = std::time::Instant::now();
+    for root in &plan.metadata_roots {
+        let Ok(path) = root.canonicalize() else {
+            println!("skipping {}: not there", root.display());
+            continue;
+        };
+        let result: IndexPathResult = client
+            .call(
+                method::INDEX_PATH,
+                IndexPathParams { path: path.display().to_string(), recursive: true },
+            )
+            .await?;
+        println!(
+            "indexed {}: {} entries, {} skipped, {} ms",
+            path.display(),
+            result.indexed,
+            result.skipped,
+            result.elapsed_ms
+        );
+    }
+    println!(
+        "done in {:.1} s. Try:  cortex search <something>    — content is read in the background; \
+         `cortex extract` shows how far it has got.",
+        began.elapsed().as_secs_f64()
+    );
+    Ok(())
+}
+
 async fn fetch_model(
     paths: &Paths,
     yes: bool,

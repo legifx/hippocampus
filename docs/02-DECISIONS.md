@@ -2875,3 +2875,54 @@ domain outside a short list of public documentation and registry hosts.
 **Revisit if:** batch latency ever matters — a bridge that must answer within a second of the
 episode. Then a long-lived plugin with the same request shape is the addition, and the spawn-per-
 batch one stays as the safe default.
+
+---
+
+### D96 — Packages are built with what Debian ships, and nothing starts at install time
+
+**Status:** accepted · 2026-09-05 · M9
+
+`packaging/deb/build.sh` needs `dpkg-deb` and nothing else — no `cargo-deb`, no bundler. It
+places five binaries, two *user* units, a desktop entry, an icon and a copyright file, and its
+`postinst` does not exist. `packaging/appimage/build.sh` builds an AppDir the same way and calls
+`appimagetool` only if it is there. Tauri's own bundler is not used: it packages the overlay
+alone, and the overlay without the daemon is a window with nothing behind it.
+
+**Why nothing starts.** A package that enables a daemon for every user has decided, on their
+behalf, that their home directory is indexed. R5 says a fresh install talks to nobody; the same
+reasoning says it watches nobody until asked. `cortex setup` is the asking.
+
+**Why the system's WebKitGTK.** Bundling it is a hundred megabytes and an argument with every
+distribution's graphics stack, and the overlay's known rendering trouble (D59) is between WebKit
+and the driver — a bundled WebKit would carry the trouble and lose the distribution's fixes. The
+`.deb` names the dependency; the AppImage borrows it.
+
+**Revisit if:** a Flatpak is wanted. Then WebKitGTK comes from the runtime, which is the one
+case where bundling is somebody else's problem.
+
+---
+
+### D97 — Onboarding is three questions, and every default is the safe one
+
+**Status:** accepted · 2026-09-05 · M9
+
+`cortex setup` asks what to index, what to read, and whether to download a model — and nothing
+else. Every other setting keeps the daemon's default. The defaults are the home directory, the
+document and project folders that exist, and *no* download; Enter three times gives a working
+path-and-word search that has opened no network connection and read no file outside the folders
+it named.
+
+**Why three.** The build prompt asks for "under ten minutes to a working system", and every
+question is a minute and a chance to answer wrong. The three that remain are the three a person
+must answer because they are about *their* files (R3) and *their* consent to a download (R5);
+anything about performance, models or agents has a default that is right for almost everybody
+and a configuration file for the rest.
+
+**The plan is a value.** What the answers produce is a struct rendered to TOML and parsed back
+by the daemon's own configuration loader in a test, so a setup that writes a file the daemon
+refuses is caught without a terminal. Under `--root` the setup touches no systemd unit: an
+instance in a temporary directory is a throwaway, and enabling the real daemon from it was the
+first bug the first run found.
+
+**Revisit if:** a fourth question earns its place — most likely "which of these looks like a
+project", if zone detection ever needs help.

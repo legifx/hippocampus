@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Hippocampus
+Comment=Search your filesystem by meaning
+Exec=hippocampus --show
+Icon=hippocampus
+Terminal=false
+Categories=Utility;FileManager;
+Keywords=search;files;memory;
