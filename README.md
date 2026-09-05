@@ -161,6 +161,8 @@ screen, and if there is no model at all, everything still works.
 
 **Where to go next:** the rest of this README is the practical detail. For the argument behind the
 design, read [`docs/paper/FORGETTING-IS-THE-FEATURE.md`](docs/paper/FORGETTING-IS-THE-FEATURE.md).
+What the 2025–2026 literature confirms, corrects and adds to that design — and why there is a
+twelfth milestone — is [`docs/paper/WHAT-2026-CHANGED.md`](docs/paper/WHAT-2026-CHANGED.md).
 For where the file manager is going — a memory browser that can show a directory, rather than the
 reverse — [`docs/paper/A-DIRECTORY-IS-JUST-ONE-QUERY.md`](docs/paper/A-DIRECTORY-IS-JUST-ONE-QUERY.md).
 To build something like it yourself, [`docs/paper/BUILD-PROMPT.md`](docs/paper/BUILD-PROMPT.md) is

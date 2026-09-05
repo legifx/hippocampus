@@ -9,9 +9,9 @@ If you finish work without editing this file, the next agent starts from nothing
 
 | | |
 |---|---|
-| **Active milestone** | **M9 — Release**, built on 2026-09-05 (D96, D97) as far as code can build it; its scorecard is the first section below. M7 built the same day (D93–D95). M10 done (D85–D88). M11, M8 and M5 as before. |
+| **Active milestone** | **M12 — The Governed Brain, specified 2026-09-05 (D98–D102), not built.** It is the next thing to build; its first step is origin + authority on every memory. M9 — Release, built on 2026-09-05 (D96, D97) as far as code can build it; its scorecard is the first section below. M7 built the same day (D93–D95). M10 done (D85–D88). M11, M8 and M5 as before. |
 | **Status** | **M9 is built as far as it can be without a second person: `cortex setup`, a `.deb` and an AppDir from scripts that need only what Debian ships, `docs/09-INSTALL.md`, and the hygiene gate run over every tracked file *and every patch in the history* under `cargo test` — see its scorecard. What waits on a human: the timed install by somebody else (§1), and the license (D13).** **M7 is built: the wire format, a derived outbox, two transports, a reference peer, and every one of its five criteria asserted by a test — see its scorecard below. What it does not have is a real peer, which is the Extension's to write as a `sync` plugin.** M10 landed in full on 2026-08-24 — all four steps: `view.open` with one row shape from every source (D85), the memory columns on every row — measured before they were built, and cheaper than the per-row queries they sit beside (D86) — and the places the index makes (D87). Step 2 is complete: its by-hand criterion was checked by the owner against their own index and the salience order held. M6's mandatory list is complete as of the same day: archives (`fs.extract`, D81/D82), thumbnails in the list (D83) and network locations (D84, staged — what is mounted is offered, mounting is not built). What is left of M6 is its own §3, a week of exclusive use by the owner. 1054 Rust tests (2026-09-05), 60 vitest, 159 functional browser tests and 12 perf (run separately, on an idle machine — see the step 3 entry).** **M11 is ten of its twelve criteria in — see its own scorecard below before anything else, and every benchmark gate is green including the new one.** M4 complete. M6's mandatory list is done; its acceptance now needs a week of use rather than more code. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **A note on counting, kept because it cost a session:** this file once said 399 tests and accused the previous entry's 812 of being unreproducible. The 399 was wrong — the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Count by summing every `test result:` line. Check the measuring tool before disbelieving the measurement; this file already says that about latency, and it applies to counting. |
-| **Last updated** | 2026-09-05 (M7 built — D93–D95; M9 built — D96, D97) |
+| **Last updated** | 2026-09-05, evening (M12 specified — D98–D102, `docs/paper/WHAT-2026-CHANGED.md`; earlier that day M7 built — D93–D95; M9 built — D96, D97) |
 | **Blocked on** | nothing |
 
 ## Start here
@@ -92,6 +92,48 @@ snippet above reported **0.0% for a process spinning a full core**, because `$!`
 subshell and `utime + stime` is a process's own time and not its children's. It agreed with
 every good result and could not be distinguished from one. Point it at `yes > /dev/null` first;
 it must read 100%.
+
+## Where M12 stands — specified 2026-09-05, not built
+
+**Read `docs/paper/WHAT-2026-CHANGED.md` first, then M12 in `docs/01-BUILD-PROMPT.md`, then
+D98–D102.** The research behind it: a three-round literature search over 2025–2026 (938
+candidates, 230 fetched as text, final-round novelty still 79 % — the field is larger than what
+was read). The library lives *outside* this repository, in a sibling directory
+`hippocampus-research/agent-memory-2026/` whose `manifest.json` lists every source with its URL;
+nothing from it is vendored here, and paths into it must not be committed (R9).
+
+### What the reading changed, in one table
+
+| finding | consequence here | decision |
+|---|---|---|
+| memory poisoning needs one write; content and lineage defences are malleable; origin-bound non-malleable authority is necessary and sufficient; consolidation collapses authority in 48/49 configurations | `origin` on every node, `authority` on every memory, inherited downward, raised only by a human or two independent origins; the policy engine refuses a gated write motivated by anything below `instruction` | D98 |
+| "newer wins" presupposes a conflict key, valid-time = transaction-time, and newer ≥ older in trust; *changed* ≠ *wrong*; labelled state in the evidence packet is the one measured fix (A-TMA); update is five ops, not two (TARL) | `supersede` takes a reason; `state` derived from the log (`pending · current · historical · retracted · deleted`); `valid_from/valid_to`; file/tool/peer memories land `pending` | D99 |
+| uniform decay is wrong across memory types; type-conditioned decay was the necessary mechanism (ScrubJay-MEM) | half-life per memory kind, defaults to be corrected only by the cold-tier-retrieval falsifier | D100 |
+| most published memory gains were embedding confounds (MemDelta); retrieval dominates writing 14–23 pt (Yuan et al.); a local-first post-fusion frequency+decay boost failed to help NDCG (vstash) | a frozen gold set from real episodes, `bench-quality` one variable at a time, the four falsifiers run; **the salience boost leaves the ranking if it loses** | D101 |
+| production failures are forgetting failures; recall benchmarks do not test being commanded to forget | the forgetting suite, non-revival through rebuild and re-remember; hash-chained audit log | D102 |
+| no model in the write path matches or beats extraction and summarisation (Yuan et al.); the index-as-cache / lossless log shape is what the best context managers converged on (Scroll) | confirmed; D75 and R2 unchanged, now with external numbers | — |
+| agent-organised markdown stores erode; organisation does not convert into answers (Zhou et al.) | confirmed; the daemon organises, the agent writes nodes (D74) | — |
+
+### Order of work, and why
+
+1. **Origin + authority** (D98): two columns, one propagation rule, one policy check, labels in
+   the pack. Cheapest change, strongest evidence. Criteria 1–4 of M12.
+2. **Reason + state + validity** (D99): criteria 5–8. Together with step 1 this is the
+   "governed" in the milestone's name.
+3. **The gold set and `bench-quality`** (D101): criteria 11–12. Needs the owner's episodes, so it
+   needs the owner to have *used* the thing — the same dependency M6 §3 and M11 §12 have.
+4. **Forgetting suite + audit chain** (D102): criteria 7, 10.
+5. **Per-kind half-lives** (D100) and **adaptive fusion**: criteria 9, 13 — *after* 3, because
+   3 decides whether they stay.
+6. **Fitted weights** (criterion 14) last; it is advice, and it needs the log to have history.
+
+### What waits on the owner
+
+- Real use, so that the gold set is real (step 3). A seeded gold set is the fallback and says so.
+- Thirty seconds in the Inspector confirming one elevation, once step 1 exists — the first
+  `actor = human` authority episode.
+- Whether `wrong` is a tool argument or an Inspector button (D99's revisit trigger) — decide
+  after the first month of supersessions, not before.
 
 ## Where M9 stands — built 2026-09-05, read this first
 
@@ -863,6 +905,30 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
+
+### 2026-09-05 (evening) — the brain, read against the 2025–2026 field; M12 specified
+
+A scientific deep-research pass on agent memory (salience, forgetting, consolidation, retrieval
+feedback, provenance, evaluation): three search rounds, 230 papers fetched as text into a
+research library kept outside this repository, forty-odd read in full. The result is
+`docs/paper/WHAT-2026-CHANGED.md` — what the field confirms (no model in the write path; the
+index as a cache; the closed feedback loop; explainability), what it corrects (one half-life for
+six memory kinds; "newer wins"; a comparison table that was an argument), and what it adds
+(memory poisoning and authority collapse as the open problem; controlled evaluation as the
+missing experiment with a protocol now).
+
+**What changed in the repository:** the new paper; §2.4, §12, §13.7, §14 and the references
+pointer in the design paper; M12 in both build prompts with fifteen criteria and a bracket rule
+(every mechanism has a test that fails when it is disabled); D98–D102; the glossary's M12 terms;
+the architecture's agent-brain section; the agent-tools note; this file. **No code changed.** M12
+is specified, not built, and the order of work above is deliberate: provenance first because the
+evidence is strongest and the change is smallest.
+
+**What was learned that is not in the paper:** the reading agents that were meant to digest the
+corpus in parallel all died on a session rate limit; the digest was made by hand from abstracts
+plus targeted full-text reads, which is why forty papers are read closely and not two hundred.
+The library's `INDEX.md` says which; a later agent with budget should read the benchmark folder
+(thirty papers) before building `bench-quality`, because the protocols there are the ones to copy.
 
 ### 2026-09-05 — M9: what a second person would need, built; the second person, not yet
 

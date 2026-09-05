@@ -164,6 +164,18 @@ files your build system wrote last night are not memories at all.
 
 ---
 
+### 2.4 What changed after this was written
+
+This section was written in August 2026. Three weeks later a reading of 230 papers from 2025–2026
+found that forgetting had become mainstream, that controlled evaluations had exposed most published
+memory gains as confounds, and that provenance and truth-maintenance had become the open problem.
+The reading, with every source, is [`WHAT-2026-CHANGED.md`](WHAT-2026-CHANGED.md); it confirms §3
+and §6, corrects one thing in §6 (one half-life is wrong for memories of different kinds), demotes
+§12, and specifies a twelfth milestone. The rest of this paper is left as written, so that what
+was argued before the evidence arrived stays distinguishable from what was argued after.
+
+---
+
 ## 3. What a language model actually needs from a memory
 
 This section argues from how inference works rather than from analogy to brains. The analogy comes
@@ -924,7 +936,10 @@ Two details we would defend to anyone building something similar:
 
 ## 12. Comparison
 
-Against published descriptions, not against re-implementations. §13 states what this is worth.
+Against published descriptions, not against re-implementations. §13 states what this is worth —
+and since this was written, MemDelta (Wang et al. 2026) has shown that even comparisons against
+*implementations* mislead unless one component moves at a time with the embedding fixed. Read the
+table as an architectural inventory, not a result.
 
 | property | vector-store memory | conversational agent memory | Hippocampus |
 |---|---|---|---|
@@ -970,6 +985,11 @@ section is advertising.
    history there are very few of them — one, on the machine measured here.
 6. **Single-machine, single-user, one operating system.** Everything measured here ran on one
    Linux desktop. Multi-device federation is designed and not built.
+7. **No provenance.** A memory does not record who caused it to exist or what it may be used as;
+   a file's content, a tool's output and a human's instruction are retrievable in the same shape.
+   The 2026 poisoning and authority-collapse literature says this is the failure that bites in
+   deployment. M12 in the build prompt is the answer; until it is built, this design's safety
+   argument rests on the policy engine and the kill switch alone.
 8. **The simulator's history is invented.** Its *response* to that history is the real engine, but
    a generator written by the same author as the scoring function can accidentally generate the
    history the scoring function likes. §10.1 is a worked example of exactly that risk.
@@ -992,7 +1012,11 @@ A design paper should say what evidence would show it is wrong.
   or looking at it never changes what the user does — then §3.4's safety argument is theoretical
   and the cost of maintaining explainability should be reconsidered.
 
-Each of these is instrumented or instrumentable today. None has been run.
+- **If retrievals of demoted memories concentrate in one kind**, the half-life for that kind is
+  wrong — a number to correct, not a design (ScrubJay-MEM's result, generalised).
+
+Each of these is instrumented or instrumentable today. None has been run. M12 makes running them
+an acceptance criterion rather than a promise, and names the consequence of each outcome.
 
 ---
 
@@ -1009,6 +1033,9 @@ paper. This paper is the argument; that document is the specification.
 ---
 
 ## References
+
+The 2025–2026 sources read after this paper was written are listed in
+[`WHAT-2026-CHANGED.md`](WHAT-2026-CHANGED.md); this list is the one the argument above was made from.
 
 Anderson, J. R., & Schooler, L. J. (1991). Reflections of the environment in memory.
 *Psychological Science, 2*(6), 396–408.

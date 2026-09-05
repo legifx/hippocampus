@@ -31,6 +31,26 @@ add it here first.
 | **Agent Inspector** | The panel in the explorer that shows the Agent area: live sessions, the memory list, policy, the undo journal, and the Agent View embedded. Renders; does not decide (D4). |
 | **Peer** | A federation counterpart. A Main Brain is a peer. The protocol does not know what kind. |
 
+## Added by M12
+
+- **Origin** — who caused a node's bytes to exist: `human`, `agent`, `tool`, `file`, `peer`.
+  Recorded in the episode, projected to the node, never changed afterwards (D98).
+- **Authority** — what a Memory may be used *as*: `instruction`, `fact`, `observation`,
+  `untrusted`. Inherited downward from a memory's basis, raised only by a human or by two
+  independent trusted origins. Not a score (D98).
+- **State** — `pending`, `current`, `historical`, `retracted`, `deleted`. A pure function of the
+  episode log, never a column of record (D99). *Pending* is the admission state for anything a
+  file, a tool or a peer wrote.
+- **Validity** — `valid_from` / `valid_to`: when a memory was true, as distinct from
+  `created_at`, when it was recorded. Never silently filled (D99).
+- **Supersede, with a reason** — `changed` (the world moved on; the old memory is *historical*)
+  or `wrong` (the old memory was mistaken; it is *retracted*). One word carrying two questions
+  was the mistake (D99).
+- **Gold set** — frozen query → node pairs from the owner's own re-finding episodes, hashed;
+  what `bench-quality` runs (D101).
+- **Forgetting suite** — command-driven cases scored by the absence of a string across every
+  surface, after a rebuild, after a re-remember (D102).
+
 ## Terms deliberately avoided
 
 - "Database" for the index — it is a **cache**. Saying database invites treating it as authoritative.
@@ -42,3 +62,5 @@ add it here first.
   building the second store that decision exists to prevent.
 - "Vector database" as a component to be chosen — the vector index is one arm of retrieval and a
   derived cache of the `embeddings` table, not a system of record (D75).
+- "Trust score" — authority is an enum with a propagation rule. A continuous trust number is the
+  malleable signal the poisoning literature proves unsound (D98).

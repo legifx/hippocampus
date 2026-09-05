@@ -2926,3 +2926,119 @@ first bug the first run found.
 
 **Revisit if:** a fourth question earns its place — most likely "which of these looks like a
 project", if zone detection ever needs help.
+
+---
+
+### D98 — A memory carries an origin and an authority, and authority is non-malleable
+
+**Status:** ACCEPTED · 2026-09-05 · M12
+
+Every node records `origin` (`human · agent · tool · file · peer`: who caused the bytes to exist)
+and every memory records `authority` (`instruction · fact · observation · untrusted`: what it may
+be used as). A memory derived from others inherits the *lowest* authority among its basis;
+authority rises only through an action-bound human confirmation or two independent trusted origins
+agreeing, and every rise is an episode. A gated write that names a memory as its motivation is
+refused if that memory is below `instruction`.
+
+**Why.** Memory poisoning needs one successful write and then survives on retrieval (Dash et al.
+2026: four write channels, nine vulnerabilities; prompt-injection defences do not cover it).
+Content-based and lineage-based defences are both malleable — the agent's own paraphrase launders
+the origin — and a machine-checked result says write-time origin binding is necessary and
+non-malleable authority is sufficient (Louck et al. 2026). Consolidation without an authority label
+turns a third party's remark into a user instruction in 48 of 49 tested configurations; persisting
+the label took unauthorised actions from 16.9 % to 0.0 % (Zhan et al. 2026). Hippocampus had the
+log, the audit, the policy engine and the kill switch, and no way to tell a pin from a web page.
+Sources: `docs/paper/WHAT-2026-CHANGED.md` §3.
+
+**What it is not.** Not a trust score — a continuous number is the malleable signal the theorem
+excludes. Not a model judging content — the daemon labels by origin and propagates; a human or an
+outcome decides.
+
+**Revisit if:** the policy engine's `motivated_by` field is never sent by any real client after a
+month of use, in which case the refusal is theatre and the check must move to the pack (an agent
+only ever sees `instruction`-authority memories as instructions) — the label stays either way.
+
+---
+
+### D99 — Supersession has a reason, and state is derived from the log
+
+**Status:** ACCEPTED · 2026-09-05 · M12 — extends D77
+
+`brain.supersede(old, new, reason)` requires `reason ∈ {changed, wrong}`. `changed` makes the old
+memory `historical`; `wrong` makes it `retracted`. A memory's `state` — `pending · current ·
+historical · retracted · deleted` — is a pure function of the episode log, never a stored column
+of record (R10), and every context-pack item carries it. Memories with `tool`, `file` or `peer`
+origin are admitted as `pending`: absent from a pack by default, promoted by a human, by an
+outcome that names them, or by consolidation under D98's two-origins rule. `valid_from` and
+`valid_to` are recorded beside `created_at` and never silently filled.
+
+**Why.** "Newer supersedes older" presupposes a conflict key, that write order tracks the order
+facts held, and that newer is at least as trustworthy — and conflates *the world changed* with
+*the record was wrong*, which belief revision separated decades ago (Mahendrakar 2026). Mixed old,
+current and transition facts mislead the reader; labelling the state in the evidence packet was
+the one intervention with a measured effect (A-TMA: temporal F1 0.03 → 0.17). Update is five
+operations, not two: add, ignore, revise, reject, defer (TARL); `pending` is defer. Non-revival
+after retraction or deletion is a governed-memory invariant (GPM). Sources: research update §4.
+
+**Revisit if:** agents in practice always send `changed` — then the distinction costs a word and
+buys nothing, and `wrong` becomes the Inspector's button rather than a tool argument.
+
+---
+
+### D100 — The decay half-life is a function of the memory kind
+
+**Status:** ACCEPTED · 2026-09-05 · M12 — refines D64
+
+`decay_half_life_days` becomes a table keyed by kind, with the present value for files and
+defaults per memory kind (`preference` 365 · `procedure` 180 · `decision` 120 · `failure` 90 ·
+`fact` 60 · `observation` 14). The falsifier is retrievals of demoted memories, counted per kind;
+that number, and nothing else, corrects the table.
+
+**Why.** A uniform decay discounts stable knowledge too fast or keeps ephemeral facts too long,
+and per-memory type-conditioned decay was the necessary mechanism for a system to generalise to
+retention intervals it had not seen (ScrubJay-MEM 2026; the ablation collapsed the gain). The
+design already had six kinds and one half-life. The exponential form and the incremental fold
+(D64, paper §6.2) are unchanged; only λ varies.
+
+**Revisit if:** the per-kind cold-tier retrieval counts are indistinguishable after a month —
+then kinds do not differ in perishability on this corpus and one number was right.
+
+---
+
+### D101 — Retrieval quality is measured one variable at a time, and the boost is on trial
+
+**Status:** ACCEPTED · 2026-09-05 · M12
+
+A frozen gold set of the owner's own re-finding episodes; a `bench-quality` harness that varies one
+component per run with the embedding model fixed; the four falsifiers of the design paper run and
+recorded. **If salience-boosted ranking does not beat unboosted on the gold set, the boost leaves
+the ranking in the same commit** and stays in the explanation. Adaptive fusion and per-kind decay
+ship only if the harness says they pay.
+
+**Why.** The field measured itself in 2026 and found that most reported memory gains were
+embedding confounds (MemDelta), that the retrieval arm dominates the write arm by 14–23 points
+(Yuan et al.), and that a local-first system's post-fusion frequency-and-decay boost *failed* to
+improve NDCG (vstash) — which is this paper's falsifier #2, observed elsewhere. §13.1 of the
+design paper called the missing evaluation the most important missing experiment; it now has a
+protocol and a consequence.
+
+**Revisit if:** the gold set cannot reach 200 pairs from real episodes — then it is built from a
+seeded corpus and says so, and the boost result is provisional until real pairs exist.
+
+---
+
+### D102 — Forgetting is tested as a command, and the audit log is chained
+
+**Status:** ACCEPTED · 2026-09-05 · M12 — extends criterion 11 of M11
+
+A forgetting suite — delete, retract, forget-everything-about, supersede-as-wrong, a rotated
+secret-shaped string — scored by substring absence across every surface, after a rebuild, and
+after a re-`remember` of the same text. The audit log carries a hash chain that
+`cortex audit --verify` walks.
+
+**Why.** Production memory failures are predominantly forgetting failures, and a system can
+saturate recall while scoring zero on being commanded to forget (Control-Plane Placement 2026).
+The design had one such test (a deletion survives a rebuild). The chain makes tampering with the
+log itself detectable, which the poisoning threat model assumes and R8 did not provide.
+
+**Revisit if:** never for the suite. The chain, if it ever costs more than 1 % of write latency.

@@ -67,6 +67,7 @@ The numbering differs from the source spec because the order does; the mapping i
 | **M9** | Release: packaging, onboarding, second-user install | M8 |
 | **M10** | The explorer as a memory browser — see below | (new) |
 | **M11** | The Agent Brain: memories as nodes, context packs, the learning signal, the Inspector | (new — D74) |
+| **M12** | The Governed Brain: origin and authority on every memory, validity and state, the forgetting suite, the gold-set evaluation, kind-conditioned decay — see below | (new — D98–D102) |
 
 **M0–M3 are headless.** That is deliberate. If the search does not convince in the CLI, it will
 not convince in a GUI.
@@ -79,6 +80,8 @@ in four shippable steps with acceptance criteria. Its scope and Definition of Do
 [`paper/EXPLORER-KICKOFF-PROMPT.md`](paper/EXPLORER-KICKOFF-PROMPT.md) is the session prompt for
 picking it up. **It waits behind M6's mandatory list**: a file manager that cannot do the basics
 will not be used, however good the brain is.
+
+**M12 is specified and not built** (2026-09-05). It is daemon work like M11 and does not wait behind M6; its first two steps — origin and authority — are the cheapest change in the plan with the strongest evidence behind it, and they go first. The research that argues for it is `paper/WHAT-2026-CHANGED.md`; the decisions are D98–D102.
 
 **M11 does not wait behind M6**, and that is a deliberate exception rather than an oversight.
 M6 gates the *window*; M11 is mostly daemon, and its one window component — the Agent Inspector —
@@ -873,6 +876,152 @@ deterministic (D66) — live means new data, not a jittering scene.
     `03-PROGRESS.md` with what was asked and what happened — including if it did not help.
 
 ---
+
+---
+
+### M12 — The Governed Brain
+
+**Goal:** a memory that knows where each thing it holds came from, what it is allowed to be used
+as, when it was true, and whether it is current — and a measurement, on this machine, of whether
+the ranking machinery earns its place. The argument, with every source, is
+[`paper/WHAT-2026-CHANGED.md`](paper/WHAT-2026-CHANGED.md). Read it first; this section is the part with
+acceptance criteria.
+
+The milestone is one sentence: **a memory carries its provenance, and provenance is
+non-malleable.** Everything an agent, a file, a tool or a peer writes into the brain arrives with
+an origin it cannot shed and an authority it cannot raise. The four falsifiers of the design paper
+are run, not listed. Nothing here is a second store, a second engine or a model in the write path;
+D74, D75 and R10 hold unchanged.
+
+**Order inside the milestone is by evidence, not by size:** provenance and authority (§3 of the
+research update) before validity and state (§4) before the evaluation (§2) before kind-conditioned
+decay (§1) before adaptive fusion (§5). The evaluation gates the last two: neither ships if the
+gold set says it does not pay.
+
+### Scope
+
+- **Origin, on every node.** `origin ∈ {human, agent, tool, file, peer}` — who caused the bytes to
+  exist. A file's chunks are `file`; an `fs.read` result an agent remembers is `tool`; a note the
+  agent worked out itself is `agent`; a pin, a note or an Inspector edit is `human`; anything from
+  the sync inbox is `peer`. Recorded in the episode, projected to the node, returned in every
+  `explain`, `why` and pack item.
+- **Authority, on every memory.** `authority ∈ {instruction, fact, observation, untrusted}` — what
+  the memory may be used *as*. Only `human` origin may create an `instruction`. `agent` origin
+  creates at most `fact`. `tool`, `file` and `peer` create `observation` at most, and `untrusted`
+  by default when the content contains anything that parses as an imperative aimed at an agent.
+  **Non-malleable downward:** a memory whose `basis` cites other memories inherits the lowest
+  authority among them; the agent paraphrasing a file does not launder the file. **Gated upward:**
+  authority rises only by an action-bound human confirmation in the Inspector, or when the
+  consolidation pass finds two memories with *independent* trusted origins that agree (two chunks
+  of the same file are one origin). Every elevation is an episode with `actor`.
+- **The policy engine reads authority.** A gated write (`fs.write`, `fs.move`, `fs.trash`,
+  `fs.transfer`) that the agent attributes to a memory — `motivated_by: memory_id` in the request,
+  and the MCP tool descriptions say to send it — is refused if that memory's authority is below
+  `instruction`, audited either way. An agent that omits the field gets the policy as before; the
+  field exists so that a poisoned memory cannot be the *stated* reason for a write.
+- **Validity beside recording time.** `valid_from`, `valid_to` (nullable) on every memory beside
+  `created_at`. The daemon never fills `valid_from` with `created_at` silently; if the agent does
+  not say, the field is null and the pack says "recorded 2026-09-05, validity unknown."
+- **Supersession takes a reason.** `brain.supersede(old, new, reason ∈ {changed, wrong})`. `changed`
+  makes the old memory `historical` (answers "what was true before", retrievable with
+  `include_history`); `wrong` makes it `retracted` (never returned without `include_retracted`, and
+  then labelled). `brain.remember(..., supersedes)` without a reason is refused with the two options
+  named. The daemon still only *detects* candidates; it never chooses.
+- **State, on every memory, derived not stored.** `state ∈ {pending, current, historical,
+  retracted, deleted}` — a pure function of the episode log (R10). `pending` is the admission
+  state for `tool`, `file` and `peer` origins: retrievable when a call asks for it, absent from a
+  pack by default, promoted to `current` by a human, by an `outcome` that names it as helped, or
+  by the consolidation pass under the two-independent-origins rule. `deleted` never revives: a
+  rebuild reproduces the deletion, and a later `remember` of identical text is a *new* memory with
+  no inherited usefulness.
+- **The pack labels and accounts.** Every item in `brain.context` carries `origin`, `authority`,
+  `state`, and its validity when known. The pack gains an `omitted` block: how many items were left
+  out for budget, how many were `pending`, how many `retracted`, so an agent can ask rather than
+  guess. Pinned preferences remain unconditional — and are `human`/`instruction` by construction.
+- **Half-life per kind.** `decay_half_life_days` becomes a table keyed by memory kind, with the
+  present value as the default and as the value for files. Defaults, to be corrected by the
+  falsifier and nothing else: `preference` 365, `procedure` 180, `decision` 120, `fact` 60,
+  `failure` 90, `observation` 14. Written into the effective configuration, printed by
+  `cortexd --check`, and shown per memory in `why`.
+- **The audit log is hash-chained.** Each audit row carries the hash of the previous one; `cortex
+  audit --verify` walks the chain. Tampering with the log becomes detectable, which is what the
+  poisoning threat model needs and the rest of the design already assumes.
+- **The evaluation, in MemDelta's shape.** A gold set built from the owner's own re-finding episodes
+  (a query, the node they opened within a minute, the modes they used), frozen with a hash, and a
+  harness `bench-quality` that runs *one variable at a time* with the embedding model fixed: salience
+  boost on/off; kind half-lives on/off; adaptive fusion on/off; RRF versus each arm alone. Recall@10
+  and MRR per mode, P95 latency per run, written to a JSON the review can diff. Retrieval and
+  utilisation are reported separately: what was in the pack, and what `brain.outcome` said helped.
+- **The forgetting suite.** Command-driven cases, scored by substring absence across every surface:
+  delete, retract, "forget everything about ‹subject›", supersede-as-wrong, a rotated secret-shaped
+  string, and non-revival after each of them through a rebuild and through a re-`remember` of the
+  same text.
+- **Adaptive fusion, behind a flag.** Per-query weighting of the RRF arms from the query's IDF
+  profile, and a cascade that skips the vector arm when the lexical arms agree with a wide margin.
+  Off by default until `bench-quality` and `bench-latency` both say it pays on this index.
+- **Weights fitted from the log, offline.** A `cortex consolidate --fit-weights` step that fits the
+  salience weight vector against observed re-access in the episode log (logistic, no model), writes
+  the fitted vector *into the report*, and applies nothing until a human copies it into the config.
+  Learned weights are advice here, not a mechanism — a weight vector nobody read is D76's problem
+  again.
+
+### Out of scope
+
+- Any language model in admission, elevation or supersession. The daemon detects and labels; a
+  human or an outcome decides.
+- A trust *score*. Authority is an enum with a rule; a continuous trust number is exactly the
+  malleable signal the research update says is unsound.
+- Memory gravity audits (suspend the top concepts, replay logged queries) — possible once the
+  gold set exists; noted as an option in the consolidation report, not built.
+- Encrypted memories, multi-user authority, organisational invariants. One person, one machine,
+  and peers that are the same person elsewhere.
+
+### Definition of Done
+
+1. **Origin is unforgeable from the socket.** A `brain.remember` over MCP or the socket cannot
+   set `origin = human`; the Inspector and the CLI as the human can. Asserted per surface.
+2. **Authority does not launder.** A memory whose `basis` cites a `file`-origin chunk or an
+   `untrusted` memory is stored with authority ≤ `observation` whatever the request asked for,
+   asserted for a direct write, for a paraphrase (the agent's text differs from the source) and
+   for a chain of three.
+3. **A poisoned file cannot write.** A seeded file containing an imperative aimed at an agent is
+   indexed; an agent remembers it; the memory is `pending`/`untrusted`; it never appears in a pack
+   without both labels; an `fs.write` with `motivated_by` pointing at it is refused and audited.
+   The same three assertions for a seeded tool output and for a seeded peer batch.
+4. **Elevation is an event.** Raising authority writes an episode with `actor = human` or
+   `actor = consolidation` and the two independent origins it relied on; the Inspector shows it;
+   a rebuild reproduces it.
+5. **Reasons differ at read time.** After `supersede(a, b, changed)`, `a` is returned with
+   `include_history` labelled `historical`; after `supersede(a, b, wrong)`, `a` is returned only
+   with `include_retracted` and labelled `retracted`; in neither case does `a` enter a default
+   pack. A supersede without a reason is refused.
+6. **State is a function of the log.** `cortex rebuild` over a store containing every state, every
+   origin and every authority reproduces a byte-identical canonical dump; the dump includes the
+   derived state column so a rebuild that mis-derives one row fails.
+7. **Nothing revives.** For each case in the forgetting suite, the forgotten text is absent from
+   `search`, `brain.recall`, `brain.context`, `brain.graph` and the Inspector, after a rebuild, and
+   after a fresh `remember` of the same text — which is a new memory with zero usefulness.
+8. **The pack accounts for itself.** For a budget that forces omission, `omitted` reports counts
+   that sum to (candidates − returned), and a test that sets one item `pending` sees it move from
+   the pack to the `omitted.pending` count.
+9. **Half-lives are per kind and visible.** With the default table, an `observation` and a
+   `preference` touched once on the same day sit in different tiers after 60 simulated days; `why`
+   on each names its half-life; the tier legend on a fresh store still reads honestly.
+10. **The audit chain verifies, and fails.** `cortex audit --verify` passes on a store the daemon
+    wrote and fails, naming the row, after one byte of one row is edited underneath it.
+11. **The gold set exists and is frozen.** At least 200 query→node pairs from real episodes, hash
+    recorded in `03-PROGRESS.md`, and `bench-quality` runs it in under a minute.
+12. **The four falsifiers are run, whichever way they go.** Salience boost on/off; cold-tier
+    retrievals per kind; co-access edges traversed in the gold set; explanations opened in the
+    Inspector over a week of use. Each written into `03-PROGRESS.md` with its number. **If the boost
+    does not win, it leaves the ranking in the same commit** and stays in the explanation.
+13. **Adaptive fusion is measured before it is on.** `bench-quality` and `bench-latency` with the
+    flag on and off, both recorded; the default follows the numbers.
+14. **Fitted weights are advice.** `--fit-weights` writes a vector into the report and changes no
+    ranking; a test asserts the config is untouched.
+15. **Every mechanism has a bracket.** For each of 1–10 there is a test that *fails when the
+    mechanism is disabled* — a check that passes with the check turned off is the failure this
+    criterion exists to catch.
 
 
 ## What to do when the plan is wrong

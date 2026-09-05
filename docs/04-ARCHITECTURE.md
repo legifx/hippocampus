@@ -199,6 +199,17 @@ Two things about this diagram are the whole design:
 **The middle box is the only one an agent needs on a good day.** Everything else in the surface
 exists so that the middle box can be explained, corrected and audited.
 
+**M12 adds provenance to every box, and a state to every memory.** Each node records its
+`origin` (`human · agent · tool · file · peer`); each memory an `authority` (`instruction · fact ·
+observation · untrusted`) that is inherited downward and raised only by a human or by two
+independent origins; each memory a derived `state` (`pending · current · historical · retracted ·
+deleted`) that is a function of the episode log. A memory a file, a tool or a peer wrote is
+`pending` until somebody vouches for it; the pack labels every item with all three, and says what
+it left out. The policy engine refuses a gated write whose stated motivation is a memory below
+`instruction`. Nothing in this is a second store: three columns on the projection, one rule in
+`brain.remember`, one check in the policy engine. D98–D102; the evidence is
+`docs/paper/WHAT-2026-CHANGED.md`.
+
 **The loop closes at the bottom.** Without `brain.outcome` the ranking is evaluated by the thing
 being evaluated, and a memory system with no feedback path converges on whatever it happened to
 rank first. That is not a refinement; it is the difference between a store and a brain.
