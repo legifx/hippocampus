@@ -210,6 +210,8 @@ it left out. The policy engine refuses a gated write whose stated motivation is 
 `brain.remember`, one check in the policy engine. D98–D102; the evidence is
 `docs/paper/WHAT-2026-CHANGED.md`.
 
+<img src="img/provenance.svg" alt="Origin and authority on every memory; pending quarantine for what tools, files and peers wrote; labelled context packs; refused writes below instruction authority." width="760">
+
 **The loop closes at the bottom.** Without `brain.outcome` the ranking is evaluated by the thing
 being evaluated, and a memory system with no feedback path converges on whatever it happened to
 rank first. That is not a refinement; it is the difference between a store and a brain.

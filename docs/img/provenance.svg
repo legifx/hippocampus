@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 440" width="760" height="440"
+     font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+  <title>Where a memory came from decides what it may do</title>
+  <desc>Five sources write into the memory: you, an agent's own reasoning, a tool result, a file's
+  content, and a peer. Each memory keeps its origin and an authority it cannot raise by itself.
+  What a file, a tool or a peer wrote waits in quarantine until someone vouches for it. A context
+  pack labels every item. A write that a low-authority memory motivated is refused.</desc>
+
+  <rect width="100%" height="100%" rx="12" fill="#0b0e14"/>
+
+  <text x="24" y="30" font-size="15" font-weight="600" fill="#e8eef8"
+       >Where a memory came from decides what it may do</text>
+  <text x="24" y="52" font-size="12.5" fill="#8b98ab">
+    Origin is recorded once and never changes. Authority only goes down on its own; up takes a person.
+  </text>
+
+  <!-- Column 1: sources -->
+  <text x="24" y="86" font-size="11" fill="#7d8895" letter-spacing="1">WHO WROTE IT</text>
+  <g font-size="12.5">
+    <rect x="24" y="96" width="150" height="34" rx="7" fill="#1a2438" stroke="#5aa9ff" stroke-width="1.2"/>
+    <text x="99" y="118" fill="#cfe2ff" text-anchor="middle">you</text>
+    <rect x="24" y="140" width="150" height="34" rx="7" fill="#1a2438" stroke="#5aa9ff" stroke-opacity="0.6"/>
+    <text x="99" y="162" fill="#cfe2ff" text-anchor="middle">an agent, on its own</text>
+    <rect x="24" y="184" width="150" height="34" rx="7" fill="#2a2416" stroke="#e0a742" stroke-opacity="0.8"/>
+    <text x="99" y="206" fill="#f2dcae" text-anchor="middle">a tool result</text>
+    <rect x="24" y="228" width="150" height="34" rx="7" fill="#2a2416" stroke="#e0a742" stroke-opacity="0.8"/>
+    <text x="99" y="250" fill="#f2dcae" text-anchor="middle">a file's content</text>
+    <rect x="24" y="272" width="150" height="34" rx="7" fill="#2a2416" stroke="#e0a742" stroke-opacity="0.8"/>
+    <text x="99" y="294" fill="#f2dcae" text-anchor="middle">another machine</text>
+  </g>
+
+  <!-- Arrows into the memory -->
+  <g stroke="#6b7684" stroke-width="1.2" fill="none">
+    <path d="M174 113 C 220 113, 220 160, 262 160"/>
+    <path d="M174 157 C 220 157, 220 175, 262 175"/>
+    <path d="M174 201 C 220 201, 220 240, 262 240"/>
+    <path d="M174 245 C 220 245, 220 250, 262 250"/>
+    <path d="M174 289 C 220 289, 220 260, 262 260"/>
+  </g>
+
+  <!-- Column 2: the memory, two states -->
+  <text x="262" y="86" font-size="11" fill="#7d8895" letter-spacing="1">WHAT THE MEMORY KEEPS</text>
+  <rect x="262" y="96" width="220" height="230" rx="10" fill="#111726" stroke="#2c3648"/>
+
+  <rect x="276" y="110" width="192" height="90" rx="8" fill="#152238" stroke="#5aa9ff" stroke-opacity="0.7"/>
+  <text x="288" y="130" font-size="12" font-weight="600" fill="#cfe2ff">current</text>
+  <text x="288" y="150" font-size="11.5" fill="#9fb3cc">origin: you · agent</text>
+  <text x="288" y="168" font-size="11.5" fill="#9fb3cc">authority: instruction · fact</text>
+  <text x="288" y="186" font-size="11.5" fill="#9fb3cc">state, validity, reason if replaced</text>
+
+  <rect x="276" y="212" width="192" height="100" rx="8" fill="#241f14" stroke="#e0a742" stroke-opacity="0.7" stroke-dasharray="5 3"/>
+  <text x="288" y="232" font-size="12" font-weight="600" fill="#f2dcae">pending — quarantined</text>
+  <text x="288" y="252" font-size="11.5" fill="#cbb98f">origin: tool · file · peer</text>
+  <text x="288" y="270" font-size="11.5" fill="#cbb98f">authority: observation at most</text>
+  <text x="288" y="288" font-size="11.5" fill="#cbb98f">out of every pack until vouched for</text>
+  <text x="288" y="304" font-size="11" fill="#8b98ab">by you, an outcome, or two sources</text>
+
+  <!-- Vouch arrow -->
+  <path d="M372 212 L372 202" stroke="#e0a742" stroke-width="1.4" fill="none" marker-end="url(#up)"/>
+  <defs>
+    <marker id="up" viewBox="0 0 8 8" refX="4" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 8 L4 0 L8 8 Z" fill="#e0a742"/>
+    </marker>
+    <marker id="right" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L8 4 L0 8 Z" fill="#6b7684"/>
+    </marker>
+  </defs>
+
+  <!-- Column 3: what comes out -->
+  <text x="520" y="86" font-size="11" fill="#7d8895" letter-spacing="1">WHAT COMES OUT</text>
+  <g stroke="#6b7684" stroke-width="1.2" fill="none" marker-end="url(#right)">
+    <path d="M482 150 C 500 150, 500 130, 518 130"/>
+    <path d="M482 180 C 500 180, 500 250, 518 250"/>
+  </g>
+
+  <rect x="520" y="96" width="216" height="80" rx="8" fill="#13201a" stroke="#4fbf85" stroke-opacity="0.8"/>
+  <text x="532" y="116" font-size="12" font-weight="600" fill="#c6f0d8">a context pack</text>
+  <text x="532" y="136" font-size="11.5" fill="#9fc7b0">every item says its origin,</text>
+  <text x="532" y="152" font-size="11.5" fill="#9fc7b0">its authority and its state —</text>
+  <text x="532" y="168" font-size="11.5" fill="#9fc7b0">and what was left out, and why</text>
+
+  <rect x="520" y="212" width="216" height="80" rx="8" fill="#2a1518" stroke="#ff6b6b" stroke-opacity="0.8"/>
+  <text x="532" y="232" font-size="12" font-weight="600" fill="#ffd0d0">a write to your files</text>
+  <text x="532" y="252" font-size="11.5" fill="#e0a8a8">"because memory 42 said so"</text>
+  <text x="532" y="268" font-size="11.5" fill="#e0a8a8">is refused unless 42's authority</text>
+  <text x="532" y="284" font-size="11.5" fill="#e0a8a8">is instruction — that is, you said so</text>
+
+  <!-- Footer: the rule -->
+  <line x1="24" y1="346" x2="736" y2="346" stroke="#2c3648"/>
+  <text x="24" y="370" font-size="12" fill="#8b98ab">
+    <tspan fill="#e8eef8" font-weight="600">The rule.</tspan> A memory built on other memories inherits the lowest authority among them —
+  </text>
+  <text x="24" y="388" font-size="12" fill="#8b98ab">an agent paraphrasing a web page does not launder the web page. Nothing in the daemon raises</text>
+  <text x="24" y="406" font-size="12" fill="#8b98ab">authority by judging content; it goes up when you confirm it, or when two independent sources agree.</text>
+  <text x="24" y="428" font-size="10.5" fill="#5f6b7a">Milestone M12, specified 2026-09-05 — docs/paper/WHAT-2026-CHANGED.md §3–4, decisions D98 and D99.</text>
+</svg>

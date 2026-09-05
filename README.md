@@ -214,6 +214,13 @@ write access to the memory. Filesystem mutations require an allow-list, a confir
 land in an undo journal. An agent with unchecked `fs.move` over an indexed home directory can do
 more damage in 200 ms than a backup undoes.
 
+**It will know where each memory came from.** A file's content, a tool's output, an agent's own
+note and your instruction are four different things, and a memory that cannot tell them apart can
+be poisoned once and obeyed for months. The next milestone records the origin of every memory,
+lets authority go down by inheritance and up only when you confirm it, and keeps what files,
+tools and other machines wrote in quarantine until somebody vouches for it. Specified with the
+evidence behind it; not yet built.
+
 **Nothing leaves your machine.** A fresh install makes zero outbound connections. No telemetry,
 no update checks, no cloud models. Federation with a remote memory is optional and additive —
 the system is complete without it.
@@ -234,6 +241,7 @@ the system is complete without it.
 | M9 | Packaging and release | built — `.deb`, AppDir, `cortex setup`, the install guide, the history audit; its gate is a second person's install |
 | M10 | The explorer as a memory browser | **done** |
 | M11 | The agent brain: memories, context packs, the learning signal, the Inspector | ten of twelve criteria; the rest need a human |
+| M12 | The governed brain: where every memory came from and what it may be used as, supersession with a reason, quarantine for what files, tools and peers wrote, the forgetting suite, the gold-set evaluation | **specified**, not built — `docs/paper/WHAT-2026-CHANGED.md` says why |
 
 Details, including the executable definition of done for each milestone, are in
 `docs/01-BUILD-PROMPT.md`.
@@ -400,6 +408,27 @@ cortex memories                                # what is in there, and what it h
 cortex memories forget 42                      # and it stays deleted through a rebuild
 cortex sessions                                # who has been working, and on what
 ```
+
+### Where a memory came from
+
+Today a memory knows its scope and what it has earned. It does not know whether a person, an
+agent, a tool, a file or another machine put it there — and that is the gap the 2025–2026
+literature says gets exploited: one poisoned write, retrieved as trusted for months, and a
+paraphrase by the agent launders the source. The next milestone closes it, and the picture is the
+whole design:
+
+<img src="docs/img/provenance.svg" alt="Five sources write into the memory: you, an agent on its own, a tool result, a file's content, another machine. The memory keeps each entry's origin and authority; what tools, files and peers wrote sits in a quarantined pending state until vouched for. A context pack labels every item; a write to your files motivated by a memory below instruction authority is refused." width="760">
+
+Three things to take from it. **Origin is written once and never changes.** **Authority only goes
+down by itself** — a memory built on a web page is worth no more than the web page, however it is
+phrased — and goes up only when you confirm it in the Inspector or two independent sources agree.
+**Quarantine is a state, not a second store:** a `pending` memory is retrievable when asked for and
+absent from every pack until vouched for, and a rebuild reproduces it. Supersession gains a reason
+while it is at it — *the world changed* keeps the old memory as history, *the old one was wrong*
+retracts it — because those are different questions and one word was carrying both.
+
+This is milestone M12 in `docs/01-BUILD-PROMPT.md`, with the research behind every line in
+`docs/paper/WHAT-2026-CHANGED.md`. It is specified and not built.
 
 ### Seeing what the agents did
 
