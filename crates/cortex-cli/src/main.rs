@@ -31,7 +31,8 @@ use cortex_rpc::protocol::{
     CanonicalDumpResult, IndexPathParams, IndexPathResult, ModelReloadResult, ModelStatusResult,
     NodeGetParams, NodeGetResult, PingResult, RebuildParams, RebuildResult, ReconcileParams,
     ReconcileResult, SearchExplainParams, SearchUpdateParams,
-    SearchExplainResult, SearchParams, SearchResult, StatusResult, WatchStatusResult,
+    SearchExplainResult, SearchParams, SearchResult, StatusResult, SyncNowResult,
+    SyncReplayResult, SyncStatusResult, WatchStatusResult,
     ZoneSetColorParams, ZonesListResult,
 };
 
@@ -117,6 +118,11 @@ enum Command {
     Watch {
         #[command(subcommand)]
         command: WatchCommand,
+    },
+    /// Federation: is it syncing, and if not, why not.
+    Sync {
+        #[command(subcommand)]
+        command: SyncCommand,
     },
     /// List the spatial zones and their colours.
     Zones {
@@ -498,6 +504,16 @@ enum MemoryCommand {
 enum WatchCommand {
     /// Watch coverage, degradation and the last reconciliation.
     Status,
+}
+
+#[derive(Subcommand, Debug)]
+enum SyncCommand {
+    /// What is waiting, what was confirmed, and whether the peer can be reached.
+    Status,
+    /// Send now, regardless of the interval or the backoff.
+    Now,
+    /// Start the whole log over. Same identifiers; a peer that keeps them sees nothing new.
+    Replay,
 }
 
 /// One line of a memory, for a listing. Memories are prose and some of them are paragraphs.
@@ -885,6 +901,64 @@ async fn run(args: Args) -> Result<()> {
                     print_json(&result)?;
                 } else {
                     print_watch_status(&result);
+                }
+            }
+        },
+
+        Command::Sync { command } => match command {
+            SyncCommand::Status => {
+                let result: SyncStatusResult =
+                    client.call(method::SYNC_STATUS, serde_json::json!({})).await?;
+                if args.json {
+                    print_json(&result)?;
+                } else {
+                    println!("{}", result.basis);
+                    println!(
+                        "federation {}  transport {}  peer {}",
+                        if result.enabled { "on" } else { "off" },
+                        result.transport,
+                        result.peer
+                    );
+                    println!("origin     {}", result.origin);
+                    println!(
+                        "outbox     {} pending, {} confirmed, {} dead, {} episodes behind",
+                        result.pending, result.acked, result.dead, result.episodes_behind
+                    );
+                    println!(
+                        "clock      lamport {}, peer acked up to {}",
+                        result.lamport, result.last_acked_lamport
+                    );
+                    println!(
+                        "sent       {} batches, {} accepted, {} rejected",
+                        result.batches_sent, result.events_accepted, result.events_rejected
+                    );
+                    if let Some(at) = result.last_sync_at {
+                        println!("last sync  {at}");
+                    }
+                    if let Some(v) = result.ontology_version {
+                        println!("ontology   version {v} from the peer");
+                    }
+                    if let Some(err) = &result.last_error {
+                        println!("error      {err}");
+                    }
+                }
+            }
+            SyncCommand::Now => {
+                let result: SyncNowResult =
+                    client.call(method::SYNC_NOW, serde_json::json!({})).await?;
+                if args.json {
+                    print_json(&result)?;
+                } else {
+                    println!("{}", result.basis);
+                }
+            }
+            SyncCommand::Replay => {
+                let result: SyncReplayResult =
+                    client.call(method::SYNC_REPLAY, serde_json::json!({})).await?;
+                if args.json {
+                    print_json(&result)?;
+                } else {
+                    println!("{}", result.basis);
                 }
             }
         },

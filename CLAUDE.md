@@ -16,6 +16,7 @@ Hippocampus is a file manager for Linux/niri whose actual core is a headless mem
 | 5 | `docs/04-ARCHITECTURE.md` | Component map and data model. |
 | 6 | `docs/05-HARD-RULES.md` | Security, privacy and repo hygiene. Non-negotiable. |
 | 7 | `docs/07-AGENT-TOOLS.md` | The Agent Surface, tool by tool — and the three rules for adding one. |
+| 8 | `docs/08-FEDERATION.md` | What leaves the machine, in what shape, through what — and what never does. |
 
 The source specification this project derives from is `docs/99-SOURCE-SPEC.md`.
 
@@ -47,8 +48,9 @@ crates/
   cortex-agent     policy engine, kill switch, audit log, fs tools, undo journal
   cortex-memory    salience, decay, tiering, consolidation
   cortex-rpc       JSON-RPC over Unix socket (server side) + protocol types
-  cortex-sync      generic federation protocol + reference adapter (no concrete peer)
-  cortex-plugin    plugin loader (subprocess, same JSON-RPC)
+  cortex-sync      federation: wire format, file-drop and plugin transports, the worker,
+                   and `hc-test-peer`, the reference peer (no concrete peer, no endpoint)
+                   — plugin declarations are `cortex-core::plugins`; there is no loader crate
   cortexd          the daemon binary
   cortex-cli       CLI client binary
   cortex-mcp       MCP server binary (Agent Surface) — a bridge, no policy in it

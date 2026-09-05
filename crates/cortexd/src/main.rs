@@ -11,6 +11,7 @@ mod lock;
 mod operations;
 mod semantics;
 mod server;
+mod sync_stage;
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -161,6 +162,11 @@ fn main() -> Result<()> {
             .spawn(move || stage.run())?
     };
 
+    // Federation (M7). Off by default; when on, the only thing it knows about the peer is a
+    // directory or a plugin name, and it runs on its own thread like every other stage.
+    let federation = Arc::new(sync_stage::Federation::start(store.clone(), &config, &paths));
+    let federation_for_shutdown = federation.clone();
+
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
@@ -194,6 +200,7 @@ fn main() -> Result<()> {
             cortex_agent::trash::Trash::home()
                 .unwrap_or_else(|_| cortex_agent::trash::Trash::at(paths.trash_dir())),
             paths.database(),
+            federation.clone(),
         ));
         let listener = server::bind(&paths.socket())
             .with_context(|| format!("could not bind {}", paths.socket().display()))?;
@@ -226,6 +233,7 @@ fn main() -> Result<()> {
     })?;
 
     // Let the ingest loop finish its current pass rather than tearing it down mid-write.
+    federation_for_shutdown.stop();
     ingest_for_shutdown.stop();
     if let Err(e) = ingest_thread.join() {
         tracing::warn!("ingest thread did not stop cleanly: {e:?}");

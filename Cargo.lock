@@ -968,6 +968,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "cortex-sync"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "clap",
+ "cortex-core",
+ "cortex-store",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tracing",
+]
+
+[[package]]
 name = "cortexd"
 version = "0.0.1"
 dependencies = [
@@ -982,6 +998,7 @@ dependencies = [
  "cortex-query",
  "cortex-rpc",
  "cortex-store",
+ "cortex-sync",
  "flate2",
  "libc",
  "serde",

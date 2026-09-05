@@ -133,6 +133,7 @@ cortex search "that thing"   # find something - paths, words, and meaning
 cortex explain "that thing"  # ask why a result ranked where it did
 cortex pin <file>            # this one matters, never forget it
 cortex consolidate           # do a pass now, and print the report
+cortex sync status           # is anything leaving this machine, and if not, why not
 ```
 
 Search answers in well under a tenth of a second, and **no AI model sits in that path**. The
@@ -223,14 +224,14 @@ the system is complete without it.
 | M1 | Filesystem watcher, metadata index, episodes, trigram path search, zones | **done** |
 | M2 | Extraction, chunking, embeddings, hybrid search | **done** |
 | M3 | Agent Surface: MCP, policy engine, undo journal | **done** |
-| M4 | Search overlay (first GUI) | |
-| M5 | Salience, decay, tiering, consolidation | |
-| M6 | The full file manager | |
-| M7 | Federation with a remote memory | |
-| M8 | Brain-state visualisation | |
+| M4 | Search overlay (first GUI) | **done** |
+| M5 | Salience, decay, tiering, consolidation | **done** |
+| M6 | The full file manager | built; its gate is a week of daily use |
+| M7 | Federation with a remote memory | **built** — protocol, two transports, reference peer; a real peer is the Extension's |
+| M8 | Brain-state visualisation | **done** |
 | M9 | Packaging and release | |
-| M10 | The explorer as a memory browser | |
-| M11 | The agent brain: memories, context packs, the learning signal, the Inspector | in progress |
+| M10 | The explorer as a memory browser | **done** |
+| M11 | The agent brain: memories, context packs, the learning signal, the Inspector | ten of twelve criteria; the rest need a human |
 
 Details, including the executable definition of done for each milestone, are in
 `docs/01-BUILD-PROMPT.md`.
@@ -424,6 +425,20 @@ cortex pause               # stop watching and indexing; the index still answers
 Without `--root`, the daemon uses the XDG locations: configuration in
 `~/.config/hippocampus/`, index in `~/.local/state/hippocampus/`, socket in
 `$XDG_RUNTIME_DIR/hippocampus/`.
+
+## Sending it to a second brain
+
+Off until you switch it on. When you do, the daemon keeps an outbox of what happened here —
+memories, notes, the concepts it formed, and (by default) which files were touched, never a
+search and never a file's content — and drains it to a peer in small batches, in order, with an
+identifier on every event that stays the same however often it is resent. Offline is the normal
+case: three days without the peer is three days of outbox, delivered in order on reconnection
+without flooding anything.
+
+The public Core knows no peer. It ships a wire format, a transport that writes one file per
+event into a directory you name, a transport that hands each batch to a program you declare, and
+a reference peer to test against. Whatever talks to a real second brain is a plugin, and every
+endpoint and credential it needs lives with the plugin. `docs/08-FEDERATION.md` is the protocol.
 
 ## What it deliberately does not do
 

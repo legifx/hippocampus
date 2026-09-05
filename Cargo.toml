@@ -9,6 +9,7 @@ members = [
     "crates/cortex-extract",
     "crates/cortex-embed",
     "crates/cortex-memory",
+    "crates/cortex-sync",
     "crates/cortex-agent",
     "crates/cortexd",
     "crates/cortex-cli",
@@ -38,6 +39,7 @@ cortex-ingest = { path = "crates/cortex-ingest" }
 cortex-extract = { path = "crates/cortex-extract" }
 cortex-embed = { path = "crates/cortex-embed" }
 cortex-memory = { path = "crates/cortex-memory" }
+cortex-sync = { path = "crates/cortex-sync" }
 cortex-agent = { path = "crates/cortex-agent" }
 
 anyhow = "1"

@@ -24,6 +24,7 @@ blake3.workspace = true
 cortex-rpc.workspace = true
 cortex-query.workspace = true
 cortex-ingest.workspace = true
+cortex-sync.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 clap.workspace = true

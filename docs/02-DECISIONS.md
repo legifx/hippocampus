@@ -2797,3 +2797,81 @@ this frame takes" — with the keyboard unanswered in between.
 **What is still not known** is whether the picture appears at all on WebKitGTK's software GL.
 That question is now cheap to answer — the panel says whether frames are being drawn — and it is
 the owner's to answer, because it needs their window.
+
+---
+
+### D93 — The outbox is derived from the episode log, never written to directly
+
+**Status:** accepted · 2026-09-05 · M7
+
+Nothing in the daemon calls "enqueue this for the peer". The sync worker **harvests**: it walks
+`episodes` from a cursor and turns each row into an event with an identifier that is a function of
+the row's id and the index's origin; it walks the concept nodes and does the same by label and
+membership. The outbox is a cache of that function's output (R10), and `cortex sync replay` is
+"clear the cache and run the function again".
+
+**Why.** Three things fall out of it at once. Idempotency (D18) becomes a property of the
+identifier rather than of the peer or of careful bookkeeping — the same episode always produces the
+same event id, on this machine, after a rebuild, after a replay. Nothing is queued while federation
+is off, because nothing harvests; R5 is kept by absence rather than by a check on every write path.
+And the write paths do not know the peer exists: `remember`, `annotate`, consolidation — none of
+them gained a line, and none of them can be forgotten by the next feature.
+
+**What it costs.** An event about a node carries the node's path as the harvester resolves it at
+harvest time, not at episode time. An episode about a file that was renamed before the worker got to
+it names the new path. That is the right answer for a peer — the file *is* there now — and wrong
+for a historian; the episode's own metadata still carries what it carried.
+
+**Revisit if:** something needs to reach the peer that is not in `episodes` and not a concept. The
+answer is to make it an episode, not to open a second door.
+
+---
+
+### D94 — An acknowledged event stays, marked; silence is not a refusal
+
+**Status:** accepted · 2026-09-05 · M7
+
+The first version deleted a row on ack. The first test that ran a concept through it sent the
+concept again on the next tick: a concept is harvested by identity, and once the row was gone the
+identity was new again. `sync_outbox` gained `acked_at` and `kind` (migration 0008); an ack marks,
+and an enqueue of a known identity — pending, dead or acknowledged — does nothing. Acknowledged
+episode events are pruned after a week (the cursor already guarantees they cannot return);
+acknowledged concept events are kept.
+
+**The other half.** `attempts` counts *refusals* — the peer looked and said no — and nothing else.
+An unreachable peer leaves every row untouched and the worker backs off, doubling from the interval
+to a ceiling. The schema's own partial index says a row is dead after a hundred attempts, and a
+peer that is down for a weekend against a one-second interval would have dead-lettered the whole
+outbox in under two minutes if silence had counted. D18's sentence — the outbox marks a row
+acknowledged only after the peer state is confirmed — was already this decision; the deletion was
+the mistake.
+
+**Revisit if:** the outbox's acknowledged rows become the largest table in the index. Then the
+week is too long, or concepts need their own small table of sent identities.
+
+---
+
+### D95 — A plugin transport is one process per batch, and the declaration names only a command
+
+**Status:** accepted · 2026-09-05 · M7 · refines D9, D17
+
+The `plugin` transport starts the declared command, writes one JSON-RPC request, reads one
+response line, and lets the process exit. No long-lived plugin, no handshake, no state the Core
+cannot see.
+
+**Why one process per batch.** A batch goes out at most once a second and usually far less often;
+a process is a few milliseconds. What the spawn buys is worth more than that: a bridge that crashes
+takes nothing with it, a bridge that hangs is killed at its deadline and counted as unreachable
+rather than as a refusal, and a bridge that wants a persistent connection can keep one in a daemon
+of its own without the Core having to know. The reference peer is forty lines because of this.
+
+**Why the declaration is only a command.** `plugins/<name>.toml` carries `kind`, `command`,
+`args` and a timeout, and `deny_unknown_fields` refuses anything else — an `endpoint =` line is a
+parse error, not an option. `sync.status` shows `plugin:<name>`. The endpoint, the schema, the
+credentials are the plugin's, behind the process boundary D9 put there, and the hygiene gate
+(`scripts/pre-commit --all`, run by `cargo test`) now also refuses a URL whose host is a real
+domain outside a short list of public documentation and registry hosts.
+
+**Revisit if:** batch latency ever matters — a bridge that must answer within a second of the
+episode. Then a long-lived plugin with the same request shape is the addition, and the spawn-per-
+batch one stays as the safe default.

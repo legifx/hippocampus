@@ -12,6 +12,7 @@ pub mod memory;
 pub mod mounts;
 pub mod model;
 pub mod paths;
+pub mod plugins;
 pub mod tokens;
 pub mod tools;
 pub mod uri;

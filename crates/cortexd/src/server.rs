@@ -15,6 +15,7 @@ use cortex_ingest::throttle;
 use cortex_query::search;
 use cortex_query::PathIndex;
 use cortex_rpc::protocol::SearchUpdateParams;
+use cortex_rpc::protocol::{SyncNowResult, SyncReplayResult, SyncStatusResult};
 use cortex_rpc::protocol::{
     method, ActivityPingResult, AgentSetEnabledParams, AgentStatusResult, AuditRecentParams,
     RecallParams, RecallResult, RecalledAssociation,
@@ -67,6 +68,8 @@ pub struct Daemon {
     pub started: Instant,
     /// Signalled when a client calls `shutdown`.
     pub shutdown: Arc<Notify>,
+    /// The federation worker's handle (M7). Always present; usually off.
+    pub federation: Arc<crate::sync_stage::Federation>,
 }
 
 impl Daemon {
@@ -82,6 +85,7 @@ impl Daemon {
         kill: Arc<KillSwitch>,
         trash: cortex_agent::trash::Trash,
         database_path: PathBuf,
+        federation: Arc<crate::sync_stage::Federation>,
     ) -> Self {
         let policy = Policy::new(&config.agent, config.index.extra_deny.clone());
         Self {
@@ -99,6 +103,7 @@ impl Daemon {
             plans: PlanBook::default(),
             trash,
             database_path,
+            federation,
             started: Instant::now(),
             shutdown: Arc::new(Notify::new()),
         }
@@ -1717,6 +1722,60 @@ async fn dispatch_inner(
                     .sessions(&params)
                     .map_err(tool_error)?,
             )
+        }
+
+        method::SYNC_STATUS => {
+            let s = daemon.federation.snapshot();
+            let counts = daemon.store.outbox_counts().map_err(internal)?;
+            let basis = crate::sync_stage::describe(&s);
+            json(SyncStatusResult {
+                enabled: s.enabled,
+                transport: s.transport,
+                peer: s.peer,
+                origin: s.origin,
+                pending: counts.pending,
+                dead: counts.dead,
+                acked: counts.acked,
+                episodes_behind: counts.episodes_behind,
+                lamport: counts.lamport,
+                last_acked_lamport: s.last_acked_lamport,
+                last_sync_at: s.last_sync_at,
+                batches_sent: s.batches_sent,
+                events_accepted: s.events_accepted,
+                events_rejected: s.events_rejected,
+                backoff_ms: s.backoff_ms,
+                not_before_ms: s.not_before_ms,
+                last_error: s.last_error,
+                last_tick: s.last_tick.and_then(|t| serde_json::to_value(t).ok()),
+                ontology_version: s.ontology_version,
+                basis,
+            })
+        }
+
+        method::SYNC_NOW => {
+            let kicked = daemon.federation.kick();
+            json(SyncNowResult {
+                kicked,
+                basis: if kicked {
+                    "the worker will send on its next step, interval and backoff set aside".into()
+                } else {
+                    "there is no worker to kick; see sync.status for why".into()
+                },
+            })
+        }
+
+        method::SYNC_REPLAY => {
+            let replaying = daemon.federation.replay();
+            json(SyncReplayResult {
+                replaying,
+                basis: if replaying {
+                    "the outbox is cleared and every episode is harvested again with the same \
+                     identifiers; a peer that keeps them will see nothing new"
+                        .into()
+                } else {
+                    "there is no worker to replay through; see sync.status for why".into()
+                },
+            })
         }
 
         // `brain.search` and `brain.explain` are the same operations as `search` and

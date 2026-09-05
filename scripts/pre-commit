@@ -8,6 +8,11 @@
 #
 # Install with scripts/setup-dev.sh, or copy to .git/hooks/pre-commit.
 #
+# `scripts/pre-commit --all` examines every tracked file instead of the staged ones. That is
+# the CI gate M7 §4 asks for — "a grep of the public repository for endpoint patterns, private
+# paths and credentials returns nothing" — and `crates/cortex-sync/tests/hygiene.rs` runs it
+# under `cargo test`, so the gate is a test like every other gate in this repository.
+#
 # Deliberately conservative: a false positive costs one `git commit --no-verify` after a human
 # has looked at it. A false negative costs a leaked credential forever.
 
@@ -16,8 +21,12 @@ set -uo pipefail
 RED=$'\033[31m'; YELLOW=$'\033[33m'; RESET=$'\033[0m'
 failed=0
 
-# Only staged, non-deleted files are examined.
-mapfile -t files < <(git diff --cached --name-only --diff-filter=ACM)
+# Only staged, non-deleted files are examined — or, with --all, every tracked file.
+if [[ "${1:-}" == "--all" ]]; then
+  mapfile -t files < <(git ls-files)
+else
+  mapfile -t files < <(git diff --cached --name-only --diff-filter=ACM)
+fi
 [[ ${#files[@]} -eq 0 ]] && exit 0
 
 # Files that legitimately contain example-looking values.
@@ -68,6 +77,16 @@ for f in "${files[@]}"; do
     [[ -z "${line:-}" ]] && continue
     report "known provider token prefix" "$f:$line" "$content"
   done < <(grep -nE '\b(sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})\b' "$f" | head -5)
+
+  # An endpoint. A URL whose host is a real domain and not a public documentation, registry
+  # or standards host is somebody's server, and the Core must not know one (M7 §4, D9).
+  # A host without a dot (`nas`, `server`, `localhost`) is a placeholder, not an address.
+  while IFS=: read -r line content; do
+    [[ -z "${line:-}" ]] && continue
+    report "endpoint (a host the Core must not know)" "$f:$line" "$content"
+  done < <(grep -noE '(https?|wss?|ssh|smb|sftp|nfs|ftp)://[A-Za-z0-9._-]+\.[A-Za-z0-9._-]+' "$f" \
+             | grep -vE '://([a-z0-9-]+\.)*(github\.com|githubusercontent\.com|github\.io|npmjs\.org|npmjs\.com|crates\.io|docs\.rs|rust-lang\.org|huggingface\.co|opencollective\.com|tidelift\.com|w3\.org|whatwg\.org|json-schema\.org|tauri\.app|mozilla\.org|freedesktop\.org|sqlite\.org|ietf\.org|rfc-editor\.org|apache\.org|example\.(com|org|net|invalid)|mydomain\.dev|asset\.localhost|127\.0\.0\.1)(:[0-9]+)?($|[^A-Za-z0-9._-])' \
+             | head -5)
 
   # A home directory path from a real machine. Tests must build paths at runtime.
   while IFS=: read -r line content; do

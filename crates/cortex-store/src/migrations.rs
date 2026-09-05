@@ -68,6 +68,13 @@ const MIGRATIONS: &[Migration] = &[
         // Rebuilds `nodes`, `edges` and `episodes` to widen three CHECK constraints.
         rebuilds_tables: true,
     },
+    Migration {
+        version: 8,
+        name: "outbox_acked",
+        sql: include_str!("schema/0008_outbox_acked.sql"),
+        // Two added columns and two indexes on `sync_outbox`; nothing is rebuilt.
+        rebuilds_tables: false,
+    },
 ];
 
 /// The schema version this build expects.

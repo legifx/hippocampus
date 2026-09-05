@@ -54,7 +54,8 @@ moves as the system grows.
 | Embedding models: registry, provisioning, inference | `cortex-embed` |
 | Query engine, RRF fusion, query modes, the search orchestrator | `cortex-query` |
 | SQLite, FTS5, chunk and episode storage, the usearch vector index | `cortex-store` |
-| Ingest loop, extraction stage, embedding stage, activity signal, RPC server | `cortexd` |
+| Federation: the outbox worker, the wire format, the file-drop and plugin transports, the reference peer | `cortex-sync` |
+| Ingest loop, extraction stage, embedding stage, activity signal, sync stage, RPC server | `cortexd` |
 
 The search orchestrator lives in `cortex-query` rather than in the daemon on purpose: a binary
 cannot be depended on, and a benchmark that reimplements the search it measures eventually
@@ -242,6 +243,12 @@ that three days of accumulated events do not flood the peer on reconnect.
 **The Core ships a protocol and a reference adapter against a local test peer. It contains no
 knowledge of any real endpoint.** Concrete endpoints, schemas and credentials live only in the
 private Extension repository, loaded as a subprocess plugin.
+
+Built in M7 (D93–D95), and `docs/08-FEDERATION.md` is the wire format. The outbox is *derived*:
+a worker harvests `episodes` from a cursor and the concept nodes by identity, so nothing is
+queued while federation is off and a replay reproduces the same identifiers. Two transports
+ship — one file per event into a directory, or one subprocess per batch declared in
+`plugins/<name>.toml` — and `hc-test-peer` is the peer the tests assert against.
 
 ## Where the models run
 

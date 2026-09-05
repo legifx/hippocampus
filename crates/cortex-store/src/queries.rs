@@ -522,7 +522,9 @@ impl Store {
             chunks: one("SELECT count(*) FROM chunks")?,
             episodes: one("SELECT count(*) FROM episodes")?,
             embeddings: one("SELECT count(*) FROM embeddings")?,
-            outbox_pending: one("SELECT count(*) FROM sync_outbox")?,
+            outbox_pending: one(
+                "SELECT count(*) FROM sync_outbox WHERE acked_at IS NULL AND attempts < 100",
+            )?,
         })
     }
 

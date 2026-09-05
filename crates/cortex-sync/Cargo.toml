@@ -1,0 +1,26 @@
+[package]
+name = "cortex-sync"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Federation: the outbox protocol, two transports, and the worker that drains it. Knows no endpoint."
+
+[[bin]]
+name = "hc-test-peer"
+path = "src/bin/hc-test-peer.rs"
+
+[dependencies]
+cortex-core.workspace = true
+cortex-store.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+blake3.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

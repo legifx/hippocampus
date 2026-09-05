@@ -252,26 +252,62 @@ impl Default for AgentConfig {
 }
 
 /// Federation with a peer. Off by default — rule R5.
+/// How events reach a peer, if at all (M7, D17).
+///
+/// The Core knows two shapes and no endpoint. `file-drop` writes one document per event into a
+/// directory the peer already watches; `plugin` hands each batch to a subprocess declared in
+/// `plugins/<name>.toml`, which is where a concrete bridge — and every endpoint, schema and
+/// credential it needs — lives (D9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FederationTransport {
+    /// Nothing leaves the machine. The default.
+    None,
+    FileDrop,
+    Plugin,
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct FederationConfig {
     pub enabled: bool,
+    pub transport: FederationTransport,
+    /// A name for the peer, used to keep its sync state apart from another peer's. Not an
+    /// address: it never leaves this machine.
+    pub peer: String,
+    /// For `file-drop`: the directory to write events into. The peer ingests it on its own
+    /// schedule. Nothing is written anywhere else.
+    pub drop_dir: Option<PathBuf>,
+    /// For `plugin`: the name of a declaration in `plugins/<name>.toml`.
+    pub plugin: Option<String>,
     /// Maximum events sent per batch, so that days of accumulated events do not flood a peer
     /// on reconnect.
     pub batch_size: usize,
     /// Minimum gap between batches, in milliseconds.
     pub batch_interval_ms: u64,
+    /// When the peer cannot be reached, the gap doubles on every attempt up to this.
+    pub max_backoff_ms: u64,
     /// Whether chunk text may leave the machine. Off means only metadata, summaries and vectors.
     pub send_chunk_text: bool,
+    /// Whether episodes about files — opened, created, modified, moved, deleted — are sent.
+    /// They are metadata, which the default lets through; memories and annotations are always
+    /// sent, searches never.
+    pub send_file_activity: bool,
 }
 
 impl Default for FederationConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            transport: FederationTransport::None,
+            peer: "peer".to_string(),
+            drop_dir: None,
+            plugin: None,
             batch_size: 500,
             batch_interval_ms: 1000,
+            max_backoff_ms: 300_000,
             send_chunk_text: false,
+            send_file_activity: true,
         }
     }
 }
@@ -344,6 +380,32 @@ impl Config {
                  may not be more aggressive while the user is present"
                     .into(),
             );
+        }
+        if self.federation.enabled {
+            match self.federation.transport {
+                FederationTransport::None => {
+                    return bad(
+                        "federation.enabled is true but federation.transport is \"none\"; \
+                         choose file-drop or plugin"
+                            .into(),
+                    )
+                }
+                FederationTransport::FileDrop if self.federation.drop_dir.is_none() => {
+                    return bad("federation.transport = \"file-drop\" needs federation.drop_dir".into())
+                }
+                FederationTransport::Plugin if self.federation.plugin.is_none() => {
+                    return bad("federation.transport = \"plugin\" needs federation.plugin".into())
+                }
+                _ => {}
+            }
+            if self.federation.batch_size == 0 {
+                return bad("federation.batch_size must be at least 1".into());
+            }
+            if self.federation.max_backoff_ms < self.federation.batch_interval_ms {
+                return bad(
+                    "federation.max_backoff_ms must not be shorter than batch_interval_ms".into(),
+                );
+            }
         }
         if self.search.default_limit == 0 {
             return bad("search.default_limit must be greater than zero".into());
@@ -460,6 +522,32 @@ mod tests {
         let c = Config::default();
         assert!(c.index.content_roots.is_empty());
         assert!(!c.federation.enabled);
+    }
+
+    #[test]
+    fn federation_cannot_be_enabled_without_saying_how() {
+        // R5: "on" with no transport would be a daemon that believes it is federating and
+        // sends nothing anywhere, which is the quiet wrong answer.
+        let err = Config::from_toml("[federation]\nenabled = true\n", &p()).unwrap_err();
+        assert!(err.to_string().contains("transport"), "{err}");
+        let err = Config::from_toml(
+            "[federation]\nenabled = true\ntransport = \"file-drop\"\n",
+            &p(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("drop_dir"), "{err}");
+        let err = Config::from_toml(
+            "[federation]\nenabled = true\ntransport = \"plugin\"\n",
+            &p(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("federation.plugin"), "{err}");
+        let ok = Config::from_toml(
+            "[federation]\nenabled = true\ntransport = \"file-drop\"\ndrop_dir = \"/x\"\n",
+            &p(),
+        )
+        .unwrap();
+        assert_eq!(ok.federation.transport, FederationTransport::FileDrop);
     }
 
     #[test]

@@ -9,9 +9,9 @@ If you finish work without editing this file, the next agent starts from nothing
 
 | | |
 |---|---|
-| **Active milestone** | **M10 — the explorer restructure**, all four steps done (2026-08-24, D85–D88). M11, M8 and M5 as below. |
-| **Status** | **M10 landed in full on 2026-08-24 — all four steps: `view.open` with one row shape from every source (D85), the memory columns on every row — measured before they were built, and cheaper than the per-row queries they sit beside (D86) — and the places the index makes (D87). Step 2 is complete: its by-hand criterion was checked by the owner against their own index and the salience order held. M6's mandatory list is complete as of the same day: archives (`fs.extract`, D81/D82), thumbnails in the list (D83) and network locations (D84, staged — what is mounted is offered, mounting is not built). What is left of M6 is its own §3, a week of exclusive use by the owner. 1007 Rust tests, 60 vitest, 156 functional browser tests and 12 perf (run separately, on an idle machine — see the step 3 entry).** **M11 is ten of its twelve criteria in — see its own scorecard below before anything else, and every benchmark gate is green including the new one.** M4 complete. M6's mandatory list is done; its acceptance now needs a week of use rather than more code. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **A note on counting, kept because it cost a session:** this file once said 399 tests and accused the previous entry's 812 of being unreproducible. The 399 was wrong — the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Count by summing every `test result:` line. Check the measuring tool before disbelieving the measurement; this file already says that about latency, and it applies to counting. |
-| **Last updated** | 2026-08-25 (the 3D loop got a budget — D92; it drew no frames at all, D91) |
+| **Active milestone** | **M7 — Federation**, built on 2026-09-05 (D93–D95); its scorecard is the first section below. M10 done (D85–D88). M11, M8 and M5 as before. |
+| **Status** | **M7 is built: the wire format, a derived outbox, two transports, a reference peer, and every one of its five criteria asserted by a test — see its scorecard below. What it does not have is a real peer, which is the Extension's to write as a `sync` plugin.** M10 landed in full on 2026-08-24 — all four steps: `view.open` with one row shape from every source (D85), the memory columns on every row — measured before they were built, and cheaper than the per-row queries they sit beside (D86) — and the places the index makes (D87). Step 2 is complete: its by-hand criterion was checked by the owner against their own index and the salience order held. M6's mandatory list is complete as of the same day: archives (`fs.extract`, D81/D82), thumbnails in the list (D83) and network locations (D84, staged — what is mounted is offered, mounting is not built). What is left of M6 is its own §3, a week of exclusive use by the owner. 1048 Rust tests (2026-09-05), 60 vitest, 159 functional browser tests and 12 perf (run separately, on an idle machine — see the step 3 entry).** **M11 is ten of its twelve criteria in — see its own scorecard below before anything else, and every benchmark gate is green including the new one.** M4 complete. M6's mandatory list is done; its acceptance now needs a week of use rather than more code. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **A note on counting, kept because it cost a session:** this file once said 399 tests and accused the previous entry's 812 of being unreproducible. The 399 was wrong — the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Count by summing every `test result:` line. Check the measuring tool before disbelieving the measurement; this file already says that about latency, and it applies to counting. |
+| **Last updated** | 2026-09-05 (M7 built — D93, D94, D95) |
 | **Blocked on** | nothing |
 
 ## Start here
@@ -93,7 +93,57 @@ subshell and `utime + stime` is a process's own time and not its children's. It 
 every good result and could not be distinguished from one. Point it at `yes > /dev/null` first;
 it must read 100%.
 
-## Where M8 and M5 stand — the newest work, read this first
+## Where M7 stands — built 2026-09-05, read this first
+
+**The shape.** Nothing writes to the outbox. A worker *harvests* it: `episodes` from a cursor, the
+concept nodes by identity, each into an event whose identifier is a hash of this index's origin and
+the row's identity — never its content (D93). One batch at a time goes through a transport that
+knows no address: `file-drop` writes one document per event into a directory the peer already
+watches; `plugin` starts a declared program once per batch and speaks JSON-RPC to it over stdio
+(D95). The ack names what was accepted and what was refused; silence about a row means it goes
+again; an unreachable peer counts against nothing and the worker backs off (D94). The peer may send
+its taxonomy down inside the ack, and the Core stores the latest and shows its version.
+
+`docs/08-FEDERATION.md` is the wire format. `hc-test-peer` is the reference peer, forty lines that
+keep a set of ids and a log of arrivals and do nothing clever — the peer D18 assumes.
+
+### Definition of Done for M7, honestly
+
+| # | criterion | state |
+|---|---|---|
+| 1 | Offline, then a clean reconcile: no duplicates, no lost events, no reordering damage | **met** — `tests/federation.rs`: 72 hours down at one event per 30 s, 8 640 events, every one arrives once, in Lamport order, and Lamport order is history order |
+| 2 | Replaying the entire outbox twice changes nothing on the peer | **met** — the peer's knowledge (ids, payloads, clocks on first sight) is byte-identical after two replays; only its arrival log grows, which is the peer *observing* the duplicate its knowledge did not absorb |
+| 3 | 72 hours of events sync without exceeding the configured rate or the memory budget | **met** — never more than `batch_size`, never closer than `batch_interval_ms`, asserted per batch on a synthetic clock; the test process grows by under 64 MiB draining the backlog, and the worker holds at most one batch at a time by construction |
+| 4 | A grep of the public repository for endpoint patterns, private paths and credentials returns nothing, in CI | **met** — `scripts/pre-commit --all` gained an endpoint pattern (a URL whose host is a real domain outside a short public list), and `tests/hygiene.rs` runs it under `cargo test` |
+| 5 | With the Extension absent every Core test passes and the daemon starts normally | **met** — `cortexd/tests/federation.rs` starts the daemon with federation on and the plugin missing; it serves, and `sync.status` says why nothing moves |
+
+**Not done, and not the Core's to do:** the bridge to a concrete Main Brain. It is a program that
+reads one `sync.push` request and answers one ack, declared in `plugins/<name>.toml` in the private
+Extension. `hc-test-peer push` is the shape to copy.
+
+### What was tried that did not work
+
+- **Deleting a row on ack.** The first concept sent went out again on the next tick, because a
+  concept is harvested by identity and a missing row is a new identity. Migration 0008 adds
+  `acked_at` and `kind`; an ack marks (D94).
+- **Counting an unreachable peer as an attempt.** The schema's partial index dead-letters a row at
+  a hundred attempts; a weekend offline at a one-second interval would have buried the whole
+  outbox in two minutes. Attempts count refusals only.
+- **A 72-hour test at one event every ten seconds** ran 38 seconds: 871 unreachable ticks each
+  starting a process, and a reference peer that rewrites its whole state per batch. Halving the
+  rate and raising the backoff ceiling in the test to a quarter of an hour brought it to six
+  seconds without changing what it proves. `publish` also stopped counting the outbox on ticks
+  that changed nothing, which is correct as well as cheaper: nothing else writes that table.
+
+### The numbers
+
+| what | value |
+|---|---|
+| `Worker::tick` on a waiting tick, 8 640 pending | one query for new episodes, nothing else |
+| 8 640 events drained through the plugin transport | 18 batches, 18 synthetic seconds, 4.6 real seconds including the peer rewriting 1.6 MB of state per batch |
+| Rust tests added | 6 outbox, 22 sync (unit), 4 federation, 1 hygiene, 3 daemon, 3 plugins, 1 config |
+
+## Where M8 and M5 stand
 
 **The order was forced by the data.** M8 draws concept nodes, salience, tiers and consolidation
 events. Before this session the real index had **24 edges, `salience = 0.0` on all 108 000 nodes
@@ -783,7 +833,7 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 | # | Question | Needed by |
 |---|---|---|
 | D13 | License for the public Core (recommendation: Apache-2.0) | M9 |
-| — | Concrete peer protocol for federation | M7 |
+| — | ~~Concrete peer protocol for federation~~ — `docs/08-FEDERATION.md`, 2026-09-05. What is still open is the *bridge* to a concrete peer, in the Extension, as a `sync` plugin | M7 → Extension |
 
 ---
 
@@ -791,6 +841,35 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
+
+### 2026-09-05 — M7: a peer the Core never names
+
+The next milestone in the order that was left open, and the shortest one so far: everything the
+build prompt asks for was already decided in D11, D17, D18 and D19, and the work was to make those
+sentences true in code.
+
+**The one decision the documents did not already contain** is D93: the outbox is *derived*. No
+write path in the daemon knows the peer exists; a worker harvests `episodes` from a cursor and
+concept nodes by identity, and the identifier of every event is a function of the row and this
+index's origin, never of the payload. Replay is "clear the cache and harvest again"; the same
+identifiers come out, and the peer that keeps them sees nothing new. That is the criterion, and it
+is a property of a hash rather than of a peer.
+
+**Two mistakes found by the tests before anything ran.** A row deleted on ack made every concept a
+new event on the next tick (D94, migration 0008); an unreachable peer counted as an attempt would
+have dead-lettered a weekend's outbox in two minutes (D94, the other half).
+
+**Built:** `crates/cortex-sync` — wire format, `Transport`, `file-drop` and `plugin` transports,
+the worker, `hc-test-peer`; `cortex-store::outbox`; `cortex-core::plugins`; `federation.*`
+settings; the sync stage in the daemon; `sync.status`, `sync.now`, `sync.replay`; `cortex sync`;
+`scripts/pre-commit --all` with an endpoint pattern, run by a test; `docs/08-FEDERATION.md`.
+
+**What the next session should know.** The Extension's bridge is the only thing between this and
+a real second brain, and it is a forty-line program. The owner's home server was surveyed for
+D17–D19 (a directory it already watches, no ingest API, nightly deduplication with a cap) — the
+`file-drop` transport was built for exactly that peer, and `hc-test-peer ingest` is the consuming
+half to adapt. Nothing in this repository may name that server; the hygiene gate now refuses a
+URL that would.
 
 ### 2026-08-25 — And then the loop froze the window
 

@@ -277,6 +277,12 @@ pub mod method {
     pub const AGENT_SESSION_END: &str = "agent.session.end";
     pub const AGENT_SESSIONS: &str = "agent.sessions";
 
+    /// M7. Federation is a daemon concern with no window of its own: these three are what the
+    /// CLI needs to answer "is it syncing, and if not, why not", and to make it try now.
+    pub const SYNC_STATUS: &str = "sync.status";
+    pub const SYNC_NOW: &str = "sync.now";
+    pub const SYNC_REPLAY: &str = "sync.replay";
+
     /// Every method this build serves. Used by `status` so a client can discover the surface.
     /// Methods that may be answered out of order, concurrently with each other.
     ///
@@ -411,6 +417,9 @@ pub mod method {
         AGENT_SESSION_BEGIN,
         AGENT_SESSION_END,
         AGENT_SESSIONS,
+        SYNC_STATUS,
+        SYNC_NOW,
+        SYNC_REPLAY,
         BRAIN_DIFF,
         BRAIN_RECALL,
         BRAIN_EXPLAIN,
@@ -1095,4 +1104,51 @@ mod tests {
         sorted.dedup();
         assert_eq!(before, sorted.len(), "duplicate method name in method::ALL");
     }
+}
+
+/// What `sync.status` answers (M7). Everything a human needs to answer "is it syncing, and if
+/// not, why not" — and no address: the transport is named by kind, the peer by the label the
+/// configuration gave it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncStatusResult {
+    pub enabled: bool,
+    pub transport: String,
+    pub peer: String,
+    /// This index's stable identifier, part of every event id. Random; names no machine.
+    pub origin: String,
+    pub pending: i64,
+    /// Refused too often to keep trying. Kept for inspection.
+    pub dead: i64,
+    /// Confirmed by the peer and still on record.
+    pub acked: i64,
+    /// Episodes the harvester has not looked at yet.
+    pub episodes_behind: i64,
+    pub lamport: i64,
+    pub last_acked_lamport: i64,
+    pub last_sync_at: Option<i64>,
+    pub batches_sent: u64,
+    pub events_accepted: u64,
+    pub events_rejected: u64,
+    pub backoff_ms: u64,
+    /// When the next batch may go, milliseconds since the epoch. Zero means now.
+    pub not_before_ms: i64,
+    pub last_error: Option<String>,
+    /// The last tick's report, as the worker recorded it.
+    pub last_tick: Option<serde_json::Value>,
+    pub ontology_version: Option<i64>,
+    /// One sentence for a human, in words: what the numbers above mean right now.
+    pub basis: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncNowResult {
+    /// Whether a worker exists to be kicked. False when federation is off.
+    pub kicked: bool,
+    pub basis: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncReplayResult {
+    pub replaying: bool,
+    pub basis: String,
 }
