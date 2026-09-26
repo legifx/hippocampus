@@ -1222,6 +1222,14 @@ is: `cortex --json ask` per question, compare the first item's path.
 Playwright 192 + 5 new (`tests/brain.spec.ts`: numbers as sent, log grows, curator from the window,
 polling stops when the view is left, 400 px without overflow).
 
+**Autostart and access, same day.** `packaging/systemd/hippocampus-backup.service` (light backup
+at login, and in `ExecStop` at shutdown — ordered after the daemon so the daemon is still up when
+it runs), `hippocampus-backup-full.{service,timer}` (daily full, ten minutes after login),
+`hippocampus-curator.service`; `install-user.sh` installs and names all of them. Backups are 0600.
+`packaging/hippocampus.desktop` has actions for Dateien and Gehirn; `packaging/agent-instructions.md`
+is the short block every harness on the owner's machine now carries (Claude Code, Hermes,
+CommandCode, Antigravity), and the MCP server is registered in all four.
+
 **Not done here, deliberately.** M12 steps 2–4 are untouched. The brain view's CPU cost in the real
 WebKitGTK window has not been measured yet — the snippet in "How to answer a report of slowness"
 is the way, with the view open and agents working.

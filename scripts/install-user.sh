@@ -38,9 +38,13 @@ for binary in "${binaries[@]}"; do
   install -m 0755 "${source}" "${bin_dir}/${binary}"
   echo "  ${bin_dir}/${binary}"
 done
+install -m 0755 "${repo_root}/scripts/hippocampus-curator" "${bin_dir}/hippocampus-curator"
+echo "  ${bin_dir}/hippocampus-curator"
 
 for unit in hippocampus-cortexd.service hippocampus-overlay.service \
-            hippocampus-consolidate.service hippocampus-consolidate.timer; do
+            hippocampus-consolidate.service hippocampus-consolidate.timer \
+            hippocampus-backup.service hippocampus-backup-full.service hippocampus-backup-full.timer \
+            hippocampus-curator.service; do
   install -m 0644 "${repo_root}/packaging/systemd/${unit}" "${unit_dir}/${unit}"
   echo "  ${unit_dir}/${unit}"
 done
@@ -54,6 +58,9 @@ Installed. Nothing is running yet — enable what you want:
   systemctl --user enable --now hippocampus-cortexd.service   # the daemon, at login
   systemctl --user enable --now hippocampus-overlay.service   # the overlay, resident and hidden
   systemctl --user enable --now hippocampus-consolidate.timer # the nightly pass (D116)
+  systemctl --user enable --now hippocampus-backup.service    # light backup at login and shutdown (D121)
+  systemctl --user enable --now hippocampus-backup-full.timer # full backup, daily (D121)
+  systemctl --user enable --now hippocampus-curator.service   # brain.ask's decision model (D120; needs llama-server and a model)
 
 Without the timer nothing consolidates: the pass has no other trigger than a person asking for it.
 

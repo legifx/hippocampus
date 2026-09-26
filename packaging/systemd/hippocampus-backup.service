@@ -1,0 +1,21 @@
+[Unit]
+Description=Hippocampus: a light backup of the store at login and again at shutdown (D121)
+Documentation=https://github.com/hippocampus-fm/hippocampus
+# Ordered after the daemon, so that at shutdown this unit is stopped — and its ExecStop runs —
+# while the daemon is still there to answer.
+After=hippocampus-cortexd.service
+Wants=hippocampus-cortexd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# The daemon may still be opening its store at login; wait for it rather than failing the unit.
+ExecStart=/bin/sh -c 'for i in $(seq 1 90); do %h/.local/bin/cortex ping >/dev/null 2>&1 && break; sleep 2; done; exec %h/.local/bin/cortex backup --label boot'
+ExecStop=%h/.local/bin/cortex backup --label shutdown
+TimeoutStartSec=240
+TimeoutStopSec=90
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=default.target

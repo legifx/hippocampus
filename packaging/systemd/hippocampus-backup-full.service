@@ -1,0 +1,12 @@
+[Unit]
+Description=Hippocampus: a full, restorable copy of the store (VACUUM INTO), at most daily (D121)
+Documentation=https://github.com/hippocampus-fm/hippocampus
+After=hippocampus-cortexd.service
+Requisite=hippocampus-cortexd.service
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/cortex backup --full --label daily --if-older-than-hours 20
+TimeoutStartSec=900
+Nice=15
+IOSchedulingClass=idle

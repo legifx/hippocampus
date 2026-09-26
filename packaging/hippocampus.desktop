@@ -1,9 +1,19 @@
 [Desktop Entry]
 Type=Application
 Name=Hippocampus
-Comment=Search your filesystem by meaning
-Exec=hippocampus --show
+GenericName=Dateimanager & Gehirn
+Comment=Dateien nach Bedeutung finden – und sehen, was die Agenten gerade im Gehirn tun
+Exec=hippocampus --files
 Icon=hippocampus
 Terminal=false
 Categories=Utility;FileManager;
-Keywords=search;files;memory;
+Keywords=search;files;memory;brain;agents;dateien;gehirn;suche;
+Actions=files;brain;
+
+[Desktop Action files]
+Name=Dateien
+Exec=hippocampus --files
+
+[Desktop Action brain]
+Name=Gehirn (Agenten live)
+Exec=hippocampus --brain

@@ -165,6 +165,12 @@ impl Store {
                 }
             }
         }
+        // A backup holds the audit log and every note: readable by its owner only, like the store.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&partial, std::fs::Permissions::from_mode(0o600))?;
+        }
         std::fs::rename(&partial, &final_path)?;
         let bytes = std::fs::metadata(&final_path)?.len();
 
@@ -229,6 +235,12 @@ mod tests {
             .query_row("SELECT count(*) FROM sqlite_master WHERE name = 'nodes'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(has_nodes, 0, "nodes are derived and must not be in a light backup");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&report.path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "a backup is readable by its owner only");
+        }
         // No partial file is left behind under any name.
         assert!(std::fs::read_dir(&out).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().ends_with(".partial")));
     }
