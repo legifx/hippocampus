@@ -29,9 +29,9 @@
   --hc-error: #ff453a;
   --hc-neutral: #ffffff;
 
-  --hc-shadow-rest: 0 12px 40px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.4),
+  --hc-shadow-rest: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 12px 40px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.4),
     inset 0 1px 0 rgba(255, 255, 255, 0.09);
-  --hc-shadow-lift: 0 20px 56px rgba(0, 0, 0, 0.62), 0 4px 14px rgba(0, 0, 0, 0.45),
+  --hc-shadow-lift: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 20px 56px rgba(0, 0, 0, 0.62), 0 4px 14px rgba(0, 0, 0, 0.45),
     inset 0 1px 0 rgba(255, 255, 255, 0.16);
 
   /* Zone accents (D15). Hue is per-row and set inline; saturation and lightness are the
@@ -58,9 +58,211 @@
   --hc-exit: 140ms;
   --hc-icon-crossfade: 240ms;
 
-  /* §3 Typography */
-  --hc-font: "Inter Variable", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --hc-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  /* §3 Typography.
+   *
+   * The face first: the owner asked for SF Pro Display, so it is first in the stack and the window
+   * uses it wherever it exists. It cannot be *shipped* — SF is Apple's and not redistributable — so
+   * the stack falls back to Inter Display/Inter, the closest free face and the one already installed
+   * here, and only then to whatever the system has. The result is that the window looks the way it
+   * was designed on this machine and on a Mac alike, rather than depending on one system's fonts.
+   */
+  --hc-font: "SF Pro Display", "SF Pro Text", -apple-system, "Inter Display", "Inter Variable",
+    "Inter", "Segoe UI", system-ui, sans-serif;
+  --hc-mono: "SF Mono", "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+
+  /*
+   * One scale, seven steps — instead of the forty-odd sizes that had been chosen one at a time, any
+   * two of which could disagree. The disagreement the owner could see was the search field: its
+   * text is 15.5 px at 400 px of window and 15.5 px at 1440 px, while the field around it grew,
+   * so the two never quite belonged together.
+   *
+   * Every step is clamped to the window width: a floor, a ceiling, and a shallow slope between
+   * them. The slope is shallow on purpose — type is not a layout that can be stretched, and a step
+   * that grows as fast as the window turns a wide window into a poster. The numbers are chosen so
+   * that at a window of about 1024 px every step is the size it used to be; a narrow window gets
+   * the same relationships smaller, a wide one gets them larger, and nothing is fixed to one width.
+   */
+  --hc-text-2xs: clamp(10px, 0.36vw + 7.3px, 12.5px); /* the small tracked label over a number */
+  --hc-text-xs: clamp(11px, 0.36vw + 8.3px, 13.5px); /* metadata beside a name */
+  --hc-text-sm: clamp(12px, 0.48vw + 8.1px, 15px); /* controls, counts, and a row of the list */
+  --hc-text-md: clamp(13px, 0.48vw + 9.1px, 16px); /* body: the prose in the panels */
+  --hc-text-lg: clamp(14px, 0.84vw + 6.9px, 19px); /* the title, and the search field's own text */
+  --hc-text-xl: clamp(17px, 0.96vw + 10.2px, 24px); /* a number on a card */
+  --hc-text-2xl: clamp(21px, 1.68vw + 7.8px, 32px); /* the daemon's sentence as a headline */
+
+  /* Leading travels with the step, so two sizes cannot end up with the same linespacing by accident. */
+  --hc-leading-tight: 1.2;
+  --hc-leading: 1.38;
+  --hc-leading-loose: 1.5;
+  --hc-tracking-label: 0.06em; /* for uppercase labels on the small steps */
+
+  /* §2b Material (D110).
+   *
+   * The showcase this window now follows gets its look from `backdrop-filter`, and §8.1 does not
+   * let this window have it: blur on one element is a composite pass over everything behind it,
+   * recomputed whenever anything moves. So the material is built from four ingredients that cost
+   * nothing per frame — a translucent fill, a rim of light along the top edge, a shadow along the
+   * bottom edge, and a hairline where the surface meets the dark. On a background this dark that
+   * is what glass actually is: the eye reads the rim and the fill, not the blur.
+   *
+   * Two levels, and no more. `--hc-glass-*` is a surface that sits *on* the background (a card, a
+   * panel, the rail); `--hc-raised-*` is a surface that sits *on* a glass surface (the active nav
+   * item, a segmented button, a primary button). A third level of nesting reads as mud, and a
+   * fourth is indistinguishable from noise. */
+  /* §2b1 The numbers are the kit's dark theme, not this window's earlier guesses (D113).
+   *
+   * Each of them had been turned down — the rim to 0.07 against the kit's 0.16, the fill to 0.035
+   * against 0.06, the sheen to 0.05 against 0.24 — and the sum of those decisions is a surface that
+   * measures as a slightly lighter rectangle and reads as one. On a background this dark the rim is
+   * the ingredient that carries the material, and it was at 44 % of the kit's. The fill is what the
+   * eye calls „glass" when there is nothing to blur; the sheen is what it calls „polished".
+   *
+   * `--hc-glass-edge` stays this window's value even though the kit's dark edge is darker: in this
+   * file it is also the colour of every panel divider (shell.css), and a light hairline is what a
+   * divider is here. The seam the kit draws *around a surface* is its own token now,
+   * `--hc-glass-seam`, and that is what the material recipes ring with. */
+  --hc-glass-fill: rgba(255, 255, 255, 0.06);
+  --hc-glass-fill-strong: rgba(48, 48, 56, 0.9);
+  --hc-glass-fill-weak: rgba(255, 255, 255, 0.035);
+  --hc-glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  --hc-glass-rim-bottom: inset 0 -1px 0 rgba(0, 0, 0, 0.45);
+  --hc-glass-seam: rgba(0, 0, 0, 0.35);
+  --hc-glass-edge: rgba(255, 255, 255, 0.055);
+  --hc-glass-sheen: rgba(255, 255, 255, 0.24);
+
+  /* §2b3 The raised pair is the kit's, and it is opaque (§2b1).
+   *
+   * The kit's dark theme builds a convex surface out of two *solid* greys — #3b3b44 over #2a2a31 —
+   * not out of a translucent white wash: `rgba(255,255,255,0.12)` over `#101012` is a rectangle that
+   * is 26 levels lighter at one end and 4 at the other, and 26 levels is not an object, it is a
+   * tint. Every pressed, current and selected state in this window is a `.raised` (the rail's
+   * current place, a chosen option, an active segment), so this pair is what „does this look like a
+   * button" was actually asking about. */
+  --hc-raised-top: #3b3b44;
+  --hc-raised-bottom: #2a2a31;
+  --hc-well-fill: rgba(0, 0, 0, 0.32);
+  --hc-well-rim: inset 1px 1px 0 rgba(0, 0, 0, 0.35);
+
+  /* §2c The design kit's vocabulary (D110, D111).
+   *
+   * The showcase next door ships its materials as `@utility` classes and its primitives as
+   * `src/glass/*.tsx`; the task is to *build with* that kit rather than to re-derive its look.
+   * Those utilities are Tailwind, this window has no Tailwind, so the names are kept and the
+   * bodies are the same box-shadows against this file's tokens. What each name means is in
+   * `src/glass.css`; the values are here because §2 lives here.
+   *
+   * Two of the kit's ingredients are not ported and their absence is deliberate:
+   *   - `backdrop-filter` stays off every surface but the overlay (§8.1). The kit's blur is what
+   *     makes its glass read as glass; here the same read comes from the rim, the fill and the
+   *     bottom shade, which is what §2b said before there was a kit to compare against.
+   *   - the canvas and its blobs. The drift is a *continuous* animation, which §8.6 forbids in a
+   *     resident window (D59) for a reason that was measured — four composited layers and 21 ms
+   *     against 16.7 ms per frame (D114). The colours went for a reason that was not measured but
+   *     decided: they took the minimalism out of the interface (D115), which also names the two calm
+   *     levers in case a surface ever measures too flat again.
+   */
+  --hc-glass-blur: 24px;
+  --hc-glass-saturate: 160%;
+  --hc-glass-edge-strong: rgba(255, 255, 255, 0.09);
+  --hc-glass-shadow-color: rgba(0, 0, 0, 0.45);
+  --hc-sheen-opacity: 0.4;
+  --hc-specular-opacity: 0.5;
+
+  --hc-raised-ring-light: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  --hc-raised-ring-bottom: inset 0 -1px 0 rgba(0, 0, 0, 0.3);
+  --hc-raised-ring: rgba(0, 0, 0, 0.65);
+  --hc-raised-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 8px 18px -2px rgba(0, 0, 0, 0.5);
+  --hc-bezel-light: rgba(255, 255, 255, 0.06);
+  --hc-bezel-edge: rgba(0, 0, 0, 0.35);
+
+  --hc-well-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6), inset 0 2px 8px rgba(0, 0, 0, 0.35);
+
+  --hc-ink: #f4f4f6;
+  --hc-on-ink: #111114;
+  --hc-ink-rim: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --hc-ink-shadow: rgba(0, 0, 0, 0.5);
+
+  /* The kit's names for the same four things, so the ported material recipes in
+     `src/glass.css` read like the kit's do. `.solid` is the ink pill: near-white in this
+     theme, and the reason it is a *token pair* is that a fill and the text on it are one
+     decision — the kit keeps them together too. */
+  --hc-accent: var(--hc-ink);
+  --hc-on-accent: var(--hc-on-ink);
+  --hc-accent-rim: var(--hc-ink-rim);
+  --hc-accent-shadow: var(--hc-ink-shadow);
+  --hc-accent-soft: rgba(255, 255, 255, 0.08);
+
+  /* The kit's `--hairline` / `--hairline-strong`, which is what `.hc-stroke` already is:
+     aliased rather than re-valued so there is still one place a border colour is chosen. */
+  --hc-hairline: var(--hc-stroke);
+  --hc-hairline-strong: var(--hc-stroke-lift);
+
+  /* The kit's ease-out curve. `--hc-ease-island` and `--hc-ease-sheet` stay for the two
+     jobs §5 names them for; this one is what the kit's own transitions use verbatim. */
+  --hc-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --hc-accent-blue: #86aef0;
+  --hc-accent-blue-soft: rgba(134, 174, 240, 0.22);
+  --hc-pink: #ff8fd0;
+  --hc-danger: #f2555a;
+  --hc-danger-soft: rgba(242, 85, 90, 0.14);
+  --hc-selection: rgba(255, 255, 255, 0.06);
+  --hc-focus-ring: rgba(134, 174, 240, 0.55);
+  --hc-scrim: rgba(0, 0, 0, 0.5);
+
+  /* The last colours that were still spelled out in `app.css` and `shell.css`.
+   *
+   * §2 says colours live here, and the port of the kit left this many behind: the overlay's
+   * near-opaque fill, the wash a differing compare row wears, five steps of the scene's heat
+   * ramp and the two quiet tones beside it, and one fallback in a meter. None of them was wrong
+   * to look at — each was a rule the design document had stopped governing, which is how a port
+   * un-ports itself one rule at a time. `src/test/architecture.test.ts` now fails on the next one.
+   *
+   * The overlay's fill is derived rather than re-chosen: it *is* the window's own background at
+   * 94 %, which is why it is written against `--hc-bg` instead of beside it.
+   */
+  --hc-overlay-fill: color-mix(in srgb, var(--hc-bg) 94%, transparent);
+  --hc-warning-soft: color-mix(in srgb, var(--hc-warning) 8%, transparent);
+
+  /* The scene's heat ramp (§6.5): working is the brightest step, cold is nearly gone. The
+     scene's points, its legend and the overview's breakdown all read these numbers, so the
+     scale is here rather than in `shell.css` — a ramp with one step in another file is two
+     ramps. `--hc-tone-quiet` and `--hc-tone-idle` are the two states that are *not* on it (a
+     skipped file, a memory nothing has used) and are deliberately not a step between. */
+  --hc-heat-0: rgba(255, 255, 255, 0.92);
+  --hc-heat-1: rgba(255, 255, 255, 0.66);
+  --hc-heat-2: rgba(255, 255, 255, 0.42);
+  --hc-heat-3: rgba(255, 255, 255, 0.24);
+  --hc-heat-4: rgba(255, 255, 255, 0.15);
+  --hc-tone-quiet: rgba(255, 255, 255, 0.28);
+  --hc-tone-idle: rgba(255, 255, 255, 0.22);
+  --hc-meter-default: rgba(255, 255, 255, 0.6);
+
+  /* The canvas' own clear colour — a void, not a surface: nothing is drawn *on* it that a
+     material could describe, and a material's rim over a WebGL viewport would be a lie. */
+  --hc-scene-void: #000000;
+
+  --hc-dur-fast: 140ms;
+  --hc-dur-base: 240ms;
+  --hc-dur-slow: 420ms;
+
+  --hc-r-xs: 8px;
+  --hc-r-sm: 12px;
+  --hc-r-md: 16px;
+  --hc-r-lg: 20px;
+  --hc-r-xl: 28px;
+
+  /* §4 The shell: a rail that says where you are, and the stage beside it.
+   *
+   * `--hc-rail-narrow` is what the rail collapses to when the window is dragged to the 400 px
+   * column a niri column gives it: the labels go, the icons stay, and the rail never disappears,
+   * because a navigation that vanishes takes the answer to „where am I" with it. */
+  --hc-rail: 200px;
+  --hc-rail-narrow: 58px;
+  --hc-nav-height: 34px;
+  --hc-gap: 14px;
+  --hc-tile: 152px;
+  --hc-bar: 9px;
 }
 
 [data-density="comfortable"] {
@@ -139,10 +341,10 @@ body {
   background: transparent;
   color: var(--hc-text);
   font-family: var(--hc-font);
-  font-size: 14px;
+  font-size: var(--hc-text-md);
   font-weight: 520;
   letter-spacing: -0.006em;
-  line-height: 1.38;
+  line-height: var(--hc-leading);
   /* The window is summoned and dismissed; a text selection left over from last time is noise. */
   user-select: none;
   overflow: hidden;
@@ -155,38 +357,47 @@ body {
 }
 
 .hc-title {
-  font-size: 15.5px;
+  font-size: var(--hc-text-lg);
   font-weight: 600;
   letter-spacing: -0.012em;
   line-height: 1.2;
 }
 
 .hc-subtitle {
-  font-size: 13.5px;
+  font-size: var(--hc-text-md);
   font-weight: 450;
   line-height: 1.3;
 }
 
 .hc-row-text {
-  font-size: 13.5px;
+  font-size: var(--hc-text-md);
   font-weight: 500;
   letter-spacing: -0.004em;
   line-height: 1.35;
 }
 
 .hc-meta {
-  font-size: 12px;
+  font-size: var(--hc-text-xs);
   font-weight: 500;
   line-height: 1.3;
   color: var(--hc-text-dim);
 }
 
+/*
+ * A chip — the small pill beside a name that says what something is (a role, a scope, a binding).
+ *
+ * It is the kit's chip: a glass fill with a hairline edge ring rather than a border, so a chip and
+ * a panel agree about what an edge is (§kit, `.glass-flat` says the same thing for a surface). The
+ * `raised` class is added where a chip is the *active* thing; the atom only describes the quiet one.
+ */
 .hc-pill {
-  font-size: 12.5px;
+  font-size: var(--hc-text-sm);
   font-weight: 500;
   border-radius: var(--hc-radius-pill);
   padding: 1px 8px;
-  border: 1px solid var(--hc-stroke);
+  border: 0;
+  background-color: var(--hc-glass-fill-strong);
+  box-shadow: var(--hc-glass-rim), 0 0 0 1px var(--hc-glass-seam);
   color: var(--hc-text-dim);
   white-space: nowrap;
 }

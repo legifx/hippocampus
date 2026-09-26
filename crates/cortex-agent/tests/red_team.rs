@@ -635,7 +635,7 @@ fn permissions_and_ownership_come_back_with_every_entry() {
     assert!(entry.group.is_some());
 }
 
-/// `getuid` without a dependency on libc: it cannot fail and takes no arguments.
+// `getuid` without a dependency on libc: it cannot fail and takes no arguments.
 extern "C" {
     #[link_name = "getuid"]
     fn libc_getuid() -> u32;

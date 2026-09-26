@@ -8,7 +8,8 @@ set -euo pipefail
 bin_dir="${HOME}/.local/bin"
 unit_dir="${XDG_CONFIG_HOME:-${HOME}/.config}/systemd/user"
 
-for unit in hippocampus-overlay.service hippocampus-cortexd.service; do
+for unit in hippocampus-consolidate.timer hippocampus-consolidate.service \
+            hippocampus-overlay.service hippocampus-cortexd.service; do
   systemctl --user disable --now "${unit}" 2>/dev/null || true
   rm -f "${unit_dir}/${unit}"
 done

@@ -181,10 +181,12 @@ impl Watcher {
                     continue;
                 }
                 let name = entry.file_name();
-                if denylist::should_skip_subtree(&name.to_string_lossy()) {
+                let path = entry.path();
+                if denylist::should_skip_subtree(&name.to_string_lossy())
+                    || denylist::marked_ignored(&path)
+                {
                     continue;
                 }
-                let path = entry.path();
                 if barriers.contains(&path) {
                     continue;
                 }

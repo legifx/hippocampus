@@ -53,6 +53,31 @@ async fn agent_sessions(
         .await
 }
 
+/// Everything the start screen shows: the index at a glance, and how the Agent Surface has been
+/// used.
+///
+/// One call rather than six. The window may not add numbers up (D4), and a start screen that
+/// fired six requests on open would be six chances to paint a half-updated picture — six counts
+/// with six timestamps in them.
+#[tauri::command]
+async fn stats_overview(
+    state: tauri::State<'_, AppState>,
+    window_secs: Option<i64>,
+) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(
+            cortex_rpc::protocol::method::STATS_OVERVIEW,
+            // `None` is not sent as `null`: the daemon's own choice of window is the default,
+            // and a null would parse as "a window of nothing" rather than "no preference".
+            match window_secs {
+                Some(secs) => json!({ "window_secs": secs }),
+                None => json!({}),
+            },
+        )
+        .await
+}
+
 /// Every memory in the index, in every scope.
 ///
 /// `everything` is refused for an agent and permitted here, and that asymmetry is the point of
@@ -1268,6 +1293,7 @@ pub fn run() {
             mark_interactive,
             startup_report,
             agent_sessions,
+            stats_overview,
             memories,
             remember,
             forget_memory,

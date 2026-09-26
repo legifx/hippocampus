@@ -79,7 +79,7 @@ export function OpenWith({
 
   return (
     <div
-      className="hc-openwith"
+      className="hc-openwith glass glass-sheen"
       role="dialog"
       aria-modal="true"
       aria-label="Öffnen mit"

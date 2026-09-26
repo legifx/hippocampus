@@ -1,0 +1,19 @@
+[Unit]
+Description=Hippocampus: one consolidation pass over the memory
+Documentation=https://github.com/hippocampus-fm/hippocampus
+
+# The daemon owns the database and this is a *client* of it: `cortex consolidate` calls
+# `brain.consolidate` over the socket and waits for the answer. That is what keeps the pass
+# single-writer, and it is why nothing here needs the store open or knows where it is.
+#
+# `Wants` and `After`, not `Requisite`: a requisite fails the unit outright when the target is not
+# already active (the same reasoning the overlay's unit records). Starting the daemon to run a pass
+# is the right way round — the pass is a call into it, not a second opinion about its data.
+Wants=hippocampus-cortexd.service
+After=hippocampus-cortexd.service
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/cortex consolidate
+
+# The daemon is already nice'd and idle-scheduled (D22); this process only waits for it.

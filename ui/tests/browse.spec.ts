@@ -33,6 +33,44 @@ test.describe("browsing", () => {
     await expect(page.locator(".hc-row-directory")).toHaveCount(2);
   });
 
+  test("the field offers the way out of a query once one is typed", async ({ page }) => {
+    await open(page);
+
+    // The field carries a shortcut hint while it is empty and a clear affordance once it is not —
+    // one of the two, never both, because two controls for the same moment are two places to look.
+    const field = page.locator(".hc-field");
+    // The names are the kit's own now: the shortcut cap (`gi-shortcut`) while the field is empty,
+    // the clear button (`gi-clear`) once it is not.
+    await expect(field.locator(".gi-shortcut")).toBeVisible();
+    await expect(field.locator(".gi-clear")).toHaveCount(0);
+
+    await page.getByLabel("Suche").fill("query");
+    await expect(field.locator(".gi-clear")).toBeVisible();
+    await expect(field.locator(".gi-shortcut")).toHaveCount(0);
+
+    await field.locator(".gi-clear").click();
+    await expect(page.getByLabel("Suche")).toHaveValue("");
+    // The pointer is where it was useful: back in the field, not on the button that just left.
+    await expect(page.getByLabel("Suche")).toBeFocused();
+  });
+
+  test("the header names the sort in German, not in the daemon's key", async ({ page }) => {
+    await open(page);
+
+    // `order` arrives as an identifier (`name`, `none`) and the fixture's directory is sorted by
+    // name, so the status line used to read „5 name" — one English word in the middle of a German
+    // sentence, on the screen that is looked at most. It shows the label the palette uses instead
+    // („Sortieren: Name"), from the same map, so the two cannot drift into two words for one thing.
+    const status = page.locator(".hc-status");
+    await expect(status).toContainText("Name");
+    await expect(status).not.toContainText(/\bname\b/);
+    // The word became the kit's button + menu, and the title the old span carried lives on the
+    // button now — same sentence, same map as the palette.
+    await expect(
+      page.locator('.hc-status button[title="Sortiert nach Name — ändern"]'),
+    ).toBeVisible();
+  });
+
   test("typing replaces the list and clearing brings it back", async ({ page }) => {
     await open(page);
     const crumbs = page.locator(".hc-crumbs");

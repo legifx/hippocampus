@@ -63,7 +63,7 @@ pub fn index_path(
             // Skipping the whole subtree is what keeps a home-directory walk affordable:
             // descending into node_modules costs far more than the paths are worth.
             let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-            if is_dir && denylist::should_skip_subtree(&name) {
+            if is_dir && (denylist::should_skip_subtree(&name) || denylist::marked_ignored(&path)) {
                 outcome.skipped += 1;
                 continue;
             }
@@ -219,6 +219,27 @@ mod tests {
         let paths = indexed_paths(&store);
         assert!(paths.iter().any(|p| p.ends_with("docs/report.md")));
         assert!(paths.iter().any(|p| p.ends_with("proj/src/main.rs")));
+    }
+
+    #[test]
+    fn a_directory_carrying_the_marker_is_left_out_with_everything_below_it() {
+        let tmp = corpus();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("bench/data/deep")).unwrap();
+        std::fs::write(root.join("bench/data/deep/generated.txt"), "zipf").unwrap();
+        std::fs::write(root.join("bench/data/report.md"), "synthetic").unwrap();
+        std::fs::write(root.join("bench/data").join(denylist::IGNORE_MARKER), "").unwrap();
+        std::fs::write(root.join("bench/real.md"), "kept").unwrap();
+
+        let store = Store::open_in_memory().unwrap();
+        index_path(&store, root, true, &[]);
+
+        let paths = indexed_paths(&store);
+        assert!(paths.iter().any(|p| p.ends_with("bench/real.md")), "{paths:?}");
+        assert!(
+            !paths.iter().any(|p| p.contains("bench/data")),
+            "the marked tree leaked into the index: {paths:?}"
+        );
     }
 
     #[test]

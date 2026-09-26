@@ -1,0 +1,305 @@
+/* =====================================================================
+   GLASS MATERIALS · the design kit's vocabulary
+   ---------------------------------------------------------------------
+   Ported from `ui/inspo/minimalist-glassmorphism-file-explorer/src/styles/glass.css`,
+   where the same names are Tailwind `@utility` rules. The names, the box-shadow
+   recipes and the intent are the kit's, unchanged; only the variable names are this
+   project's (`src/tokens.css` §2/§2b/§2c), because `ui/src/test/architecture.test.ts`
+   requires every colour to live there.
+
+        .glass          translucent surface that sits *on* the ground
+        .glass-strong   more opaque glass (popovers, raised panels)
+        .glass-weak     barely-there glass (nested tiles)
+        .glass-flat     glass without the drop shadow, for a surface inside a surface
+        .glass-blur     the one modifier that turns the blur on — overlay only (§8.1)
+        .glass-sheen    top-down specular gradient (`::before`)
+        .glass-specular cursor-following highlight at --mx/--my (`::after`, useSpecular)
+        .raised         convex "printed" pill — a segmented thumb, an active item
+        .raised-flat    the same raise with no drop, for a row (§8.2)
+        .raised-bezel   raised plus the double bezel ring (the hero look)
+        .well           recessed track — a segmented control, an input, a toggle
+        .solid          ink pill: the primary button, the selected segment
+        .press          a 0.97 scale on :active, for anything clickable
+
+   Three things in the kit's file are deliberately not ported, and the reasons are
+   the project's own rules rather than taste:
+
+      - the blur. In the kit it is part of `.glass`; §8.1 allows `backdrop-filter`
+        on the overlay container only, because a blur is a composite pass over
+        everything behind it and rows repeat. `.glass-blur` is an explicit opt-in
+        so that the one place allowed to use it can, and no other place can by
+        accident. Everywhere else the read comes from the rim, the fill and the
+        bottom shade.
+      - the canvas, and its drifting blobs (`@keyframes blob-drift`, 28 s
+        infinite). The drift is a continuous animation and was measured against
+        itself: four more composited layers, 21 ms against 16.7 ms per frame
+        (D114). The canvas colours followed for a reason no measurement answers —
+        they took the minimalism out of the interface, in the owner's words, and
+        are gone (D115). What lights this window is the breath (§6.1).
+      - the macOS traffic-light dot: this window has no title bar.
+
+   What each class is for is in docs/06-DESIGN-SYSTEM.md §10.
+   ===================================================================== */
+
+/* The material tokens carry their own geometry (§2b in `tokens.css`): `--hc-glass-rim` *is*
+ * `inset 0 1px 0 rgba(...)`, and `--hc-raised-shadow` / `--hc-well-shadow` are whole lists. A recipe
+ * therefore lists those tokens as items and writes geometry only in front of its own bare colours —
+ * `0 0 0 1px var(--hc-glass-edge)`.
+ *
+ * Writing the kit's `inset 0 1px 0 0` in front of an item token, as the kit does for its own
+ * bare-colour tokens, makes the *whole* box-shadow declaration invalid at computed-value time. The
+ * browser drops every shadow on that class and says nothing: the fills and the gradients still read,
+ * so it does not look broken, it just is not glass. That is what had happened to `.glass`,
+ * `.glass-flat`, `.raised*`, `.well`, `.solid` and `.hc-pill` — every material in this file (D112).
+ */
+.glass {
+  isolation: isolate;
+  background-color: var(--hc-glass-fill);
+  box-shadow:
+    var(--hc-glass-rim),
+    var(--hc-glass-rim-bottom),
+    0 0 0 1px var(--hc-glass-seam),
+    0 2px 6px -1px var(--hc-glass-shadow-color),
+    0 12px 32px -8px var(--hc-glass-shadow-color);
+}
+
+.glass-strong {
+  background-color: var(--hc-glass-fill-strong);
+}
+
+.glass-weak {
+  background-color: var(--hc-glass-fill-weak);
+}
+
+.glass-flat {
+  box-shadow:
+    var(--hc-glass-rim),
+    var(--hc-glass-rim-bottom),
+    0 0 0 1px var(--hc-glass-seam);
+}
+
+.glass-blur {
+  -webkit-backdrop-filter: blur(var(--hc-glass-blur)) saturate(var(--hc-glass-saturate));
+  backdrop-filter: blur(var(--hc-glass-blur)) saturate(var(--hc-glass-saturate));
+}
+
+.glass-sheen {
+  position: relative;
+  isolation: isolate;
+}
+
+.glass-sheen::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(180deg, var(--hc-glass-sheen) 0%, transparent 46%);
+  opacity: var(--hc-sheen-opacity);
+}
+
+.glass-specular {
+  position: relative;
+  isolation: isolate;
+}
+
+.glass-specular::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(
+    180px circle at var(--mx, 50%) var(--my, 0%),
+    var(--hc-glass-sheen),
+    transparent 62%
+  );
+  opacity: 0;
+  transition: opacity var(--hc-dur-base) var(--hc-ease-out);
+}
+
+.glass-specular:hover::after {
+  opacity: var(--hc-specular-opacity);
+}
+
+.raised {
+  isolation: isolate;
+  background-image: linear-gradient(180deg, var(--hc-raised-top), var(--hc-raised-bottom));
+  box-shadow:
+    var(--hc-raised-ring-light),
+    var(--hc-raised-ring-bottom),
+    0 0 0 1px var(--hc-raised-ring),
+    var(--hc-raised-shadow);
+}
+
+/*
+ * `raised-flat` — the kit's raise without the drop it casts on what is behind it.
+ *
+ * The kit's raise is a gradient fill, a light rim on the top edge, a dark one on the bottom, a
+ * 1 px black ring, and *a shadow cast on what is behind it* (§kit `raised`). Two things here need
+ * it — the destination you are on in the rail, and the place you are on in the places column —
+ * and both are rows, where §8.2 forbids a `box-shadow` outright: "selection is a background change
+ * plus a border, never a shadow". A raise without a drop is still a raise, because the fill is the
+ * gradient and the two rims are what make it read as printed rather than as a tint; the ring goes
+ * with the drop, since a 1 px black edge on a near-black ground says nothing at all.
+ *
+ * This is the fourth thing the port does that the kit does not, next to the three in D111. The
+ * alternative was the same gradient written out by hand at each of the three call sites, which is
+ * the copy this whole port exists to remove.
+ */
+.raised-flat {
+  isolation: isolate;
+  background-image: linear-gradient(180deg, var(--hc-raised-top), var(--hc-raised-bottom));
+  box-shadow:
+    var(--hc-raised-ring-light),
+    var(--hc-raised-ring-bottom);
+}
+
+.raised-bezel {
+  isolation: isolate;
+  background-image: linear-gradient(180deg, var(--hc-raised-top), var(--hc-raised-bottom));
+  box-shadow:
+    var(--hc-raised-ring-light),
+    var(--hc-raised-ring-bottom),
+    0 0 0 1px var(--hc-raised-ring),
+    0 0 0 3px var(--hc-bezel-light),
+    0 0 0 4px var(--hc-bezel-edge),
+    var(--hc-raised-shadow);
+}
+
+.well {
+  background-color: var(--hc-well-fill);
+  /* The kit's well ends with two *light* rims — `inset 0 -1px 0 0 var(--well-rim)` and a line under
+     the box. This window's `--hc-well-rim` is the dark top-left inner rim instead, so it is listed as
+     the item it is and the light line under the box is the edge token. */
+  box-shadow:
+    var(--hc-well-shadow),
+    var(--hc-well-rim),
+    0 1px 0 0 var(--hc-glass-edge);
+}
+
+.solid {
+  isolation: isolate;
+  background-color: var(--hc-accent);
+  color: var(--hc-on-accent);
+  box-shadow:
+    var(--hc-accent-rim),
+    0 1px 2px var(--hc-accent-shadow),
+    0 8px 20px -6px var(--hc-accent-shadow);
+}
+
+/* ---- Hairlines ------------------------------------------------------- */
+.hairline-t { border-top: 1px solid var(--hc-hairline); }
+.hairline-b { border-bottom: 1px solid var(--hc-hairline); }
+.hairline-l { border-left: 1px solid var(--hc-hairline); }
+.hairline-r { border-right: 1px solid var(--hc-hairline); }
+
+/* ---- Misc helpers ---------------------------------------------------- */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.press {
+  transition: transform var(--hc-dur-fast) var(--hc-ease-out);
+}
+
+.press:active {
+  transform: scale(0.97);
+}
+
+/* ---- Radii, the kit's names, on this project's scale ------------------ */
+.rounded-xs { border-radius: var(--hc-r-xs); }
+.rounded-sm { border-radius: var(--hc-r-sm); }
+.rounded-md { border-radius: var(--hc-r-md); }
+.rounded-lg { border-radius: var(--hc-r-lg); }
+.rounded-xl { border-radius: var(--hc-r-xl); }
+.rounded-pill { border-radius: var(--hc-radius-pill); }
+
+/* ---- 1px divider (kit: Hairline) ------------------------------------- */
+.hairline {
+  height: 1px;
+  width: 100%;
+  background: var(--hc-hairline);
+  border: 0;
+}
+
+.hairline.is-vertical {
+  width: 1px;
+  height: auto;
+  align-self: stretch;
+}
+
+/* ---- Atoms the kit hands out from GlassSurface.tsx -------------------- */
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.25rem;
+  min-width: 1.25rem;
+  padding: 0 0.375rem;
+  font-family: var(--hc-font);
+  font-size: var(--hc-text-2xs);
+  font-weight: 500;
+  color: var(--hc-text-faint);
+  border-radius: 6px;
+}
+
+.count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.375rem;
+  min-width: 1.375rem;
+  padding: 0 0.375rem;
+  font-size: var(--hc-text-2xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  border-radius: var(--hc-radius-pill);
+  color: var(--hc-text);
+}
+
+.count-badge.tone-pink {
+  background-color: var(--hc-pink);
+  color: var(--hc-bg);
+}
+
+.count-badge.tone-blue {
+  background-color: var(--hc-accent-blue);
+  color: var(--hc-bg);
+}
+
+.status-dot {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: var(--hc-radius-pill);
+}
+
+.status-dot.tone-pink { background-color: var(--hc-pink); }
+.status-dot.tone-blue { background-color: var(--hc-accent-blue); }
+.status-dot.tone-success { background-color: var(--hc-success); }
+.status-dot.tone-danger { background-color: var(--hc-danger); }
+
+.spark-icon {
+  width: 1.25rem;
+  height: 1.25rem;
+  flex-shrink: 0;
+}
+
+/* Reduced motion (§7) is a hard requirement: the two CSS-driven effects that would
+   move — the press scale and the specular fade — are the ones switched off here. */
+@media (prefers-reduced-motion: reduce) {
+  .press:active {
+    transform: none;
+  }
+
+  .glass-specular:hover::after {
+    opacity: 0;
+  }
+}

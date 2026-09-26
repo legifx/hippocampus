@@ -25,8 +25,10 @@ use cortex_rpc::protocol::{
     ModelStatusResult, NodeGetParams, NodeGetResult, PingResult, ReconcileParams, ReconcileResult,
     ReconcileSummary, Request, Response, RpcError, SearchExplainParams, SearchExplainResult,
     RebuildParams, RebuildResult, SearchParams, SearchResult, StatusResult, WatchStatusResult,
+    StatsOverviewParams, StatsOverviewResult,
     ZoneInfo, ZoneSetColorParams, ZonesListResult,
 };
+use cortex_core::overview::DaemonFacts;
 use cortex_rpc::transport;
 use cortex_store::Store;
 use std::path::{Path, PathBuf};
@@ -129,6 +131,38 @@ impl Daemon {
             undo_depth: self.store.undo_depth()?,
             audit_entries: self.store.audit_count()?,
         })
+    }
+
+    /// The start screen's numbers, with the daemon's own half filled in.
+    ///
+    /// The store counts what it can see; only the process knows its uptime, whether the Agent
+    /// Surface is open and what the path index costs. Filling that block here keeps
+    /// `Store::overview` a query about the database rather than about the daemon it runs in.
+    ///
+    /// `compose` runs again afterwards because the basis line names the surface state, and the
+    /// store could not know it.
+    fn overview(&self, window_secs: i64) -> cortex_store::error::Result<StatsOverviewResult> {
+        let mut overview = self.store.overview(indexer::unix_now(), window_secs)?;
+        overview.daemon = DaemonFacts {
+            version: VERSION.to_string(),
+            schema_version: self.store.schema_version()?,
+            uptime_secs: self.started.elapsed().as_secs(),
+            database: self.database_path.display().to_string(),
+            indexing_paused: self.kill.indexing_paused(),
+            agent_surface_enabled: self.agent_surface_enabled(),
+            require_dry_run: self.policy.require_dry_run(),
+            write_allowlist: self
+                .policy
+                .write_allowlist()
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect(),
+            indexed_paths: self.index.read().unwrap().len(),
+            index_memory_bytes: self.index.read().unwrap().memory_bytes(),
+            watcher_active: Some(self.ingest.watch_health.lock().unwrap().is_some()),
+        };
+        overview.compose();
+        Ok(overview)
     }
 
     fn watch_status(&self) -> WatchStatusResult {
@@ -428,7 +462,11 @@ async fn handle_connection(
     let notifier_writer = writer.clone();
     let mut ctx = ConnCtx {
         session: None,
-        actor: cortex_core::model::Actor::Human,
+        // The least, not the most (D117). This was `Actor::Human` on the argument that the value
+        // granted nothing — which stopped being true the moment `Authority::Instruction` existed
+        // and only a human origin could write one. A connection that has not identified itself is
+        // a stranger: it may read, and its words are observations.
+        actor: cortex_core::model::Actor::Unknown,
         notify: Arc::new(move |method: &str, params: serde_json::Value| {
             let message = serde_json::json!({
                 "jsonrpc": "2.0", "method": method, "params": params
@@ -719,7 +757,7 @@ async fn dispatch_inner(
             // Tuesday" has nothing to answer from.
             let _ = daemon.store.append_episode(
                 indexer::unix_now(),
-                &Actor::Human,
+                &ctx.actor,
                 Action::Search,
                 None,
                 None,
@@ -1271,6 +1309,20 @@ async fn dispatch_inner(
                 entries,
                 total: daemon.store.audit_count().map_err(internal)?,
             })
+        }
+
+        method::STATS_OVERVIEW => {
+            let params: StatsOverviewParams = params
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(|e| RpcError::invalid_params(e.to_string()))?
+                .unwrap_or_default();
+            let overview = daemon.overview(params.window_secs()).map_err(internal)?;
+            // A start screen that is being looked at is a person at the machine; the extraction
+            // stage shapes its CPU share around that (D20). Nothing else about this call has a
+            // side effect, and this one has less than it looks: it reports, it does not decide.
+            daemon.activity.ping();
+            json(overview)
         }
 
         method::IDENTIFY => {

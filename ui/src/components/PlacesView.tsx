@@ -113,7 +113,12 @@ function PlaceRow({
       id={`hc-place-${index}`}
       role="option"
       aria-selected={current}
-      className={current ? "hc-place hc-place-current" : "hc-place"}
+      // The current place wears the kit's raise — `.raised-flat` (§8.2 takes the drop off the kit's
+      // `raised` for a row) — so „where you are" is a lifted pill rather than the same flat tint a
+      // hovered row gets. `aria-selected` and not the kit's `aria-current="page"`: these are the
+      // options of a listbox and the rail's three buttons are the links, so the role decides the
+      // attribute, and the fill is the part that was ported.
+      className={current ? "hc-place hc-place-current raised-flat" : "hc-place"}
       onMouseDown={(event) => {
         // `mousedown` and prevented, like the rows: the caret stays in the search field, so
         // typing still starts a search after somebody has touched the mouse once.

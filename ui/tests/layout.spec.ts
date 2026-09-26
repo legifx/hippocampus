@@ -65,6 +65,29 @@ test.describe("the layout holds from 400 px to full width", () => {
     });
   }
 
+  test("the search field is measured in its own type, at every width", async ({ page }) => {
+    // The field and its text used to be two separate numbers, which is why they only ever agreed
+    // at one window width — the search field is where the owner saw it. The box is `em` against
+    // its own font-size now, so what is asserted is not a number but a ratio that has to hold at
+    // both ends of the range.
+    const heights: number[] = [];
+    for (const width of [400, 1400]) {
+      await open(page, width);
+      heights.push(
+        await page.evaluate(() => {
+          const field = document.querySelector(".hc-field") as HTMLElement;
+          const size = parseFloat(getComputedStyle(field).fontSize);
+          return field.getBoundingClientRect().height / size;
+        }),
+      );
+    }
+
+    // Roughly three times the type size — a pill with its padding — and the same proportion in a
+    // 400 px column as in a full-width window.
+    expect(Math.abs(heights[0] - heights[1])).toBeLessThan(0.25);
+    for (const ratio of heights) expect(ratio).toBeGreaterThan(2.2);
+  });
+
   test("panes appear as the window gets wider, and only then", async ({ page }) => {
     await open(page, 400);
     expect(await page.locator(".hc-preview").count()).toBe(0);
@@ -265,6 +288,12 @@ test.describe("the Agent Inspector holds its width", () => {
   test("the button and Ctrl+Shift+A are the same control", async ({ page }) => {
     await page.setViewportSize({ width: 900, height: 700 });
     await page.goto("/harness.html?at=/&hits=50");
+    // The shortcut is a React handler on the window's own element, so a keystroke only reaches
+    // it when the focus is already inside — the app puts the caret in the search field on
+    // mount. A key pressed into the gap before that effect has run goes to `<body>`, bubbles
+    // past the handler and is gone; nothing presses again, so the wait below times out after
+    // 30 s with no panel. That is the whole of what happened once under parallel load.
+    await expect(page.getByLabel("Suche")).toBeFocused();
     await page.keyboard.press("Control+Shift+A");
     await page.waitForSelector(".hc-inspector");
     // Wait for the panel to have taken focus before pressing again. Opening moves focus in an
@@ -275,5 +304,60 @@ test.describe("the Agent Inspector holds its width", () => {
       .toBe("tab");
     await page.keyboard.press("Control+Shift+A");
     await expect(page.locator(".hc-inspector")).toHaveCount(0);
+  });
+});
+
+/**
+ * The line between two rows is the kit's, and it is the kind of detail that is easy to port by eye and
+ * get wrong: the kit draws it as `::after` on the row — `left-[76px] right-3 h-px bg-hairline`, i.e.
+ * starting past the icon column and stopping 12 px short of the right edge — and hides it under the
+ * row that is selected. Both ends matter (a line touching the row's corner curve reads as a box, not
+ * as a list) and the hidden one matters more: a rule through the selected fill is the seam §8.2 keeps
+ * out of the selection.
+ *
+ * Geometry, not pixels: the pseudo-element's used values are what the engine resolved, which is the
+ * only way to tell a rule that exists from a rule that a later declaration overwrote.
+ */
+test.describe("the rule between two rows", () => {
+  test("runs from past the icon column to 12 px short of the edge, and stops at a selection", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1400, height: 800 });
+    await page.goto("/harness.html?at=/");
+    await page.waitForSelector(".hc-row");
+    await page.locator(".hc-row").first().click();
+
+    const rule = await page.evaluate(() => {
+      const read = (selector: string, index: number) => {
+        const row = document.querySelectorAll(selector)[index] as HTMLElement;
+        const after = getComputedStyle(row, "::after");
+        const box = row.getBoundingClientRect();
+        return {
+          opacity: after.opacity,
+          height: after.height,
+          left: after.left,
+          right: after.right,
+          background: after.backgroundColor,
+          width: Math.round(box.width),
+        };
+      };
+      return {
+        rows: document.querySelectorAll(".hc-row").length,
+        selected: read(".hc-row-selected", 0),
+        plain: read(".hc-row:not(.hc-row-selected):not(.hc-row-cursor)", 0),
+      };
+    });
+
+    expect(rule.rows).toBeGreaterThan(2);
+    // The line itself: one pixel, inset at both ends.
+    expect(rule.plain.height).toBe("1px");
+    expect(rule.plain.opacity).toBe("1");
+    expect(parseFloat(rule.plain.left), "die Linie beginnt an der Zeilenkante").toBeGreaterThan(4);
+    expect(parseFloat(rule.plain.right), "die Linie läuft bis in die Ecke").toBeGreaterThan(8);
+    expect(rule.plain.background).not.toBe("rgba(0, 0, 0, 0)");
+    // And on the selected row it is gone, rather than drawn over the fill.
+    expect(rule.selected.opacity).toBe("0");
+    // Something was actually selected by that click — otherwise the line above is trivially true.
+    expect(rule.selected.width).toBe(rule.plain.width);
   });
 });

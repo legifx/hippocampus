@@ -174,6 +174,26 @@ pub fn should_skip_subtree(dir_name: &str) -> bool {
     BULKY_DIRS.contains(&dir_name) || SENSITIVE_DIRS.iter().any(|d| d.eq_ignore_ascii_case(dir_name))
 }
 
+/// The marker a directory carries to keep itself and everything below it out of the index.
+///
+/// An empty file with this name is enough. It is the user's own deny-list entry, placed where
+/// the data is rather than in a configuration file that has to know the path — which is what
+/// makes it survive a move, a second machine, and a second user who never edited a config.
+pub const IGNORE_MARKER: &str = ".brainignore";
+
+/// Whether a directory asked to be left alone: it contains [`IGNORE_MARKER`].
+///
+/// Every walk — first index, reconcile, watcher — asks this for each directory it is about to
+/// descend into, so a marked tree is neither indexed, nor watched, nor re-added by the scan
+/// that exists to catch what the watcher missed. The case that made it necessary: the
+/// benchmark corpus lives inside the repository, the repository lives inside a content root,
+/// and for two weeks the live index was 74 % synthetic Zipf text — the first hit for "report"
+/// was a generated file, and the working-set arm of every context pack offered the corpus
+/// database. The generator now drops this marker beside what it writes.
+pub fn marked_ignored(dir: &Path) -> bool {
+    dir.join(IGNORE_MARKER).is_file()
+}
+
 /// Extension without the dot, lowercase, or `None` when there is none.
 ///
 /// Deliberately hand-rolled rather than `Path::extension` because this operates on an

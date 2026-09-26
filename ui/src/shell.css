@@ -1,0 +1,839 @@
+/*
+ * The shell and the start screen.
+ *
+ * `app.css` lays out the window as it was: one column, search at the top, list below. This file
+ * adds what the window was missing — a place that says where you are and what is in here — and it
+ * keeps every rule from design system §8: no `backdrop-filter` (the overlay container keeps the
+ * only one), no `box-shadow` on a list row, `transform` and `opacity` only, and nothing animating
+ * that has nothing to say.
+ *
+ * The material is the one from tokens.css §2b: a translucent fill, a rim of light on the top
+ * edge, a shadow on the bottom edge, a hairline against the dark. Two levels of it, on surfaces
+ * that do not repeat per row.
+ */
+
+/* ---------------------------------------------------------------------------
+   The shell: a rail on the left, the stage beside it.
+   --------------------------------------------------------------------------- */
+
+/*
+ * The overlay keeps its own grid and gains one column for the rail. The rows are the ones the
+ * window already had — search line, naming line, notice line, body — and the rail spans all of
+ * them, because a rail that occupied its own row would be a fourth line of chrome and not a rail.
+ *
+ * The width is `auto` rather than a second copy of the rail's own width: one place must know how
+ * wide the rail is, or the two answers drift and the list silently loses a few pixels.
+ */
+.hc-overlay {
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+}
+
+.hc-head {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+/*
+ * The search field is the kit's.
+ *
+ * `GlassSearch` (`src/components/glass/GlassInput.tsx`) brings the box with it — the recessed
+ * `well` pill, the magnifier, the clear button, the shortcut cap — and every one of its
+ * measurements is in `em` against the step the field is set in (`.gi-*` in `src/kit.css`), so the
+ * box and the text inside it cannot drift apart. That is what the showcase hands over: the recipe,
+ * not a look to copy. Two numbers that described the same pill used to live here, in this file,
+ * one per part of the field; they are gone, and with them the state they could get into.
+ *
+ * What is left is the one thing the field cannot know about itself: how much of the header it is
+ * allowed to take, and the fact that the status line beside it shares the room.
+ */
+.hc-field {
+  flex: 1;
+  min-width: 0;
+  /* The step the field is set in. The kit's control sizes are `em` against the control's own
+     font-size, so naming the step once here sets the box, the type and the icon together — and
+     the header, which measures its own height from `--hc-text-md` (§3), keeps agreeing with it. */
+  font-size: var(--hc-text-md);
+}
+
+/* The field's weight and tracking are the window's, not the kit's: the kit is a material, this is
+   how this window sets a query. */
+.hc-field .hc-input {
+  font-weight: 550;
+  letter-spacing: -0.012em;
+}
+
+.hc-naming {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+/* The notice and the error banner share a row: only one of them is ever there. */
+.hc-banner {
+  grid-column: 2;
+  grid-row: 3;
+}
+
+.hc-body {
+  grid-column: 2;
+  grid-row: 4;
+}
+
+.hc-rail {
+  position: relative;
+  z-index: 2;
+  /* The rail runs the full height of the window, past every row the stage uses. */
+  grid-column: 1;
+  grid-row: 1 / -1;
+  width: var(--hc-rail);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 10px 10px;
+  background: linear-gradient(
+    to bottom,
+    var(--hc-glass-fill),
+    var(--hc-glass-fill-weak) 55%,
+    transparent
+  );
+  border-right: 1px solid var(--hc-glass-edge);
+}
+
+/* The mark: what this window is. Two glyphs and a word, because a rail whose top item is a
+   folder icon looks like every other file manager. */
+.hc-mark {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: var(--hc-nav-height);
+  padding: 0 8px 0 6px;
+  margin-bottom: 10px;
+  color: var(--hc-text);
+  white-space: nowrap;
+}
+
+.hc-mark-glyph {
+  flex: none;
+  color: var(--hc-text-dim);
+}
+
+.hc-mark-name {
+  font-size: var(--hc-text-sm);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--hc-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hc-rail-group {
+  padding: 0 8px 6px;
+  font-size: var(--hc-text-2xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--hc-text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/*
+ * A navigation item.
+ *
+ * It is a button, so it is reachable by tab and answers to Enter, and it is not a list row, so it
+ * may carry the raised material: selection here is a lift, not just a background change, because
+ * „Dateien" being the current screen and „Dateien" being hovered must not look the same.
+ */
+.hc-nav {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: var(--hc-nav-height);
+  padding: 0 9px;
+  border-radius: var(--hc-radius-row);
+  color: var(--hc-text-dim);
+  font-size: var(--hc-text-sm);
+  white-space: nowrap;
+  transition: background-color var(--hc-icon-crossfade) var(--hc-ease-island),
+    color var(--hc-icon-crossfade) var(--hc-ease-island);
+}
+
+/* The kit's nav item hovers on `accent-soft`, not on the `selection` its list rows use — a
+   distinction the kit itself makes, and one this window now keeps: a place you are pointing at in
+   a column of places is a nav item, a file you are pointing at in the list is a row.
+   `background-color` rather than the `background` shorthand on purpose: the shorthand would reset
+   `background-image` and wipe the raise off the very item the pointer is on. */
+.hc-nav:hover {
+  background-color: var(--hc-accent-soft);
+  color: var(--hc-text);
+}
+
+.hc-nav-glyph {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+}
+
+.hc-nav-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hc-nav-count {
+  margin-left: auto;
+  font-family: var(--hc-mono);
+  font-size: var(--hc-text-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--hc-text-faint);
+}
+
+/*
+ * The destination you are on wears the kit's raise — `.raised-flat`, and the class is on the
+ * element in `NavRail.tsx`. What stood here was this recipe written out by hand: the same two
+ * gradient stops, and `--hc-glass-rim` for the raise's top rim but neither its bottom rim nor its
+ * drop. The places column had the same two lines written a second time and the overview's hero
+ * glyph a third, which is the copy this port exists to remove; §8.2 takes the drop out of the kit's
+ * `raised` for anything that repeats per row, and `.raised-flat` is that recipe, once.
+ *
+ * The colour stays here, because saying which label is the current one is this file's business and
+ * not a material's. The kit slides a `layoutId` pill between its nav items; this one does not
+ * travel, and that is not ported — a moving pill behind a label that is also moving is a second
+ * animation on one gesture.
+ */
+.hc-nav[aria-current="page"] {
+  color: var(--hc-text);
+}
+
+.hc-nav[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  left: -10px;
+  top: 50%;
+  width: 2px;
+  height: 16px;
+  transform: translateY(-50%);
+  border-radius: var(--hc-radius-pill);
+  background: var(--hc-text);
+  opacity: 0.8;
+}
+
+.hc-nav[aria-current="page"] .hc-nav-glyph {
+  color: var(--hc-text);
+}
+
+/* The foot of the rail: what the daemon is doing, in the smallest type in the window. It sits at
+   the bottom because it is the thing you read once and then stop reading. */
+.hc-rail-foot {
+  margin-top: auto;
+  padding: 10px 8px 2px;
+  border-top: 1px solid var(--hc-glass-edge);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: var(--hc-text-2xs);
+  color: var(--hc-text-faint);
+  white-space: nowrap;
+}
+
+.hc-rail-foot-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hc-rail-foot-key {
+  color: var(--hc-text-faint);
+}
+
+.hc-rail-foot-value {
+  color: var(--hc-text-dim);
+  font-family: var(--hc-mono);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------------------------------------------------------------------------
+   The start screen.
+   --------------------------------------------------------------------------- */
+
+/*
+ * The scrolling column. It is the one place in this window that scrolls the whole surface rather
+ * than a list, which is why it gets a max width: a statistic read across 2400 px is a statistic
+ * whose label is nowhere near its number.
+ */
+.hc-ov {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 18px 20px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--hc-gap);
+  align-items: center;
+  /* The body is a grid of list and preview panes; the start screen is neither, so it takes the
+     whole of it. */
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
+}
+
+.hc-ov-inner {
+  width: 100%;
+  max-width: 1180px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--hc-gap);
+}
+
+.hc-ov-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.hc-ov-title {
+  font-size: var(--hc-text-xl);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--hc-text);
+}
+
+.hc-ov-when {
+  font-size: var(--hc-text-xs);
+  color: var(--hc-text-faint);
+}
+
+.hc-ov-head-mid {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The window control: a well with raised buttons in it. The same material as the active nav item,
+   because it is the same idea — one of these is on. */
+/*
+ * The time window is the kit's segmented control: the track is `.seg .well` and a segment is
+ * `.seg-item`, both on the elements, both written once in `src/kit.css`. What used to be here was
+ * that control built by hand — the well, the rim, the gap, the padding, the hover, the pressed
+ * inset — which is four rules of a thing that already exists next door in `glass/GlassSegmented`.
+ *
+ * Two things are this window's and stay below: the pressed segment wears the kit's `raised`
+ * material (the class is on it), because this control is a group of pressed buttons and the kit's
+ * sliding thumb belongs to a tablist, which is not what this is; and the row wraps, because four
+ * labels and a count line have to fit at 400 px as well as at 1440.
+ */
+.hc-segs {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.hc-seg {
+  /* Everything about the box is `.seg-item` (§kit.css); this is the one label in the window that
+     is deliberately a step quieter than a control, because the headline above it is the sentence
+     to read. */
+  font-size: var(--hc-text-xs);
+}
+
+.hc-seg:hover {
+  color: var(--hc-text);
+}
+
+.hc-seg[aria-pressed="true"] {
+  /* The kit's `raised` class is on the pressed segment; the colour is this window's. */
+  color: var(--hc-text);
+}
+
+/*
+ * A card. The only place in this file that uses the outer drop shadow, and the reason it is
+ * allowed here: there are six of them on screen and they never scroll past — §8 forbids shadows
+ * on things that repeat per row, not on a handful of surfaces that are painted once.
+ *
+ * Its arrival is not here: the cards rise on the content spring, staggered, and that is
+ * `arrival()` in `Overview.tsx` — a CSS animation would be a second motion system beside §5's.
+ */
+/*
+ * The card is the kit's `glass glass-sheen` now — both classes are on the element, and each body
+ * lives once, in `src/glass.css`. What used to stand here was that recipe written out by hand: a
+ * gradient fill, two rims, the drop, the hairline, and a pseudo-element for the sheen. That is what
+ * the showcase's design-kit page exists to prevent — a second copy, free to drift.
+ *
+ * What stays is what the card itself is: a panel's radius, its padding, and the fact that it may
+ * not push the grid it sits in.
+ */
+.hc-card {
+  position: relative;
+  border-radius: var(--hc-radius-panel);
+  padding: 14px 16px 15px;
+  min-width: 0;
+}
+
+.hc-card-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.hc-card-title-text {
+  font-size: var(--hc-text-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--hc-text-dim);
+}
+
+.hc-card-note {
+  margin-left: auto;
+  font-size: var(--hc-text-xs);
+  color: var(--hc-text-faint);
+}
+
+.hc-cards {
+  display: grid;
+  /* `min(320px, 100%)` rather than a plain 320: a track that cannot be narrower than 320 px in a
+     column that is narrower than that overflows sideways, and a start screen that scrolls sideways
+     at 400 px is the one thing this screen may not do. */
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+  gap: var(--hc-gap);
+  align-items: start;
+}
+
+/* The headline: the daemon's own sentence about what the agents have been doing, in the largest
+   type in the window. It is the one thing on this screen that is a judgement rather than a count,
+   so it is the one thing that gets to be big. */
+.hc-ov-hero {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.hc-ov-hero-glyph {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--hc-radius-pill);
+  /* `.raised-flat` — the class is on the element in `Overview.tsx` — is the kit's raise with the
+     drop left off (§8.2). This was the third hand-written copy of the gradient, after the rail's
+     current destination and the places column's; the kit's own badge for a spot like this is
+     `raised-bezel`, which adds the double bezel ring, and that is deliberately *not* taken here:
+     this port moves materials to one place, it does not restyle the hero. */
+  color: var(--hc-text);
+}
+
+.hc-ov-hero-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.hc-ov-headline {
+  font-size: var(--hc-text-lg);
+  line-height: 1.45;
+  color: var(--hc-text);
+}
+
+.hc-ov-basis {
+  font-size: var(--hc-text-xs);
+  line-height: 1.5;
+  color: var(--hc-text-faint);
+}
+
+/* Tiles: a number and what it counts. The number is tabular so two tiles side by side line up,
+   and it is big enough to be read from a step back — which is the whole point of a start screen. */
+.hc-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--hc-tile), 1fr));
+  gap: var(--hc-gap);
+}
+
+.hc-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px 13px;
+  border-radius: var(--hc-radius-panel);
+  background: linear-gradient(to bottom, var(--hc-glass-fill), var(--hc-glass-fill-weak));
+  box-shadow: var(--hc-glass-rim), var(--hc-glass-rim-bottom);
+  border: 1px solid var(--hc-glass-edge);
+  text-align: left;
+}
+
+/* A tile that leads somewhere says so on hover. A tile that leads nowhere does not, and does not
+   look like it might. */
+.hc-tile[data-opens] {
+  transition: background-color var(--hc-icon-crossfade) var(--hc-ease-island);
+}
+
+.hc-tile[data-opens]:hover {
+  background: linear-gradient(to bottom, var(--hc-glass-fill-strong), var(--hc-glass-fill));
+}
+
+.hc-tile-label {
+  font-size: var(--hc-text-2xs);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--hc-text-faint);
+}
+
+.hc-tile-value {
+  font-family: var(--hc-mono);
+  font-size: var(--hc-text-2xl);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  color: var(--hc-text);
+}
+
+.hc-tile-sub {
+  font-size: var(--hc-text-xs);
+  color: var(--hc-text-dim);
+}
+
+.hc-tile-meta {
+  font-size: var(--hc-text-2xs);
+  color: var(--hc-text-faint);
+}
+
+/* A key/value list: what is left of a card once the headline number has been taken out. */
+.hc-kv {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.hc-kv-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: var(--hc-text-sm);
+}
+
+.hc-kv-key {
+  color: var(--hc-text-dim);
+  white-space: nowrap;
+}
+
+.hc-kv-dots {
+  flex: 1;
+  min-width: 8px;
+  border-bottom: 1px dotted var(--hc-glass-edge);
+  transform: translateY(-3px);
+}
+
+.hc-kv-value {
+  font-family: var(--hc-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--hc-text);
+  white-space: nowrap;
+}
+
+.hc-kv-unit {
+  color: var(--hc-text-faint);
+  margin-left: 3px;
+}
+
+/* A stacked bar: one row of the screen that answers „how is it split" without a chart library.
+   It is a well with segments in it, and the segments carry no shadow — §8.2. */
+.hc-bar {
+  display: flex;
+  gap: 2px;
+  height: var(--hc-bar);
+  border-radius: var(--hc-radius-pill);
+  overflow: hidden;
+  background: var(--hc-well-fill);
+  box-shadow: var(--hc-well-rim);
+}
+
+.hc-bar-seg {
+  min-width: 3px;
+  border-radius: var(--hc-radius-pill);
+  background: var(--hc-seg-colour);
+  transition: opacity var(--hc-icon-crossfade) var(--hc-ease-island);
+}
+
+.hc-bar-seg:hover {
+  opacity: 0.75;
+}
+
+/* The legend under the bar. It is where the numbers live: a bar says the proportions, the legend
+   says the counts, and neither is asked to do the other's job. */
+.hc-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 14px;
+  margin-top: 9px;
+}
+
+.hc-legend-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: var(--hc-text-xs);
+  color: var(--hc-text-dim);
+}
+
+.hc-legend-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--hc-radius-pill);
+  background: var(--hc-seg-colour);
+  transform: translateY(-1px);
+}
+
+.hc-legend-count {
+  font-family: var(--hc-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--hc-text);
+}
+
+.hc-legend-share {
+  font-family: var(--hc-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--hc-text-2xs);
+  color: var(--hc-text-faint);
+}
+
+/* The order the daemon sends is the order of the depth of the layer, so the ramp follows the
+   position: working is the brightest and cold is nearly gone. Names that are not in the ramp
+   (extraction states) get their own colour from the semantic palette, because „failed" has to be
+   red wherever it appears. */
+.hc-ramp-0 { --hc-seg-colour: var(--hc-heat-0); }
+.hc-ramp-1 { --hc-seg-colour: var(--hc-heat-1); }
+.hc-ramp-2 { --hc-seg-colour: var(--hc-heat-2); }
+.hc-ramp-3 { --hc-seg-colour: var(--hc-heat-3); }
+.hc-ramp-4 { --hc-seg-colour: var(--hc-heat-4); }
+
+.hc-tone-done { --hc-seg-colour: var(--hc-success); }
+.hc-tone-pending { --hc-seg-colour: var(--hc-info); }
+.hc-tone-failed { --hc-seg-colour: var(--hc-error); }
+.hc-tone-skipped { --hc-seg-colour: var(--hc-tone-quiet); }
+.hc-tone-help { --hc-seg-colour: var(--hc-success); }
+.hc-tone-noise { --hc-seg-colour: var(--hc-warning); }
+.hc-tone-unused { --hc-seg-colour: var(--hc-tone-idle); }
+
+/* A meter: one value out of a whole, drawn as a well with a fill. Used for vector coverage and
+   for the refusal share, which are the two numbers here that are ratios rather than counts. */
+.hc-meter {
+  position: relative;
+  height: var(--hc-bar);
+  border-radius: var(--hc-radius-pill);
+  overflow: hidden;
+  background: var(--hc-well-fill);
+  box-shadow: var(--hc-well-rim);
+}
+
+.hc-meter-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: var(--hc-radius-pill);
+  background: var(--hc-seg-colour, var(--hc-meter-default));
+}
+
+/* A chip: a state, not a number. Small, uppercase, and never the only thing that carries a
+   meaning — the words beside it say it too. */
+.hc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: var(--hc-radius-pill);
+  font-size: var(--hc-text-2xs);
+  letter-spacing: 0.03em;
+  background: var(--hc-glass-fill);
+  border: 1px solid var(--hc-glass-edge);
+  color: var(--hc-text-dim);
+  white-space: nowrap;
+}
+
+.hc-chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--hc-radius-pill);
+  background: currentColor;
+  opacity: 0.85;
+}
+
+.hc-chip[data-tone="on"] { color: var(--hc-success); }
+.hc-chip[data-tone="off"] { color: var(--hc-text-faint); }
+.hc-chip[data-tone="warn"] { color: var(--hc-warning); }
+.hc-chip[data-tone="info"] { color: var(--hc-info); }
+.hc-chip[data-tone="error"] { color: var(--hc-error); }
+
+.hc-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/*
+ * The one chip whose words can be longer than the window. An allow-list is a path, and a path at
+ * 400 px is a line that has to break somewhere: it breaks at the slashes rather than being cut off,
+ * because a path shown without its end is a path nobody can check.
+ */
+.hc-chip[data-long="true"] {
+  max-width: 100%;
+  align-items: flex-start;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.hc-chip[data-long="true"] .hc-chip-dot {
+  margin-top: 5px;
+}
+
+/* A session: one agent, one run at it. The task is the widest thing here and gets the room; the
+   counts line up to the right of it, tabular, so two sessions can be compared by eye. */
+.hc-session {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 0;
+  border-top: 1px solid var(--hc-glass-edge);
+  font-size: var(--hc-text-sm);
+}
+
+.hc-session:first-child {
+  border-top: 0;
+}
+
+.hc-session-name {
+  color: var(--hc-text);
+  white-space: nowrap;
+}
+
+.hc-session-task {
+  flex: 1;
+  min-width: 0;
+  color: var(--hc-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hc-session-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  row-gap: 2px;
+  min-width: 0;
+  font-family: var(--hc-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--hc-text-xs);
+  color: var(--hc-text-faint);
+  white-space: nowrap;
+}
+
+.hc-session-meta-bad {
+  color: var(--hc-warning);
+}
+
+/* Nothing to show: either the daemon has not answered yet or the index is empty. Both are said in
+   words, in the middle of the card, rather than drawn as an empty grid that looks like a bug. */
+.hc-ov-note {
+  padding: 18px 4px;
+  font-size: var(--hc-text-sm);
+  line-height: 1.5;
+  color: var(--hc-text-faint);
+  text-align: center;
+}
+
+.hc-ov-error {
+  color: var(--hc-warning);
+}
+
+/*
+ * Narrow: the window in a 400 px niri column.
+ *
+ * The rail keeps its icons and drops its words, and the cards go to one column. The horizontal
+ * padding comes in, because at 400 px the difference between 20 px and 12 px of margin is a whole
+ * character of a filename.
+ */
+@media (max-width: 720px) {
+  .hc-rail {
+    width: var(--hc-rail-narrow);
+    padding-left: 7px;
+    padding-right: 7px;
+  }
+
+  .hc-mark-name,
+  .hc-nav-label,
+  .hc-rail-group,
+  .hc-nav-count,
+  .hc-rail-foot-key,
+  /* The values go with their keys, and for the same reason: „0.4.1 · 2 h 14 m" does not become a
+     shorter statement at 58 px, it becomes `/ho….` — noise where a glance wants a shape. */
+  .hc-rail-foot-line,
+  /* The chip keeps its dot and loses its word; the word is still the chip's title and its
+     accessible name, so nothing is only-a-colour. Scoped to the rail: the start screen's chips
+     carry paths and have the room. */
+  .hc-rail-foot .hc-chip-label {
+    display: none;
+  }
+
+  /*
+   * The header wraps instead of squeezing.
+   *
+   * At 400 px one line cannot hold both a field worth typing in and the counts beside it: the field
+   * came out at 79 px — under the width the layout test calls usable — because the numbers would not
+   * move. So they move. The field takes the first line, the counts sit under it right-aligned, and
+   * nothing is hidden or clipped to buy the room (§4). The three `display: none`s that stood here
+   * before (the sort label, the shortcut hint, the clipboard pill) were that same room taken out of
+   * what the header says; the wrap keeps all three and costs a line instead.
+   */
+  .hc-head {
+    flex-wrap: wrap;
+  }
+
+  .hc-status {
+    flex: 1 0 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    row-gap: 2px;
+  }
+
+  /* A daemon error is the one string up here that can be any length at all; on its own line it wraps
+     instead of running off the header. */
+  .hc-status .hc-error {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .hc-mark,
+  .hc-nav {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .hc-nav[aria-current="page"]::before {
+    left: -7px;
+  }
+
+  .hc-ov {
+    padding: 14px 12px 20px;
+  }
+
+  /* The title and the tile numbers used to be pulled down to 17 and 21 px here, because at 400 px
+     their one fixed size was too large. The steps carry that themselves now (§3): two mechanisms
+     for one intent is one place for the two to disagree. What is left here is layout. */
+  .hc-tiles {
+    grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  }
+}
+
+/* Reduced motion (§7) is handled where every other spring in this window is handled: `spring()`
+   and `stagger()` in `motion.ts` collapse, so nothing here needs to know the preference. */
+
+

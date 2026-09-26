@@ -348,7 +348,9 @@ fn scan_disk_within(
 
             if is_dir {
                 let name = entry.file_name();
-                if denylist::should_skip_subtree(&name.to_string_lossy()) {
+                if denylist::should_skip_subtree(&name.to_string_lossy())
+                    || denylist::marked_ignored(&path)
+                {
                     report.skipped += 1;
                     continue;
                 }
@@ -456,6 +458,30 @@ mod tests {
         assert!(report.added > 0);
         assert_eq!(report.removed, 0);
         assert!(paths(&store).iter().any(|p| p.ends_with("docs/one.md")));
+    }
+
+    #[test]
+    fn a_marker_added_later_removes_the_tree_on_the_next_scan() {
+        // The live case: a tree was indexed before anybody marked it. Dropping the marker in
+        // must be enough — the next reconcile treats the tree as gone and removes its rows,
+        // without a rebuild and without anybody editing the configuration.
+        let tmp = corpus();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("bench/data")).unwrap();
+        std::fs::write(root.join("bench/data/generated.txt"), "zipf").unwrap();
+        let store = Store::open_in_memory().unwrap();
+        reconcile(&store, root, &[], 100);
+        assert!(paths(&store).iter().any(|p| p.contains("bench/data/generated.txt")));
+
+        std::fs::write(root.join("bench/data").join(denylist::IGNORE_MARKER), "").unwrap();
+        let report = reconcile(&store, root, &[], 200);
+
+        assert!(report.removed >= 1, "{report:?}");
+        assert!(
+            !paths(&store).iter().any(|p| p.contains("bench/data")),
+            "{:?}",
+            paths(&store)
+        );
     }
 
     #[test]

@@ -18,7 +18,9 @@
 use crate::error::{Result, StoreError};
 use crate::Store;
 use cortex_core::ids::{ChunkId, NodeId};
-use cortex_core::memory::{Memory, MemoryKind, MemoryScope, PackArm, ReaderScope, Reporter};
+use cortex_core::memory::{
+    Authority, Memory, MemoryKind, MemoryScope, Origin, PackArm, ReaderScope, Reporter,
+};
 use cortex_core::model::{Actor, EdgeSource, EdgeType};
 use rusqlite::{params, params_from_iter, OptionalExtension};
 use std::path::PathBuf;
@@ -168,6 +170,14 @@ impl Store {
 
         let scope = new.scope.as_str();
 
+        // Who is writing, and therefore what this memory may become. The origin is a function of
+        // the *connection's* actor — the argument the surface handed down — so nothing a client
+        // sends can name it (M12 criterion 1), and the authority starts at that origin's ceiling
+        // and can only fall from there (D98). Both are decided here, in the one function every
+        // write goes through, so a rebuild replays them from the episode rather than guessing.
+        let origin = Origin::from_actor(actor);
+        let authority = origin.ceiling();
+
         // Exact duplicate in the same scope and kind: hand back what is already there.
         if let Some(existing) = self.exact_memory(&scope, new.kind, text)? {
             return Ok(Remembered {
@@ -183,9 +193,9 @@ impl Store {
 
         tx.execute(
             "INSERT INTO nodes (kind, path, size, mtime, ctime, inode, dev,
-                                first_seen, last_seen, tier, extract_state)
-             VALUES ('memory', NULL, ?2, ?1, ?1, 0, 0, ?1, ?1, 'working', 'done')",
-            params![now, text.len() as i64],
+                                first_seen, last_seen, tier, extract_state, origin)
+             VALUES ('memory', NULL, ?2, ?1, ?1, 0, 0, ?1, ?1, 'working', 'done', ?3)",
+            params![now, text.len() as i64, origin.as_str()],
         )?;
         let node = NodeId(tx.last_insert_rowid());
 
@@ -224,6 +234,7 @@ impl Store {
             &scope,
             episode,
             &actor.as_str(),
+            authority,
             now,
         )?;
 
@@ -1030,7 +1041,7 @@ const MEMORY_SELECT: &str = "
     SELECT m.node_id, m.scope, m.kind, m.text, m.subject_id, s.path,
            m.confidence, m.usefulness, m.helped_count, m.noise_count, m.retrieved_count,
            m.human_confirmed, m.expires_at, m.superseded_by, m.session_id, m.actor, m.ts,
-           n.salience, n.pinned
+           n.salience, n.pinned, m.authority, n.origin
     FROM memories m
     JOIN nodes n ON n.id = m.node_id
     LEFT JOIN nodes s ON s.id = m.subject_id";
@@ -1061,6 +1072,19 @@ fn row_to_memory(row: &rusqlite::Row<'_>) -> rusqlite::Result<Memory> {
         ts: row.get(16)?,
         salience: row.get(17)?,
         pinned: row.get::<_, i64>(18)? != 0,
+        // Both are projections of decisions the write path made, and both fall back to the
+        // *least* when a row cannot be read: a memory whose origin nobody recorded is a
+        // stranger's observation, never an instruction (M12 criterion 1).
+        authority: row
+            .get::<_, Option<String>>(19)?
+            .as_deref()
+            .and_then(Authority::parse)
+            .unwrap_or(Authority::Untrusted),
+        origin: row
+            .get::<_, Option<String>>(20)?
+            .as_deref()
+            .and_then(Origin::parse)
+            .unwrap_or(Origin::Peer),
     })
 }
 
@@ -1079,12 +1103,13 @@ fn insert_memory_projection(
     scope: &str,
     episode: i64,
     actor: &str,
+    authority: Authority,
     now: i64,
 ) -> Result<ChunkId> {
     conn.execute(
         "INSERT INTO memories (node_id, scope, kind, text, subject_id, confidence,
-                               expires_at, session_id, episode_id, actor, ts)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                               expires_at, session_id, episode_id, actor, ts, authority)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
             node.0,
             scope,
@@ -1096,9 +1121,14 @@ fn insert_memory_projection(
             new.session_id,
             episode,
             actor,
-            now
+            now,
+            authority.as_str()
         ],
     )?;
+    // `valid_from` and `valid_to` are deliberately not written: M12 step 2 gives
+    // `brain.remember` a field for the validity window, and until then NULL is the truthful
+    // value. Filling it with `now` would be the daemon claiming that a memory recorded today
+    // became true today, which is the one shortcut the scope section rules out by name.
 
     let hash = blake3::hash(text.as_bytes()).to_hex().to_string();
     let preview: String = text.chars().take(PREVIEW_CHARS).collect();
@@ -1362,15 +1392,24 @@ impl Store {
                     };
 
                     let conn = self.conn();
+                    // Both are re-derived from the episode's actor rather than copied from
+                    // anywhere else, because R10 says a rebuild reproduces the *write*, and the
+                    // write is where they were decided. A replay that guessed differently would
+                    // hand the same memory a different standing in the pack than it had before
+                    // the index was thrown away — the one thing a cache may never do.
+                    let origin = Actor::parse(&actor)
+                        .map(|a| Origin::from_actor(&a))
+                        .unwrap_or(Origin::Peer);
+                    let authority = origin.ceiling();
                     conn.execute(
                         "INSERT INTO nodes (kind, path, size, mtime, ctime, inode, dev,
-                                            first_seen, last_seen, tier, extract_state)
-                         VALUES ('memory', NULL, ?2, ?1, ?1, 0, 0, ?1, ?1, 'working', 'done')",
-                        params![ts, text.len() as i64],
+                                            first_seen, last_seen, tier, extract_state, origin)
+                         VALUES ('memory', NULL, ?2, ?1, ?1, 0, 0, ?1, ?1, 'working', 'done', ?3)",
+                        params![ts, text.len() as i64, origin.as_str()],
                     )?;
                     let node = NodeId(conn.last_insert_rowid());
                     insert_memory_projection(
-                        &conn, node, &new, text, scope, episode_id, &actor, ts,
+                        &conn, node, &new, text, scope, episode_id, &actor, authority, ts,
                     )?;
                     drop(conn);
 
@@ -2530,5 +2569,78 @@ mod tests {
         store.replay_memories().unwrap();
 
         assert_eq!(before, store.canonical_dump().unwrap());
+    }
+
+    /// M12 criterion 1, at the layer that can enforce it.
+    ///
+    /// The origin is a function of the actor the *connection* handed down, never of anything in
+    /// the request, and the authority starts at that origin's ceiling. Three surfaces are
+    /// standing in for four here: an agent over MCP, the human on the CLI, and a connection that
+    /// never named itself — which is a stranger and is treated as one.
+    ///
+    /// The second half is R10's: a rebuild re-derives both from the episode, so a memory that
+    /// came back with a different standing would be a cache contradicting the log it was
+    /// rebuilt from.
+    #[test]
+    fn a_memory_carries_the_standing_of_the_connection_that_wrote_it() {
+        let store = store();
+        remember(&store, MemoryScope::Global, MemoryKind::Fact, "an agent's conclusion");
+        store
+            .remember(
+                &NewMemory::new(
+                    MemoryScope::Global,
+                    MemoryKind::Procedure,
+                    "run the hygiene check before committing",
+                ),
+                &Actor::Human,
+                101,
+            )
+            .unwrap();
+        store
+            .remember(
+                &NewMemory::new(
+                    MemoryScope::Global,
+                    MemoryKind::Observation,
+                    "something seen in passing",
+                ),
+                &Actor::Unknown,
+                102,
+            )
+            .unwrap();
+
+        let ladder = |store: &Store| -> Vec<(String, String, String)> {
+            let mut rows: Vec<_> = store
+                .list_memories(&MemoryFilter::everything(300))
+                .unwrap()
+                .into_iter()
+                .map(|m| {
+                    (
+                        m.text.clone(),
+                        m.origin.as_str().to_string(),
+                        m.authority.as_str().to_string(),
+                    )
+                })
+                .collect();
+            rows.sort();
+            rows
+        };
+        let expected = vec![
+            ("an agent's conclusion".to_string(), "agent".into(), "fact".into()),
+            (
+                "run the hygiene check before committing".to_string(),
+                "human".into(),
+                "instruction".into(),
+            ),
+            ("something seen in passing".to_string(), "peer".into(), "observation".into()),
+        ];
+        assert_eq!(ladder(&store), expected);
+
+        store.clear_derived(true).unwrap();
+        store.replay_memories().unwrap();
+        assert_eq!(
+            ladder(&store),
+            expected,
+            "the rebuild handed a memory a different standing than the write gave it"
+        );
     }
 }

@@ -6,6 +6,7 @@
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use cortex_core::memory::ContextPack;
+use cortex_core::overview::Overview;
 use cortex_core::paths::Paths;
 use cortex_core::tools::{
     AnnotateParams, AnnotateResult, AppsForPathParams, AppsForPathResult, AppsSetDefaultParams,
@@ -33,6 +34,7 @@ use cortex_rpc::protocol::{
     ReconcileResult, SearchExplainParams, SearchUpdateParams,
     SearchExplainResult, SearchParams, SearchResult, StatusResult, SyncNowResult,
     SyncReplayResult, SyncStatusResult, WatchStatusResult,
+    StatsOverviewParams, StatsOverviewResult,
     ZoneSetColorParams, ZonesListResult,
 };
 
@@ -64,6 +66,13 @@ enum Command {
     Ping,
     /// Show what the daemon knows and how much of it.
     Status,
+    /// The start screen, in text: the index at a glance, and what the agents have been doing
+    /// to it. The same numbers the window paints first.
+    Overview {
+        /// The window the activity numbers cover, in hours. The daemon clamps it.
+        #[arg(long, default_value_t = 24)]
+        hours: i64,
+    },
     /// Search the index.
     Search {
         query: Vec<String>,
@@ -648,6 +657,22 @@ async fn run(args: Args) -> Result<()> {
                         "disabled"
                     }
                 );
+            }
+        }
+
+        Command::Overview { hours } => {
+            let result: StatsOverviewResult = client
+                .call(
+                    method::STATS_OVERVIEW,
+                    StatsOverviewParams {
+                        window_secs: Some(hours * 3600),
+                    },
+                )
+                .await?;
+            if args.json {
+                print_json(&result)?;
+            } else {
+                print_overview(&result);
             }
         }
 
@@ -1323,8 +1348,13 @@ async fn run(args: Args) -> Result<()> {
                             first_line(&memory.text)
                         );
                         println!(
-                            "         by {} · useful {:+.2} · helped {} · noise {} · shown {}",
+                            "         by {} as {} ({}) · useful {:+.2} · helped {} · noise {} · shown {}",
                             memory.actor,
+                            // What the daemon decided this memory may be used as, and where it
+                            // came from: the two fields a reader needs to know whether to trust
+                            // a line before acting on it (D98).
+                            memory.authority.as_str(),
+                            memory.origin.as_str(),
                             memory.usefulness,
                             memory.helped_count,
                             memory.noise_count,
@@ -1485,7 +1515,16 @@ async fn run(args: Args) -> Result<()> {
                             memory.kind.as_str(),
                             first_line(&memory.text)
                         );
-                        println!("              {} · {}", memory.actor, memory.scope.as_str());
+                        println!(
+                            "              {} · {} · {} ({})",
+                            memory.actor,
+                            memory.scope.as_str(),
+                            // As with `cortex memories`: the standing of the line, not just who
+                            // wrote it — a fact established by an agent and an instruction the
+                            // human wrote must not read the same way.
+                            memory.authority.as_str(),
+                            memory.origin.as_str()
+                        );
                     }
                 }
                 if !result.associations.is_empty() {
@@ -2375,10 +2414,150 @@ fn print_watch_status(status: &WatchStatusResult) {
     }
 }
 
+/// The start screen, in text.
+///
+/// The same numbers the window paints, in the same order: whoever has read one can read the
+/// other. The headline and the basis are the daemon's own sentences and are printed unedited —
+/// they are the part of this that is a judgement rather than a count, and a client that rewrote
+/// them would be answering for the daemon.
+fn print_overview(overview: &StatsOverviewResult) {
+    // The window as a clause can use it („in den letzten 24 Stunden"): the label belongs above a
+    // number, every line below asks what happened, and one binding decides it so that no two lines
+    // can disagree about which window this is. The label itself is still printed raw in the JSON.
+    let window_phrase = Overview::window_phrase(overview.window_secs);
+
+    println!("{}", overview.headline);
+    println!();
+    println!(
+        "index      {} files, {} directories, {} chunks, {} vectors ({:.0} % covered), {} episodes ({} {})",
+        overview.index.files,
+        overview.index.dirs,
+        overview.index.chunks,
+        overview.index.embeddings,
+        overview.index.vector_coverage * 100.0,
+        overview.index.episodes,
+        overview.index.episodes_window,
+        window_phrase,
+    );
+    println!(
+        "graph      {} concepts, {} associations, {} zones, {} annotations, {} duplicate files",
+        overview.index.concepts,
+        overview.index.edges,
+        overview.index.zones,
+        overview.index.annotations,
+        overview.index.duplicates,
+    );
+    println!("layers     {}", slices_line(&overview.index.tiers));
+    println!("extraction {}", slices_line(&overview.index.extract));
+    println!(
+        "memory     {} memories, {} human-confirmed, {} superseded, {} pinned, {} expiring",
+        overview.memory.total,
+        overview.memory.human_confirmed,
+        overview.memory.superseded,
+        overview.memory.pinned,
+        overview.memory.expiring,
+    );
+    // Summed and never netted (D76): the two numbers are printed side by side on purpose.
+    println!(
+        "outcomes   {} packs {}, {} items, helped {} / noise {}, {} of {} memories never retrieved",
+        overview.agents.packs_window,
+        window_phrase,
+        overview.agents.pack_items,
+        overview.agents.pack_helped,
+        overview.agents.pack_noise,
+        overview.memory.never_retrieved,
+        overview.memory.total,
+    );
+    println!("kinds      {}", slices_line(&overview.memory.kinds));
+    println!("scopes     {}", slices_line(&overview.memory.scopes));
+    println!(
+        "agents     {} sessions, {} open, {} {}; {} calls, {} refused ({:.1} %)",
+        overview.agents.sessions_total,
+        overview.agents.sessions_open,
+        overview.agents.sessions_window,
+        window_phrase,
+        overview.agents.calls_window,
+        overview.agents.refusals_window,
+        overview.agents.refusal_share * 100.0,
+    );
+    if !overview.agents.tools.is_empty() {
+        let tools: Vec<String> = overview
+            .agents
+            .tools
+            .iter()
+            .map(|tool| {
+                if tool.refusals > 0 {
+                    format!(
+                        "{} {} ({:.0} %, {} refused)",
+                        tool.tool,
+                        tool.calls,
+                        tool.share * 100.0,
+                        tool.refusals
+                    )
+                } else {
+                    format!("{} {} ({:.0} %)", tool.tool, tool.calls, tool.share * 100.0)
+                }
+            })
+            .collect();
+        println!("tools      {}", tools.join(" · "));
+    }
+    for session in &overview.agents.sessions {
+        println!(
+            "  session  {} \"{}\" — {} calls, {} refused, {} memories, {}",
+            session.id,
+            session.name,
+            session.calls,
+            session.refusals,
+            session.memories,
+            match session.ended_at {
+                Some(_) => "closed".to_string(),
+                None => "open".to_string(),
+            },
+        );
+        if let Some(task) = &session.task {
+            println!("           {task}");
+        }
+    }
+    match &overview.consolidation {
+        Some(pass) => println!(
+            "last pass  {} ago, {} episodes replayed, {} bursts, {} associations written, {} pinned held, {} concepts, {} orphaned, {} took {:.1} s",
+            format_duration(pass.ago_secs as u64),
+            pass.episodes_replayed,
+            pass.bursts,
+            pass.edges_written,
+            pass.pinned_held,
+            pass.concepts_total,
+            pass.orphans,
+            if pass.dry_run { "dry run, " } else { "" },
+            pass.duration_ms as f64 / 1000.0,
+        ),
+        None => println!("last pass  never — nothing has been consolidated yet"),
+    }
+    println!(
+        "daemon     {} schema {}, up {}, {} paths ({})",
+        overview.daemon.version,
+        overview.daemon.schema_version,
+        format_duration(overview.daemon.uptime_secs),
+        overview.daemon.indexed_paths,
+        human_bytes(overview.daemon.index_memory_bytes as u64),
+    );
+    println!("{}", overview.basis);
+}
+
+/// `name count (share)` per row, in the order the daemon sent: that order is its reading of the
+/// breakdown, and re-sorting it here would be the terminal disagreeing with the window.
+fn slices_line(parts: &[cortex_core::overview::Slice]) -> String {
+    let rendered: Vec<String> = parts
+        .iter()
+        .map(|part| format!("{} {} ({:.0} %)", part.name, part.count, part.share * 100.0))
+        .collect();
+    rendered.join(" · ")
+}
+
 /// A CLI argument naming a node: a number is an id, anything else is a path.
 ///
-/// Resolved here rather than server-side because only the client knows what the user typed;
-/// a daemon that guessed would eventually treat a file called `42` as a node id.
+/// Resolved here rather than server-side because only the client knows what the user typed; a
+/// daemon that guessed would eventually treat a file called `42` as a node id.
 fn parse_target(text: &str) -> Target {
     match text.parse::<i64>() {
         Ok(id) => Target::Node(id),

@@ -56,6 +56,24 @@ function sourceFiles(dir: string): string[] {
   return out;
 }
 
+/**
+ * Every stylesheet the application ships.
+ *
+ * Kept apart from `sourceFiles` because the two rules they serve are about different things: the
+ * one above is about what the code may *do*, this one about what a rule may *contain*. `tokens.css`
+ * is in the list and exempted by name at the assertion, so that the exemption is visible in the
+ * test rather than hidden in the walk.
+ */
+function styleSheets(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir)) {
+    const path = join(dir, entry);
+    if (statSync(path).isDirectory()) out.push(...styleSheets(path));
+    else if (entry.endsWith(".css")) out.push(path);
+  }
+  return out;
+}
+
 describe("the frontend does no data processing", () => {
   it("depends on nothing that could rank, match or reshape data", () => {
     const manifest = JSON.parse(readFileSync(PACKAGE, "utf8")) as {
@@ -119,5 +137,27 @@ describe("the frontend does no data processing", () => {
       }
     }
     expect(offenders, "colours belong in tokens.css, per docs/06-DESIGN-SYSTEM.md").toEqual([]);
+  });
+
+  it("spells a colour in no stylesheet but tokens.css", () => {
+    // The rule above reads `.ts`/`.tsx`, which is where colours almost never appear. The four
+    // that had actually drifted were in `app.css` and `shell.css` — an `rgba()` there is a rule
+    // §2 stopped governing, and the port of the kit left eight of them (D118). A stylesheet that
+    // needs a new one adds a token.
+    const offenders: string[] = [];
+    for (const file of styleSheets(SRC)) {
+      if (file.endsWith("tokens.css")) continue;
+      // Comments quote colours when they explain a recipe ("`--hc-glass-rim` *is*
+      // `inset 0 1px 0 rgba(...)`"), and a comment paints nothing.
+      const source = readFileSync(file, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+      const colours = source.match(/#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)/g) ?? [];
+      if (colours.length > 0) {
+        offenders.push(`${file.slice(SRC.length + 1)}: ${colours.join(", ")}`);
+      }
+    }
+    expect(
+      offenders,
+      "a colour in a stylesheet belongs in tokens.css (docs/06-DESIGN-SYSTEM.md §2)",
+    ).toEqual([]);
   });
 });

@@ -213,6 +213,189 @@ impl fmt::Display for MemoryKind {
     }
 }
 
+/// Who caused these bytes to exist (D98, M12 step 1).
+///
+/// Recorded in the episode, projected onto the node, and part of every answer that explains where
+/// a thing came from. It is not a score and it is not the writer's claim: the socket derives it
+/// from the connection's actor, so a caller cannot ask for `human` and get it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Origin {
+    /// A person, through the window the CLI, or an Inspector confirmation.
+    Human,
+    /// An agent working on its own account. Its own conclusions, not somebody else's text.
+    Agent,
+    /// The result of a tool call (an `fs.read`, a command's output) — the agent is the messenger.
+    Tool,
+    /// A file's own bytes. Every chunk of every indexed file is this.
+    File,
+    /// Anything that arrived over the wire from a peer.
+    Peer,
+}
+
+impl Origin {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Origin::Human => "human",
+            Origin::Agent => "agent",
+            Origin::Tool => "tool",
+            Origin::File => "file",
+            Origin::Peer => "peer",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "human" => Origin::Human,
+            "agent" => Origin::Agent,
+            "tool" => Origin::Tool,
+            "file" => Origin::File,
+            "peer" => Origin::Peer,
+            _ => return None,
+        })
+    }
+
+    /// The highest authority a memory of this origin may be *created* with (M12 §Scope).
+    ///
+    /// A ceiling, never a grant: the write path starts here and can only be lowered, by the
+    /// imperative detector or by what the memory's `basis` cites. `human` is the only origin that
+    /// can create an instruction, which is the whole point of the rule — an agent's paraphrase
+    /// must not be able to arrive as an order.
+    pub fn ceiling(self) -> Authority {
+        match self {
+            Origin::Human => Authority::Instruction,
+            Origin::Agent => Authority::Fact,
+            Origin::Tool | Origin::File | Origin::Peer => Authority::Observation,
+        }
+    }
+
+    /// Whether this origin counts as a *trusted* one when the consolidation pass looks for two
+    /// independent origins that agree (D98's one way up).
+    ///
+    /// `tool`, `file` and `peer` are excluded for the same reason they are capped at
+    /// `observation`: two chunks of one file agreeing with each other is one origin wearing two
+    /// hats, and a peer is the same person elsewhere rather than a second witness.
+    pub fn is_trusted(self) -> bool {
+        matches!(self, Origin::Human | Origin::Agent)
+    }
+
+    /// Which origin a write over *this* connection carries (D117, criterion 1).
+    ///
+    /// Derived from the connection's actor, never from the request body — a request that could
+    /// name its own origin could name `human`, and `human` is the only origin that may create an
+    /// instruction. Each row is a judgement, so they are written down:
+    ///
+    /// * `Human` → `Human`: the person, or a client that identified itself as one.
+    /// * `Agent(name)` → `Agent`: an agent's own conclusion, not somebody else's text.
+    /// * `System` → `File`: everything the daemon writes on its own account (concepts, zones,
+    ///   tier movements) is bookkeeping *over* indexed material; if such a write has a basis, the
+    ///   inheritance rule lowers it further anyway.
+    /// * `Unknown` → `Peer`: a connection that did not say who it is gets exactly what a stranger
+    ///   gets — usable, never trusted, never an instruction.
+    pub fn from_actor(actor: &crate::model::Actor) -> Origin {
+        match actor {
+            crate::model::Actor::Human => Origin::Human,
+            crate::model::Actor::Agent(_) => Origin::Agent,
+            crate::model::Actor::System => Origin::File,
+            crate::model::Actor::Unknown => Origin::Peer,
+        }
+    }
+
+    pub const ALL: [Origin; 5] = [
+        Origin::Human,
+        Origin::Agent,
+        Origin::Tool,
+        Origin::File,
+        Origin::Peer,
+    ];
+}
+
+impl fmt::Display for Origin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// What a memory may be used *as* (D98, M12 step 1).
+///
+/// An enum with a rule, deliberately not a continuous trust number: the research behind D98 is a
+/// theorem about a non-malleable label, and a score is the malleable signal it excludes. The
+/// variant order is the rule — `Ord` is derived so that **inheriting the lowest authority among a
+/// memory's basis is `min()` over `Authority`s** and nothing else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Authority {
+    /// Content that may contain instructions aimed at an agent. Usable, never obeyed, and absent
+    /// from a context pack unless the caller asks for it.
+    Untrusted,
+    /// Something noticed. The default for anything a tool, a file or a peer says.
+    Observation,
+    /// Something that is the case, established by an agent or a trusted origin.
+    Fact,
+    /// Something the human wants done or wants respected. The only authority a gated write may
+    /// name as its motivation.
+    Instruction,
+}
+
+/// The default when a value arrives without one is the *least*: a memory that never said where it
+/// came from is a stranger's, and one that never said what it may be used as is not an
+/// instruction. The direction a missing field moves a value in is always downward (M12
+/// criterion 1) — that is the whole point of having the ladder in an enum rather than a number.
+impl Default for Origin {
+    fn default() -> Self {
+        Origin::Peer
+    }
+}
+
+impl Default for Authority {
+    fn default() -> Self {
+        Authority::Untrusted
+    }
+}
+
+impl Authority {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Authority::Untrusted => "untrusted",
+            Authority::Observation => "observation",
+            Authority::Fact => "fact",
+            Authority::Instruction => "instruction",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "untrusted" => Authority::Untrusted,
+            "observation" => Authority::Observation,
+            "fact" => Authority::Fact,
+            "instruction" => Authority::Instruction,
+            _ => return None,
+        })
+    }
+
+    /// Whether a memory of this origin may be named as the *stated reason* for a gated write
+    /// (M12 §Scope).
+    ///
+    /// Only `instruction` may. A memory the agent itself wrote is a premise, not a permit, and
+    /// this is the check that keeps a poisoned file from being the motivation for `fs.write`.
+    pub fn may_motivate_a_write(self) -> bool {
+        matches!(self, Authority::Instruction)
+    }
+
+    pub const ALL: [Authority; 4] = [
+        Authority::Untrusted,
+        Authority::Observation,
+        Authority::Fact,
+        Authority::Instruction,
+    ];
+}
+
+impl fmt::Display for Authority {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// One memory, as it is stored and as every surface reports it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Memory {
@@ -253,6 +436,15 @@ pub struct Memory {
     pub salience: f64,
     #[serde(default)]
     pub pinned: bool,
+    /// Who caused this memory to exist (D98, M12 criterion 1). A projection of the *connection's*
+    /// actor, decided by the write path — a client cannot send it, and no request type carries
+    /// the field.
+    #[serde(default)]
+    pub origin: Origin,
+    /// What this memory may be used *as*. The origin's ceiling when it was written, lower when
+    /// whatever it rests on is lower, and never higher than either.
+    #[serde(default)]
+    pub authority: Authority,
 }
 
 impl Memory {
@@ -374,6 +566,15 @@ pub struct Basis {
     /// Who wrote it, and when. A memory an agent cannot attribute is one it cannot argue with.
     pub actor: String,
     pub written_at: i64,
+    /// Where it came from, and what it may be used as (D98, M12).
+    ///
+    /// The two fields a reader needs *before* it acts on the line, and the reason this struct
+    /// exists: `actor` says who, these say how far the thing may be taken. Unlike the counters
+    /// above they are never omitted — a pack that dropped the label on the items that are least
+    /// trustworthy would be hiding exactly the eight lines that matter, and the default a reader
+    /// would assume in their place is the confident one.
+    pub origin: Origin,
+    pub authority: Authority,
     #[serde(default, skip_serializing_if = "is_zero_count")]
     pub helped: i64,
     #[serde(default, skip_serializing_if = "is_zero_count")]
@@ -597,6 +798,10 @@ mod tests {
             ts: 0,
             salience: 0.0,
             pinned: false,
+            // An agent wrote it, so it is that origin's ceiling: an `agent:a` memory is a fact
+            // an agent established, never an instruction to anyone.
+            origin: Origin::Agent,
+            authority: Authority::Fact,
         };
         assert!(base.is_live(100));
         assert!(!Memory {
@@ -614,5 +819,117 @@ mod tests {
             ..base
         }
         .is_live(100));
+    }
+
+    #[test]
+    fn both_labels_round_trip_through_their_stored_form() {
+        for origin in Origin::ALL {
+            assert_eq!(Origin::parse(origin.as_str()), Some(origin));
+        }
+        for authority in Authority::ALL {
+            assert_eq!(Authority::parse(authority.as_str()), Some(authority));
+        }
+        // A stored value this build does not know must not silently become a legal one. `None` is
+        // what lets the reader fall back to the conservative end instead.
+        assert_eq!(Origin::parse("model"), None);
+        assert_eq!(Authority::parse("trusted"), None);
+    }
+
+    #[test]
+    fn only_a_human_origin_may_create_an_instruction() {
+        // The rule of D98 stated as a table, because this is the line an agent's paraphrase would
+        // have to cross to arrive as an order.
+        assert_eq!(Origin::Human.ceiling(), Authority::Instruction);
+        assert_eq!(Origin::Agent.ceiling(), Authority::Fact);
+        assert_eq!(Origin::Tool.ceiling(), Authority::Observation);
+        assert_eq!(Origin::File.ceiling(), Authority::Observation);
+        assert_eq!(Origin::Peer.ceiling(), Authority::Observation);
+    }
+
+    #[test]
+    fn authority_inherits_the_lowest_of_what_it_cites() {
+        // Criterion 2 in one line: a chain is only as strong as its weakest premise, and `min()`
+        // is the whole inheritance rule.
+        assert_eq!(
+            Authority::Fact.min(Authority::Observation),
+            Authority::Observation
+        );
+        assert_eq!(
+            Authority::Instruction.min(Authority::Fact).min(Authority::Untrusted),
+            Authority::Untrusted
+        );
+        // A chain of three, which is the shape the acceptance test uses.
+        let chain = [
+            Authority::Instruction,
+            Authority::Instruction,
+            Authority::Untrusted,
+        ];
+        assert_eq!(chain.iter().copied().min(), Some(Authority::Untrusted));
+    }
+
+    #[test]
+    fn only_an_instruction_may_motivate_a_write() {
+        assert!(Authority::Instruction.may_motivate_a_write());
+        assert!(!Authority::Fact.may_motivate_a_write());
+        assert!(!Authority::Observation.may_motivate_a_write());
+        assert!(!Authority::Untrusted.may_motivate_a_write());
+    }
+
+    #[test]
+    fn a_file_and_a_peer_are_not_two_witnesses() {
+        // D98's one way up needs *independent trusted* origins. Two chunks of one file agreeing
+        // with each other is one origin wearing two hats, and a peer is the same person elsewhere.
+        assert!(Origin::Human.is_trusted());
+        assert!(Origin::Agent.is_trusted());
+        assert!(!Origin::Tool.is_trusted());
+        assert!(!Origin::File.is_trusted());
+        assert!(!Origin::Peer.is_trusted());
+    }
+
+    #[test]
+    fn the_labels_travel_over_the_wire_in_their_stored_form() {
+        // The three surfaces (CLI, MCP, socket) all speak these exact strings, so a rename here
+        // would be a protocol change and needs to fail loudly.
+        assert_eq!(
+            serde_json::to_string(&Authority::Untrusted).unwrap(),
+            "\"untrusted\""
+        );
+        assert_eq!(serde_json::to_string(&Origin::File).unwrap(), "\"file\"");
+    }
+
+    #[test]
+    fn an_unidentified_connection_gets_a_stranger_s_origin() {
+        // Criterion 1 of M12 step 1, in three lines: whoever holds the socket cannot reach
+        // `instruction` without having said who they are, and the default is the *weakest* value
+        // rather than the strongest (D117).
+        let stranger = Origin::from_actor(&crate::model::Actor::Unknown);
+        assert_eq!(stranger, Origin::Peer);
+        assert_eq!(stranger.ceiling(), Authority::Observation);
+        assert!(!stranger.is_trusted());
+    }
+
+    #[test]
+    fn the_actor_behind_a_write_decides_the_origin() {
+        // The table the store will apply, written out so a change to it has to be deliberate.
+        assert_eq!(Origin::from_actor(&crate::model::Actor::Human), Origin::Human);
+        assert_eq!(
+            Origin::from_actor(&crate::model::Actor::Agent("claude".into())),
+            Origin::Agent
+        );
+        // The daemon's own bookkeeping is over indexed material, which is the weaker label.
+        assert_eq!(Origin::from_actor(&crate::model::Actor::System), Origin::File);
+
+        // Exactly one of the four actors on the socket can produce an instruction.
+        let actors = [
+            crate::model::Actor::Human,
+            crate::model::Actor::Agent("claude".into()),
+            crate::model::Actor::System,
+            crate::model::Actor::Unknown,
+        ];
+        let can_instruct = actors
+            .iter()
+            .filter(|a| Origin::from_actor(a).ceiling() == Authority::Instruction)
+            .count();
+        assert_eq!(can_instruct, 1);
     }
 }

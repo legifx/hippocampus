@@ -54,6 +54,69 @@ test.describe("the memory on a row", () => {
     await expect(row).toContainText("12 B");
   });
 
+  test("a column heading stands over its own values", async ({ page }) => {
+    // The heading and the values it heads live in two different elements — one line of buttons, and
+    // every row's own metadata — so „under" is arranged rather than inherited, and until now it was a
+    // guess: the first cell under „Salienz" was the permission string and the salience value was not
+    // rendered at all. A heading is a claim about what is beneath it, which makes it something to
+    // measure rather than something to look at.
+    //
+    // Measured in a wide column, because that is where the widths are the widths: when the list has
+    // no room for the table the numbers give way (they shrink rather than pushing the metadata out
+    // over the panel beside them), and that containment is the second half of this test.
+    await page.setViewportSize({ width: 1440, height: 800 });
+    await page.goto("/harness.html?at=/");
+    await page.waitForSelector(".hc-row");
+
+    const row = page.locator(".hc-row").first();
+    await expect(row.locator(".hc-row-salience")).toHaveText(/^\d+\.\d{2}$/);
+
+    const pairs: [string, string][] = [
+      [".hc-list-header-salience", ".hc-row-salience"],
+      [".hc-list-header-size", ".hc-row-size"],
+      [".hc-list-header-modified", ".hc-row-age"],
+    ];
+    for (const [heading, cell] of pairs) {
+      const head = (await page.locator(heading).boundingBox())!;
+      const value = (await row.locator(cell).boundingBox())!;
+      expect(Math.abs(head.x + head.width - (value.x + value.width))).toBeLessThan(2);
+    }
+
+    // „Under" has a second half, and that is the half that was wrong: the headings have to stand on
+    // the *same* line as each other. The strip declared no area map while `.hc-list-header-meta`
+    // asked for `grid-area: meta`, and an undefined named line in `grid-area` makes the grid invent
+    // tracks — here two 0 px columns and a second 22 px row, so „Name" stood alone with the three
+    // headings under it, half a line below the values they head. A strip that is one line measures
+    // as one line.
+    const lines = await page.evaluate(() => {
+      const strip = document.querySelector(".hc-list-header")!;
+      const cells = Array.from(document.querySelectorAll(".hc-list-header-name, .hc-list-header-meta > *"));
+      const centres = cells.map((el) => {
+        const r = el.getBoundingClientRect();
+        return r.top + r.height / 2;
+      });
+      return {
+        spread: Math.max(...centres) - Math.min(...centres),
+        height: strip.getBoundingClientRect().height,
+        cells: cells.length,
+      };
+    });
+    expect(lines.cells).toBeGreaterThan(2);
+    expect(lines.spread, "die Überschriften stehen nicht auf einer Zeile").toBeLessThan(2);
+    expect(lines.height, "der Streifen ist höher als seine eine Zeile").toBeLessThan(34);
+
+    // Narrow the window until the list is cramped: the metadata has to stay inside its row. It used
+    // to sit in the row's `auto` track, sized to its own max-content, and ran out over the panel.
+    await page.setViewportSize({ width: 1200, height: 800 });
+    await page.waitForTimeout(200);
+    const crowded = await page.evaluate(() => {
+      const row = document.querySelector(".hc-row")!;
+      const meta = row.querySelector(".hc-row-meta")!;
+      return meta.getBoundingClientRect().right - row.getBoundingClientRect().right;
+    });
+    expect(crowded).toBeLessThan(1);
+  });
+
   test("salience is offered as an order, and asking for it asks the daemon for it", async ({
     page,
   }) => {

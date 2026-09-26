@@ -622,9 +622,11 @@ impl Store {
                     END,
                     coalesce(m.expires_at, -1),
                     (SELECT coalesce(group_concat(c.hash, ','), '-')
-                     FROM chunks c WHERE c.node_id = m.node_id)
+                     FROM chunks c WHERE c.node_id = m.node_id),
+                    n.origin, m.authority
              FROM memories m
              LEFT JOIN nodes s ON s.id = m.subject_id
+             JOIN nodes n ON n.id = m.node_id
              ORDER BY m.scope, m.kind, m.text",
         )?;
         let mut rows = memories.query([])?;
@@ -644,10 +646,16 @@ impl Store {
             let superseded: String = row.get::<_, String>(10)?.replace('\n', "\\n");
             let expires: i64 = row.get(11)?;
             let hashes: String = row.get(12)?;
+            // Last two, so that the line's older positions keep their meaning: who wrote it and
+            // what it may be used as. Both are *derived* on write and re-derived on replay, so
+            // a replay that decided differently has to show up here rather than in a pack
+            // nobody was watching (D98, M12 criterion 1).
+            let origin: String = row.get(13)?;
+            let authority: String = row.get(14)?;
             out.push_str(&format!(
                 "memory\t{scope}\t{kind}\t{text}\t{confidence:.6}\t{usefulness:.6}\t\
                  {helped}\t{noise}\t{retrieved}\t{confirmed}\t{subject}\t{superseded}\t\
-                 {expires}\t{hashes}\n"
+                 {expires}\t{hashes}\t{origin}\t{authority}\n"
             ));
         }
 

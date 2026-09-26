@@ -94,9 +94,14 @@ impl Tier {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind", content = "name")]
 pub enum Actor {
+    /// A person: at the window, or a client that *said* it is one. Only an explicit
+    /// identification gets this value (D117).
     Human,
     Agent(String),
     System,
+    /// A connection that never said who it is. It gets the least on purpose: `Origin::Peer`,
+    /// authority capped at `observation`, and no way to create an instruction.
+    Unknown,
 }
 
 impl Actor {
@@ -105,6 +110,7 @@ impl Actor {
             Actor::Human => "human".to_string(),
             Actor::Agent(name) => format!("agent:{name}"),
             Actor::System => "system".to_string(),
+            Actor::Unknown => "unknown".to_string(),
         }
     }
 
@@ -112,6 +118,7 @@ impl Actor {
         Some(match s {
             "human" => Actor::Human,
             "system" => Actor::System,
+            "unknown" => Actor::Unknown,
             other => Actor::Agent(other.strip_prefix("agent:")?.to_string()),
         })
     }

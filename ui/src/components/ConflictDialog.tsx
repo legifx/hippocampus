@@ -72,7 +72,7 @@ export function ConflictDialog({
 
   return (
     <div
-      className="hc-conflict"
+      className="hc-conflict glass glass-sheen"
       role="dialog"
       aria-modal="true"
       aria-label="Namenskonflikt"
@@ -118,14 +118,15 @@ export function ConflictDialog({
 
       {first && (
         <div className="hc-conflict-sides hc-meta">
-          <div>
+          {/* Two fields of the kit's `well`, side by side. */}
+          <div className="well rounded-sm">
             <span className="hc-faint">vorhanden</span>
             <span className="hc-num">
               {first.existing.kind === "dir" ? "Ordner" : formatSize(first.existing.size)}
             </span>
             <span className="hc-num">{formatAge(first.existing.mtime)}</span>
           </div>
-          <div>
+          <div className="well rounded-sm">
             <span className="hc-faint">neu</span>
             <span className="hc-num">
               {first.incoming.kind === "dir" ? "Ordner" : formatSize(first.incoming.size)}

@@ -6,11 +6,14 @@ every number the paper cites, so the next review can diff against it rather than
 | date | commit | reviewer | paper | evidence |
 |---|---|---|---|---|
 | 2026-09-05 | `bbef90d` | Claude Fable 5.1 | [2026-09-05-review.md](2026-09-05-review.md) | [2026-09-05-evidence.json](2026-09-05-evidence.json) |
+| 2026-09-05 (2nd pass) | `8ae1ff8` | Claude (claims-verified) | [2026-09-05-code-review.md](2026-09-05-code-review.md) | [2026-09-05-code-review-evidence.json](2026-09-05-code-review-evidence.json) |
+| 2026-09-05 (3rd pass) | `45367ca` | Gemini 3.8 Flash (High) | [gemini-3.8-flash-high/2026-09-05-review.md](gemini-3.8-flash-high/2026-09-05-review.md) | [gemini-3.8-flash-high/2026-09-05-evidence.json](gemini-3.8-flash-high/2026-09-05-evidence.json) |
+| 2026-09-06 (response) | `028f14b` + | Claude Fable 5.1 | [2026-09-06-response.md](2026-09-06-response.md) — what was done about each finding of the three papers above, with the numbers re-taken | (numbers inline) |
 
 Reviews are also filed per reviewing model under `review/<model>/`, so that reviews by
 different models of the same commit can be compared side by side:
-`review/claude-fable-5.1/` holds this one.
-| 2026-09-05 (2nd pass) | `8ae1ff8` | [2026-09-05-code-review.md](2026-09-05-code-review.md) | [2026-09-05-code-review-evidence.json](2026-09-05-code-review-evidence.json) |
+`review/claude-fable-5.1/` holds the initial review;
+`review/gemini-3.8-flash-high/` holds the 3rd pass (empirical deep-dive on disambiguation, memory bloat, Playwright e2e/perf, and agent-brain reality check).
 
 The second pass of 2026-09-05 is **claims-verified**: it re-runs every command and reads the code
 behind the first pass's claims. Read the first paper for what exists; read the second for whether

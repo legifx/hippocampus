@@ -11,6 +11,7 @@
  */
 
 import { AnimatePresence, motion } from "framer-motion";
+import { GlassButton } from "./glass";
 import { useEffect, useState } from "react";
 import { ipc, type Memory, type NodeWhy, type SearchHit, type Source } from "../ipc";
 import { formatAge, splitPath } from "../format";
@@ -114,7 +115,7 @@ export function ContextSidebar({
 
   if (!hit) {
     return (
-      <aside className="hc-context" aria-label="Kontext">
+      <aside className="hc-context glass-flat" aria-label="Kontext">
         <p className="hc-faint">Nichts ausgewählt</p>
       </aside>
     );
@@ -123,7 +124,7 @@ export function ContextSidebar({
   const notes = why?.annotations ?? [];
 
   return (
-    <aside className="hc-context" aria-label="Kontext">
+    <aside className="hc-context glass-flat" aria-label="Kontext">
       <h2 className="hc-title hc-context-title">{splitPath(hit.path).name}</h2>
 
       <Section title="Notizen" count={notes.length} empty="noch keine">
@@ -131,7 +132,7 @@ export function ContextSidebar({
           {notes.map((note, index) => (
             <motion.div
               key={note.node_id}
-              className="hc-note"
+              className="hc-note glass-flat"
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
@@ -198,7 +199,7 @@ export function ContextSidebar({
         }}
       >
         <input
-          className="hc-annotate-input"
+          className="hc-annotate-input well"
           value={note}
           onChange={(event) => setNote(event.target.value)}
           // The window handles Enter — it opens the selected row — and it sees this key on its
@@ -217,13 +218,15 @@ export function ContextSidebar({
       {/* The graph around this file is a place, so this is a way to *go* there rather than a
           list in a panel that could only ever show the first few (M10 §4.5). */}
       {onOpenSource && hit && (
-        <button
-          type="button"
-          className="hc-context-open"
+        <GlassButton
+          variant="glass"
+          size="sm"
+          shape="rounded"
+          className="hc-context-open gb-block"
           onClick={() => onOpenSource({ kind: "neighbours", path: hit.path })}
         >
           Verbunden ansehen{why?.degree ? ` (${why.degree})` : ""}
-        </button>
+        </GlassButton>
       )}
 
       {/* Why this row is where it is: the parts of the score the consolidation pass computed and

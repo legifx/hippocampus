@@ -242,10 +242,24 @@ impl VectorIndex {
 
     /// Remove a chunk's vector. Absent keys are not an error — the caller is deleting.
     pub fn remove(&self, chunk: ChunkId) -> Result<()> {
+        self.remove_many(std::iter::once(chunk)).map(|_| ())
+    }
+
+    /// Remove several keys under one lock. A key the index does not hold is not an error: the
+    /// caller is clearing a note about chunks that *may* still be in here, and most of the
+    /// time — after a rebuild, or for a chunk that was never embedded — they are not.
+    pub fn remove_many(&self, chunks: impl IntoIterator<Item = ChunkId>) -> Result<usize> {
         self.promote()?;
         let index = self.index.write().unwrap();
-        index.remove(chunk.0 as u64).map_err(vector_error)?;
-        Ok(())
+        let mut removed = 0;
+        for chunk in chunks {
+            let key = chunk.0 as u64;
+            if index.contains(key) {
+                index.remove(key).map_err(vector_error)?;
+                removed += 1;
+            }
+        }
+        Ok(removed)
     }
 
     pub fn search(&self, vector: &[f32], limit: usize) -> Result<Vec<VectorHit>> {
@@ -334,6 +348,46 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let index = VectorIndex::open(&tmp.path().join("vectors.usearch"), 4).unwrap();
         (tmp, index)
+    }
+
+    #[test]
+    fn re_adding_a_key_does_not_grow_the_count() {
+        // A chunk whose file changed is embedded again under the same id: remove, then add.
+        // The count the reconcile compares against the table must not grow by one for every
+        // such re-embedding, or the index "drifts" by exactly the number of files edited since
+        // the last check and is rebuilt on every idle pass. (Seen live on 2026-09-06: expected
+        // 49257, present 49258, a twelve-second rebuild every five minutes, for ever.)
+        let tmp = tempfile::tempdir().unwrap();
+        let index = VectorIndex::open(&tmp.path().join("vectors.usearch"), 4).unwrap();
+        index.add(ChunkId(1), &unit([1.0, 0.0, 0.0, 0.0])).unwrap();
+        index.add(ChunkId(2), &unit([0.0, 1.0, 0.0, 0.0])).unwrap();
+        assert_eq!(index.len(), 2);
+        index.add(ChunkId(1), &unit([0.0, 0.0, 1.0, 0.0])).unwrap();
+        assert_eq!(index.len(), 2, "re-adding key 1 must replace it, not count twice");
+        index.remove(ChunkId(2)).unwrap();
+        assert_eq!(index.len(), 1, "a removed key is not counted");
+    }
+
+    #[test]
+    fn a_removed_key_stays_uncounted_after_save_and_reopen() {
+        // The live path: the index is saved, mapped read-only while idle, and loaded back for
+        // writing when a file changes. A tombstone that is not counted in memory but is counted
+        // after a round trip through the file is the off-by-one the reconcile saw.
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("vectors.usearch");
+        {
+            let index = VectorIndex::open(&path, 4).unwrap();
+            index.add(ChunkId(1), &unit([1.0, 0.0, 0.0, 0.0])).unwrap();
+            index.add(ChunkId(2), &unit([0.0, 1.0, 0.0, 0.0])).unwrap();
+            index.add(ChunkId(1), &unit([0.0, 0.0, 1.0, 0.0])).unwrap();
+            index.remove(ChunkId(2)).unwrap();
+            assert_eq!(index.len(), 1);
+            index.save().unwrap();
+        }
+        let reopened = VectorIndex::open(&path, 4).unwrap();
+        assert_eq!(reopened.len(), 1, "the file must not resurrect the removed key in the count");
+        reopened.add(ChunkId(3), &unit([0.0, 0.0, 0.0, 1.0])).unwrap();
+        assert_eq!(reopened.len(), 2, "and not after promotion to a writable index either");
     }
 
     #[test]

@@ -1,0 +1,264 @@
+{
+  "review_date": "2026-09-05",
+  "review_pass": "second (code-level, claims-verified)",
+  "commit": "8ae1ff8",
+  "parent_review": {
+    "file": "2026-09-05-review.md",
+    "commit": "bbef90d",
+    "note": "first pass established what exists and what it measures; this pass asks whether the evidence is true"
+  },
+  "machine": "owner workstation, RTX 5070 Ti (CUDA 13.3, driver 595.84), Ubuntu 26.04, niri/Wayland",
+  "method": "every number produced in-session on the owner's machine; nothing taken from a document without re-measuring",
+
+  "contradictions_found": [
+    {
+      "id": "C1",
+      "claim": "docs/03-PROGRESS.md 'Current position': '1054 Rust tests (2026-09-05)'; review 2026-09-05 evidence.json: rust passed 1054, failed 0",
+      "measured": "1052 passed, 2 failed (cargo test --workspace --no-fail-fast, run twice)",
+      "failing_tests": [
+        "cortex-sync::hygiene::the_public_repository_names_no_endpoint_no_private_path_and_no_credential",
+        "cortex-sync::hygiene::the_entire_history_names_no_secret_and_no_private_identifier"
+      ],
+      "cause": "false positive: scripts/pre-commit:93 endpoint pattern flags https://www.debian.org in packaging/deb/build.sh:56 (Debian copyright-format URL) as 'a host the Core must not know'; debian.org is absent from the exclusion list at scripts/pre-commit:94",
+      "severity": "gate-red-on-false-positive",
+      "pre_existing_at_bbef90d": true,
+      "verification": "git show bbef90d:packaging/deb/build.sh | grep -c debian.org  ->  1",
+      "risk": "scripts/pre-commit's own error text invites 'commit with --no-verify', which would disable the public-repo hygiene protection entirely",
+      "fix": "add debian\\.org to the exclusion at scripts/pre-commit:94, or invert the rule so a URL is an endpoint only when it appears in a peer=/endpoint= assignment"
+    },
+    {
+      "id": "C2",
+      "claim": "docs/03-PROGRESS.md: '60 vitest'; review 2026-09-05 evidence.json: vitest_ui passed 60, failed 0",
+      "measured": "npm test -> 28 failed, 28 passed (56 collected, 7 files); NODE_ENV=test npx vitest run -> 60 passed, 60 (7 files)",
+      "cause": "environmental: this shell exports NODE_ENV=production, so Vite resolves the React production build and React Testing Library's act() is stripped from it. Error text: 'act(...) is not supported in production builds of React.'",
+      "severity": "invocation-not-self-contained",
+      "code_fault": false,
+      "fix": "set process.env.NODE_ENV = 'test' in ui/vite.config.ts, or \"test\": \"NODE_ENV=test vitest run\" in ui/package.json",
+      "note": "ui/vite.config.ts:45 configures the vitest block and sets nothing; ui/package.json defines test as bare 'vitest run'"
+    },
+    {
+      "id": "C3",
+      "claim": "docs/01-BUILD-PROMPT.md:93 'These are CI gates'; CLAUDE.md rule 3 'Latency budgets are the specification ... are CI gates, not aspirations'",
+      "measured": "no .github/, no .gitlab-ci.yml, no pipeline configuration of any kind in the repository",
+      "severity": "structural",
+      "consequence": "cargo test, npm test, the Playwright suites and bench-latency run only when a human or agent remembers; this is the root cause of C1 remaining invisible across at least one commit",
+      "partial_mitigation": "crates/cortex-sync/tests/hygiene.rs:6 runs the pre-commit script from cargo test so the hygiene gate travels with the suite; this does not cover the latency budgets, which no test asserts",
+      "fix": "one workflow file: cargo test --workspace, cargo clippy -- -D warnings, cargo fmt --check, NODE_ENV=test npm test, Playwright, and a workflow_dispatch or self-hosted job for bench-latency on an idle machine"
+    }
+  ],
+
+  "tests": {
+    "rust": {
+      "command": "cargo test --workspace --no-fail-fast",
+      "passed": 1052,
+      "failed": 2,
+      "test_result_lines": 49,
+      "note": "1054 total executed; the project's own progress document warns that summing must count every 'test result:' line and not pipe through tail"
+    },
+    "vitest": {
+      "command_npm_test": {"passed": 28, "failed": 28, "files": "5 failed | 2 passed (7)"},
+      "command_node_env_test": {"passed": 60, "failed": 0, "files": "7 passed (7)"}
+    },
+    "playwright": {
+      "note": "not re-run in this pass; the 13 functional specs and perf.spec.ts run against harness.html (a fixture), see findings F12"
+    },
+    "test_attributes_in_source": 999,
+    "todos_fixmes_unimplemented": 0,
+    "unsafe_blocks_in_crates": 6,
+    "unsafe_locations": [
+      "crates/cortexd/src/lock.rs:90 (libc_flock)",
+      "crates/cortexd/src/extract_stage.rs:416 (libc::setpriority)",
+      "crates/cortex-agent/tests/red_team.rs:634 (libc_getuid)",
+      "crates/cortex-agent/src/places.rs:734 (c_statvfs)",
+      "crates/cortex-agent/src/trash.rs:356 (libc_getuid)",
+      "crates/cortex-agent/src/trash.rs:403 (unsafe fn libc_getuid)"
+    ]
+  },
+
+  "latency_gates_release_build": {
+    "command": "cargo run --release -q -p bench-latency -- --corpus bench/corpus/data/standard",
+    "corpus": {"paths": 100000, "chunks": 122137, "files_with_content": 99744},
+    "result": "all gates passed",
+    "gates_ms": {
+      "fuzzy_path_literal_tier_one": {"p50": 0.489, "p95": 1.19, "p99": 1.32, "budget": 10},
+      "keystroke_path_every_prefix": {"p50": 0.489, "p95": 4.35, "p99": 4.71, "budget": 10},
+      "abbreviation_full_scan": {"p50": 3.95, "p95": 4.29, "p99": 4.56, "budget": 25},
+      "bm25_top100": {"p50": 15.08, "p95": 23.20, "p99": 23.61, "budget": 30},
+      "bm25_top100_while_indexer_writes": {"p50": 17.82, "p95": 26.86, "p99": 29.10, "budget": 34.80, "write_batches": 322},
+      "vector_ann_top100": {"p50": 0.616, "p95": 0.832, "p99": 0.940, "budget": 40},
+      "rrf_fusion_salience": {"p50": 0.0103, "p95": 0.0153, "p99": 0.0645, "budget": 5},
+      "context_pack_2048_tokens_5000_memories": {"p50": 9.01, "p95": 9.65, "p99": 10.31, "budget": 120}
+    },
+    "reported_not_gated": {
+      "worst_case_stopword_query": {"p50": 82.03, "p95": 92.23, "matches_up_to_chunks": 120692},
+      "hybrid_search_both_arms_snippets": {"p50": 21.86, "p95": 27.23, "p99": 29.24, "keystroke_budget": 80, "gated": false,
+        "source": "bench/latency/src/main.rs:465 prints 'the M4 keystroke budget is 80 ms; not gated until then'"},
+      "context_pack_512_tokens": {"p50": 9.12, "p95": 9.79, "p99": 10.88},
+      "context_pack_8192_tokens": {"p50": 8.97, "p95": 9.61, "p99": 9.68},
+      "context_pack_without_diversification": {"p50": 7.91, "p95": 8.44},
+      "path_index_build_ms": 146.55,
+      "path_index_mib_for_100k_paths": 50.2,
+      "ann_index_build": {"vectors": 122137, "seconds": 105.8, "mib": 145.3}
+    },
+    "not_measured_at_all": [
+      {"what": "query embedding", "why": "printed 'set HIPPOCAMPUS_TEST_RUNTIME and HIPPOCAMPUS_TEST_MODEL'", "budget_affected": "none in table, but the vector arm's live path is unmeasured"},
+      {"what": "cross-encoder rerank", "why": "printed 'set HIPPOCAMPUS_TEST_RERANKER'; reranker not installed", "budget_affected": 150}
+    ],
+    "harness_quality": {
+      "warmup_before_sampling": true,
+      "true_percentiles": true,
+      "asserts_queries_match": ["main.rs:107-111", "main.rs:186", "main.rs:499-514"],
+      "exits_nonzero_on_failure": "main.rs:573-575"
+    },
+    "criticisms": [
+      "main.rs:287 derives the contention gate's budget from the same run's own P95 (b95 + b95/2); a regression in baseline BM25 raises the budget gating it, so that gate cannot fail on its own terms",
+      "the 80 ms keystroke->row budget is assembled from three separately measured parts (daemon, IPC, render) that nothing measures together end to end"
+    ]
+  },
+
+  "live_measurements": {
+    "daemon": {
+      "uptime": "1h 49m",
+      "schema": 8,
+      "indexed_files": 102916,
+      "indexed_directories": 5774,
+      "chunks": 158057,
+      "embeddings": 160996,
+      "episodes": 13518,
+      "paths_in_memory": 108690,
+      "path_index_mib": 69.2,
+      "watcher_directories": 5780,
+      "agents_enabled": true,
+      "outbox_pending": 0
+    },
+    "search_internal_elapsed_ms": {"report": 36, "rechnung": 28, "steuer 2025": 15, "png": 9},
+    "memory": {
+      "VmRSS_mib": 1682,
+      "RssAnon_mib": 1563,
+      "RssFile_mib": 108,
+      "RssShmem_mib": 10,
+      "budget_anon_mib": 250,
+      "previous_pass_RssAnon_mib": 1524,
+      "trend": "rising across the day - watch for a leak, not only a budget breach",
+      "attribution_top_mappings": [
+        {"mib": 1061, "name": "[anon]"},
+        {"mib": 487, "name": "[heap]"},
+        {"mib": 4, "name": "libcublasLt.so.13.6.0.2 (CUDA)"},
+        {"mib": 4, "name": "libcudnn_graph.so.9.25.0"},
+        {"mib": 2, "name": "libnvidia-gpucomp.so.595.84"},
+        {"mib": 1, "name": "libcuda.so.595.84"}
+      ],
+      "attribution_note": "dominated by the CUDA/ONNX runtime's host-side allocations, not the index; the reranker is not installed so rerank=true is inert"
+    },
+    "context_pack_live": {
+      "command": "cortex --as reviewer context 'committing a change' --json",
+      "pack_id": "pack-1788631281-reviewer-e1f36839",
+      "budget_tokens": 2048,
+      "used_tokens": 393,
+      "arms_observed": ["working_set"],
+      "basis_present": true,
+      "note": "fast and honest about provenance, but answers from an empty memory layer - every item is a working_set file because there are no memories to rank"
+    },
+    "agent_gating_live": {
+      "command": "cortex --as reviewer write /tmp/hc_probe.txt 'hello'",
+      "result": "Error: daemon returned an error: the write allow-list is empty, so no filesystem mutation is permitted (code 1002)",
+      "file_created": false,
+      "verified": "ls /tmp/hc_probe.txt -> No such file or directory"
+    },
+    "audit_log_live": "records reads as well as mutations; this session's agent.sessions and brain.memories calls appear with timestamps, actor 'human' and parameters"
+  },
+
+  "agent_surface": {
+    "mcp_tools": 29,
+    "source": "crates/cortex-mcp/src/tools.rs, TOOLS table, hand-maintained",
+    "rpc_methods": 65,
+    "rpc_source": "crates/cortex-rpc/src, enumerated by grep",
+    "parity_test": "crates/cortexd/tests/three_surfaces.rs - boots a real daemon; compares socket vs CLI vs MCP for stat, listing, places, open-with and a gated tool (line 360)",
+    "parity_gap": "no test walks the RPC registry and asserts each mutating method is either in TOOLS or deliberately excluded; three_surfaces.rs:287 checks a fixed list of required names, guarding against deletion not drift",
+    "red_team_tests": {
+      "file": "crates/cortex-agent/tests/red_team.rs",
+      "loc": 766,
+      "approx_tests": 45,
+      "coverage": ["refusal outside allow-list", "missing plan id", "made-up plan id", "surface off", "plan replay", "plan for one file spent on another", "plan staleness when target changes", "symlink out of allow-list", "empty allowlist makes fs read-only", "deny-list not lifted by allow-list", "listing hides denied entries", "every refusal audited"]
+    },
+    "brain_usage": {"memories": 0, "agent_sessions_ever": 0, "unchanged_from_first_pass": true}
+  },
+
+  "human_surface": {
+    "virtualisation": {"file": "ui/src/components/ResultList.tsx:65", "hook": "ui/src/hooks/useVirtual.ts", "hook_unit_tests": 12},
+    "one_row_shape": {"file": "ui/src/row.ts", "note": "single mapper, no per-source branching; comment records that two mappers used to disagree"},
+    "preview_security_split": {"file": "ui/src/components/PreviewPane.tsx:1-16", "text_via": "fs.read (deny-list + audit apply)", "pixels_via": "cortex-preview (separate killable process, D14)"},
+    "preview_limits": {"text_bytes": 32768, "preview_pixels": 512, "textual_extensions": 33, "pictorial_extensions": 16},
+    "keyboard": ["Enter", "ArrowUp/Down/Right", "Home", "End", "PageUp/PageDown", "Escape", "Ctrl+K palette", "Ctrl+D density", "Ctrl+C/X/V", "Ctrl+Z undo", "Ctrl+N", "Ctrl+Shift+N", "Ctrl+E extract/eject", "Ctrl+Shift+A inspector"],
+    "sorting": ["name", "size", "modified", "salience"],
+    "missing": {
+      "multi_column_or_details_view": true,
+      "grouping": true,
+      "side_by_side_compare": true,
+      "quick_look_spacebar": true,
+      "full_screen_preview_zoom": true,
+      "disambiguation_test": true,
+      "grep_evidence": "grep -rniE 'content\\(1\\)|disambigu|same.name|duplicate' over ui/tests/ and ui/src/ returns nothing; brain.diff exists on the agent surface with nothing in the window calling it"
+    },
+    "browser_tests_run_against": "ui/src/test/harness.tsx (a fixture, not a daemon)",
+    "browser_test_note": "correct and honestly documented (harness.tsx:2, perf.spec.ts:11-14); but 159 passing browser tests prove the UI against a fixture that behaves the way the authors believe the daemon behaves - nothing in the Playwright suite would notice a disagreement"
+  },
+
+  "findings_ranked": [
+    {"rank": 1, "id": "F1", "what": "no CI", "cost": "root cause of F2 being invisible; every 'done' is an act of memory", "fix_size": "one workflow file"},
+    {"rank": 2, "id": "F2", "what": "hygiene gate red on a false positive (debian.org)", "cost": "two failing tests at a commit recorded as clean; gate's own error text invites --no-verify", "fix_size": "one line"},
+    {"rank": 3, "id": "F3", "what": "the brain has never been used (0 memories, 0 sessions)", "cost": "M11 §12 is the criterion that decides whether the most novel half earns its budget", "fix_size": "needs the owner"},
+    {"rank": 4, "id": "F4", "what": "npm test red as written (NODE_ENV)", "cost": "costs the next contributor an afternoon of doubt", "fix_size": "one line"},
+    {"rank": 5, "id": "F5", "what": "daemon anonymous memory 6x budget and rising (1563 MiB)", "cost": "a false claim in the specification, in the configuration actually run", "fix_size": "measurement + a decision"},
+    {"rank": 6, "id": "F6", "what": "no disambiguation test, no side-by-side compare", "cost": "the owner's own example is not a gate", "fix_size": "ten minutes"},
+    {"rank": 7, "id": "F7", "what": "benchmark corpus inside the live index (293344 files)", "cost": "pollutes every live judgement and the working-set arm of every context pack", "fix_size": "one config line + reconcile"},
+    {"rank": 8, "id": "F8", "what": "query embedding and 150 ms rerank budgets never measured", "cost": "two arms of the live path are unguarded", "fix_size": "install the reranker / set the env vars"},
+    {"rank": 9, "id": "F9", "what": "contention gate's budget derived from its own measurement", "cost": "that gate cannot fail on its own terms", "fix_size": "relabel or fix the budget"},
+    {"rank": 10, "id": "F10", "what": "MCP tool table drift ungated", "cost": "a new brain tool can be invisible to agents while working from the CLI", "fix_size": "thirty lines of test"},
+    {"rank": 11, "id": "F11", "what": "no multi-column view, no grouping, neither recorded as a decision", "cost": "'see everything at a glance' answered by a one-line list", "fix_size": "design decision"},
+    {"rank": 12, "id": "F12", "what": "159 browser tests run against a fixture", "cost": "the count does not attest daemon integration", "fix_size": "documentation of scope, or daemon-backed smoke tests"}
+  ],
+
+  "carried_over_from_first_pass_still_open": [
+    "drag a row out of the window into another application",
+    "clipboard survives the window hiding",
+    "one week of exclusive daily use (M6 §3)",
+    "Agent Inspector CPU while streaming (M11 §10)",
+    "Agent Inspector layout (owner: 'im Allgemeinen nicht übersichtlich', deferred)",
+    "second person installs from the .deb, timed (M9 §1)",
+    "license file (D13)",
+    "3D view under WebKitGTK software GL - does the picture appear",
+    "the Extension's bridge to a real second brain (a sync plugin)"
+  ],
+
+  "scale": {
+    "rust_loc_14_crates": 68000,
+    "rust_source_files": 166,
+    "test_attributes": 999,
+    "ui_src_ts_loc": 8991,
+    "ui_src_files": 36,
+    "ui_src_tauri_loc": 2864,
+    "ui_agent_src_loc": 2088,
+    "playwright_spec_files": 13,
+    "vitest_files": 7,
+    "vitest_tests": 60,
+    "todos_fixmes_unimplemented": 0,
+    "unsafe_blocks": 6,
+    "largest_files": [
+      {"path": "ui/src/App.tsx", "lines": 1140},
+      {"path": "ui/src/components/AgentInspector.tsx", "lines": 1103},
+      {"path": "crates/cortex-store", "loc": 11590}
+    ],
+    "commits_since_2026_08_17": "112+"
+  },
+
+  "verdicts": {
+    "human_find_fast": "met with a gap - the owner's own disambiguation example has no test and no compare view",
+    "human_overview": "met with a gap - one-line list only; no column view, no grouping",
+    "human_verify_by_preview": "met with a gap - preview is correct and security-split, but capped at 512 px with no quick look",
+    "agent_brain": "built, gating proven live, reconstructability tested; never used in earnest (0 memories, 0 sessions)",
+    "performance_latency": "met on every gate that is run; two budgets never measured; one gate's budget self-derived",
+    "performance_memory": "not met - 1563 MiB anonymous against a 250 MiB budget, rising",
+    "ci_and_gates": "not met - no pipeline exists; this is the root cause of the hygiene gate being red unnoticed"
+  }
+}

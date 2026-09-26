@@ -148,6 +148,35 @@ impl Store {
         self.batch(|b| b.upsert_embeddings(model, rows, now))
     }
 
+    /// Chunks that were deleted and whose vectors may still be in the ANN index, each with
+    /// whether a **live** chunk now carries the same id.
+    ///
+    /// The flag exists because SQLite hands a deleted row id straight back to the next insert,
+    /// so the id noted here can already belong to the replacement chunk — whose vector is the
+    /// right one and must stay. The first version of the stage's cleanup removed it, and the
+    /// test that re-extracts a file caught it on the first run.
+    pub fn dead_chunks(&self, limit: usize) -> Result<Vec<(ChunkId, bool)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT d.chunk_id, c.id IS NOT NULL
+             FROM dead_chunks d LEFT JOIN chunks c ON c.id = d.chunk_id
+             LIMIT ?1",
+        )?;
+        let ids = stmt
+            .query_map([limit as i64], |r| Ok((ChunkId(r.get(0)?), r.get::<_, bool>(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(ids)
+    }
+
+    /// The vectors for these are gone from the index; forget the note.
+    pub fn forget_dead_chunks(&self, chunks: &[ChunkId]) -> Result<()> {
+        let conn = self.conn();
+        for chunk in chunks {
+            conn.execute("DELETE FROM dead_chunks WHERE chunk_id = ?1", [chunk.0])?;
+        }
+        Ok(())
+    }
+
     pub fn embedding_count(&self, model: ModelRef<'_>) -> Result<i64> {
         let conn = self.conn();
         Ok(conn.query_row(

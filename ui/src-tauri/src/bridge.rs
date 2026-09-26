@@ -126,11 +126,40 @@ impl Bridge {
             }
         });
 
-        Ok(Self {
+        let bridge = Self {
             writer: Arc::new(tokio::sync::Mutex::new(writer)),
             pending,
             next_id: Arc::new(AtomicU64::new(1)),
-        })
+        };
+
+        // The window is the human's face, so it says so (D117). Without this line every write the
+        // window makes arrives as an un-identified connection — `Actor::Unknown`, authority
+        // `observation` — and the Inspector's confirmations, the one place a person can raise a
+        // memory's authority by hand, would be exactly as powerful as a stranger's word.
+        //
+        // Written rather than awaited, for two reasons: it must be on the wire before the window's
+        // first real call (the daemon dispatches in arrival order), and a build whose daemon never
+        // answers an identify must not hang the window on startup.
+        {
+            let request = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 0,
+                "method": cortex_rpc::method::IDENTIFY,
+                "params": { "actor": "human", "session": null },
+            });
+            let mut line =
+                serde_json::to_vec(&request).map_err(|e| BridgeError::Decode(e.to_string()))?;
+            line.push(b'\n');
+            bridge
+                .writer
+                .lock()
+                .await
+                .write_all(&line)
+                .await
+                .map_err(|_| BridgeError::Disconnected)?;
+        }
+
+        Ok(bridge)
     }
 
     /// How long a call may take before it is worth a line in the journal.
@@ -241,7 +270,13 @@ mod tests {
     /// A daemon that answers on its own schedule, so the tests can pin down the two properties
     /// that matter: calls do not have to come back in order, and an unsolicited message reaches
     /// the notification callback rather than a waiting caller.
-    async fn fake_daemon(path: std::path::PathBuf, behaviour: &'static str) {
+    ///
+    /// It returns every request it read, in the order it read them. A test that wants to say what
+    /// the window put on the wire — and in which order — otherwise has nothing to look at: the
+    /// bridge's own answer only says what came back.
+    async fn fake_daemon(path: std::path::PathBuf, behaviour: &'static str) -> Arc<Mutex<Vec<Value>>> {
+        let heard: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+        let recorder = heard.clone();
         let listener = UnixListener::bind(&path).unwrap();
         tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
@@ -254,8 +289,16 @@ mod tests {
                 line.clear();
                 let id = request["id"].clone();
                 let method = request["method"].as_str().unwrap_or("").to_string();
+                recorder
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .push(request);
 
-                if behaviour == "notify" {
+                // Only for a call. The `identify` the window sends while connecting is a request
+                // like any other, and a daemon that answered it with a `search.update` would be
+                // announcing a search nobody made — which is what this fake did until D117 put a
+                // second request on the wire, and the notification test then counted two.
+                if behaviour == "notify" && method != cortex_rpc::method::IDENTIFY {
                     let note = serde_json::json!({
                         "jsonrpc": "2.0", "method": "search.update",
                         "params": { "for": method }
@@ -263,6 +306,13 @@ mod tests {
                     let _ = writer
                         .write_all(format!("{note}\n").as_bytes())
                         .await;
+                }
+
+                // A daemon that never answers the handshake. The window writes its identify and
+                // does not wait for an answer — a build whose daemon is older than this line, or
+                // simply busy, must still open.
+                if method == cortex_rpc::method::IDENTIFY && behaviour == "deaf-to-identify" {
+                    continue;
                 }
 
                 if behaviour == "error" {
@@ -288,6 +338,8 @@ mod tests {
                 writer = writer_clone;
             }
         });
+
+        heard
     }
 
     #[tokio::test]
@@ -335,8 +387,56 @@ mod tests {
         assert_eq!(result["method"], "search", "the notification was returned as the answer");
 
         // The notification is written before the response, so by the time the call returns it
-        // has already been dispatched.
+        // has already been dispatched. One, and not two: the window's own identify is a request
+        // on the same connection and must not arrive as a notification.
         assert_eq!(seen.lock().unwrap().as_slice(), ["search.update"]);
+    }
+
+    /// D117: the window is the human's face, and it says so on the wire — before its first call.
+    ///
+    /// Nothing else can make this true. The daemon derives a write's `origin` from the connection's
+    /// actor (§M12 step 1, criterion 1), so a window that stayed anonymous would write everything
+    /// as `Actor::Unknown` and the Inspector's confirmations — the one place a person raises a
+    /// memory's authority by hand — would be worth exactly as much as a stranger's word.
+    #[tokio::test]
+    async fn the_window_says_who_it_is_before_it_asks_anything() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("cortex.sock");
+        let heard = fake_daemon(socket.clone(), "ordered").await;
+
+        let bridge = Bridge::connect(&socket, |_, _| {}).await.unwrap();
+        bridge.call("search", serde_json::json!({})).await.unwrap();
+
+        let heard = heard.lock().unwrap_or_else(|p| p.into_inner());
+        assert_eq!(heard.len(), 2, "the identify and the call: {heard:?}");
+        assert_eq!(heard[0]["method"], cortex_rpc::method::IDENTIFY);
+        assert_eq!(heard[1]["method"], "search", "the identify goes first");
+        assert_eq!(
+            heard[0]["params"]["actor"], "human",
+            "the window speaks for the person in front of it"
+        );
+    }
+
+    /// The identify is written and not awaited, so a daemon that never answers the handshake
+    /// cannot keep the window from opening. Written as a test because the comment in `connect`
+    /// says it and nothing else would notice if it stopped being true: an `await` on that answer
+    /// would hang every start against a daemon older than the line.
+    #[tokio::test]
+    async fn a_daemon_that_never_answers_the_handshake_does_not_hold_up_the_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("cortex.sock");
+        fake_daemon(socket.clone(), "deaf-to-identify").await;
+
+        let bridge = Bridge::connect(&socket, |_, _| {}).await.unwrap();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            bridge.call("search", serde_json::json!({})),
+        )
+        .await
+        .expect("the call must not wait for the identify's answer")
+        .unwrap();
+
+        assert_eq!(result["method"], "search");
     }
 
     #[tokio::test]

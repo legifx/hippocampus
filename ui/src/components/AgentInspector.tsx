@@ -26,6 +26,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { GlassInput, GlassSegmented } from "./glass";
 import {
   ipc,
   type AgentStatusResult,
@@ -295,7 +296,7 @@ export function AgentInspector({ open, onClose, tab, onTab, visible }: AgentInsp
   return (
     <section
       ref={panel}
-      className="hc-inspector"
+      className="hc-inspector glass"
       role="dialog"
       aria-label="Agenten-Inspektor"
       onKeyDown={(event) => {
@@ -312,44 +313,21 @@ export function AgentInspector({ open, onClose, tab, onTab, visible }: AgentInsp
           * everywhere else and therefore what somebody will try. Left and right rather than up
           * and down, because the strip is horizontal and the wrong axis is worse than none.
           */}
-        <nav
+        {/*
+          * The kit's segmented control, which is a tablist already: the role, the roving tab order,
+          * the arrow keys and the sliding raised thumb all arrive with it. This strip had written
+          * the first three out by hand — the same behaviour, maintained twice. `hc-tabs` stays on
+          * the track, because the layout rules that put the strip in the header are still this
+          * window's.
+          */}
+        <GlassSegmented
           className="hc-tabs"
-          role="tablist"
-          onKeyDown={(event) => {
-            const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
-            if (step === 0) return;
-            event.preventDefault();
-            let index = 0;
-            for (let i = 0; i < TABS.length; i += 1) {
-              if (TABS[i]!.id === tab) index = i;
-            }
-            const next = TABS[(index + step + TABS.length) % TABS.length]!;
-            onTab(next.id);
-            // The focus follows the selection, or the next arrow key comes from the old tab and
-            // moves two.
-            const strip = event.currentTarget;
-            requestAnimationFrame(() => {
-              strip.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus();
-            });
-          }}
-        >
-          {TABS.map((entry) => (
-            <button
-              key={entry.id}
-              type="button"
-              role="tab"
-              aria-selected={entry.id === tab}
-              // Only the selected tab is in the tab order, which is what a tablist does: Tab
-              // moves *past* the strip to the panel, and the arrows move within it.
-              tabIndex={entry.id === tab ? 0 : -1}
-              className={entry.id === tab ? "hc-tab hc-tab-on" : "hc-tab"}
-              title={entry.hint}
-              onClick={() => onTab(entry.id)}
-            >
-              {entry.label}
-            </button>
-          ))}
-        </nav>
+          aria-label="Bereiche"
+          size="sm"
+          options={TABS.map((entry) => ({ value: entry.id, label: entry.label, title: entry.hint }))}
+          value={tab}
+          onChange={(next) => onTab(next)}
+        />
         <span className="hc-meta">
           {status && (
             <button
@@ -538,8 +516,10 @@ function MemoryTab({
         <label className="hc-meta" htmlFor="hc-compose-text">
           {correcting ? "Korrigierte Fassung" : "Selbst etwas merken"}
         </label>
-        <input
+        <GlassInput
           id="hc-compose-text"
+          size="sm"
+          containerClassName="hc-compose-field"
           className="hc-name-input"
           value={draft}
           onChange={(event) => setDraft(event.target.value)}

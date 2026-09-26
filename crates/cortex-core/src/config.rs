@@ -57,7 +57,11 @@ pub struct IndexConfig {
     /// index that silently drifts is worse than no index.
     pub reconcile_interval_secs: u64,
 
-    /// Respect `.gitignore` inside git repositories, in addition to `.brainignore`.
+    /// Reserved: respect `.gitignore` inside git repositories. **Not honoured yet** — no walk
+    /// reads a `.gitignore`, and the key is kept so that a config which sets it keeps loading.
+    /// What *is* honoured everywhere is the `.brainignore` marker: a directory containing a file
+    /// of that name is skipped with its whole subtree by the first index, the reconcile scan and
+    /// the watcher alike (`denylist::marked_ignored`).
     pub respect_gitignore: bool,
 
     /// Maximum directories watched at once.
@@ -179,6 +183,19 @@ pub struct EmbeddingConfig {
     /// Use this ONNX Runtime library instead of the one in the state directory. For a system
     /// installation, or for a build of the runtime with different providers.
     pub runtime_path: Option<PathBuf>,
+
+    /// Put the model down after this many seconds without anything to embed. Zero keeps it
+    /// resident for the life of the daemon.
+    ///
+    /// Why it exists: with the CUDA runtime loaded the daemon held **1.5 GB of anonymous
+    /// memory** against a 250 MB budget, and it was the runtime's host-side pools rather than
+    /// the index — measured three times on 2026-09-05, growing through the day (D103). The
+    /// index is file-backed and stays; what is released is the inference session. A query that
+    /// arrives while the model is down does not wait for it: the semantic arm is skipped for
+    /// that one call and the model is brought back in the background for the next, so the
+    /// price of the release is one keystroke answered by two arms instead of three, never a
+    /// stall. The embedding stage reloads it before any batch, blocking only itself.
+    pub unload_after_idle_secs: u64,
 }
 
 impl Default for EmbeddingConfig {
@@ -191,6 +208,7 @@ impl Default for EmbeddingConfig {
             batch_size: 16,
             gpu_memory_mb: 1024,
             runtime_path: None,
+            unload_after_idle_secs: 600,
         }
     }
 }

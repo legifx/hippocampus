@@ -3042,3 +3042,563 @@ The design had one such test (a deletion survives a rebuild). The chain makes ta
 log itself detectable, which the poisoning threat model assumes and R8 did not provide.
 
 **Revisit if:** never for the suite. The chain, if it ever costs more than 1 % of write latency.
+
+### D103 — The embedding model is put down after idling; the memory budget names its configuration
+
+**Status:** ACCEPTED · 2026-09-06 · M2 / M11 — answers the one exceeded budget in the three reviews of 2026-09-05
+
+`embedding.unload_after_idle_secs` (default 600). When nothing has been embedded and no query
+has asked for an embedding for that long, the daemon drops the ONNX session and keeps the index —
+the index is file-backed and was never the problem. A query that arrives while the model is down
+is answered by two arms instead of three, exactly as on a machine that never fetched a model, and
+the reload starts in the background so the next keystroke has the arm back. The embedding stage
+reloads before any batch, blocking only itself. `cortex model` says "released after idling,
+reloads on demand" while it is down. The budget row in `01-BUILD-PROMPT.md` now says what it
+measures: 250 MB anonymous *with the model released or absent*.
+
+**Why.** Three measurements on one day, all on the reference machine with the CUDA runtime
+loaded: `RssAnon` 1 524 → 1 563 → 1 646 MiB against a budget of 250, and the attribution by
+mapping was 1.0–1.1 GB `[anon]` from the runtime's host-side pools plus about 500 MB of heap.
+The budget was met at 182 MiB with 100 000 files and no model (D27) and had never been measured
+with one resident. A budget that is silently untrue in the configuration actually run is a false
+claim in the specification, and the build prompt says a budget that is not measured is not a
+budget. Two honest fixes, both taken: say which configuration the number is for, and give the
+daemon a way to be inside it most of the time.
+
+Why not make the query wait for the reload: measured on the reference machine, `cortex model
+reload` takes **1.58 s** wall clock with CUDA. A keystroke that waited for it would be the lag
+the whole project is specified against; two arms for one keystroke is not.
+
+Why not release on a timer regardless of use: a query embedding *is* use. The idle clock is
+touched by every embed call, so a person searching keeps the model warm and a daemon nobody is
+asking anything of puts it down.
+
+**Revisit if:** the measured `RssAnon` with the model released is still above 250 MiB — then the
+heap, not the runtime, is the owner, and this decision has not addressed it. Measure with the
+commands in `review/2026-09-05-code-review.md` §7 after ten idle minutes. Or if the two-arm
+keystroke after an idle period is noticed as a quality drop — then lengthen the default rather
+than block.
+
+### D104 — A derived budget is derived from the specification, and every budget the spec names is gated
+
+**Status:** ACCEPTED · 2026-09-06 · M2 — bench-latency
+
+Two changes to `bench/latency`. The contention gate ("BM25 while the indexer writes") is now
+gated at a fixed 45 ms — 1.5 × the specified BM25 budget — and prints its ratio to the same run's
+undisturbed P95 as information. And the query-embedding and rerank measurements look in the
+daemon's own model store when the two environment variables are unset, so on any machine that
+runs the daemon with a model they produce a number; query embedding is gated at 40 ms on the CPU.
+
+**Why.** The contention budget used to be `b95 + b95 / 2` where `b95` was measured thirty
+seconds earlier in the same process. That made it a relative check in a table of absolute
+budgets: a regression in baseline BM25 raised the budget that gated it, and the gate could not
+fail on its own terms. The relative figure is still worth having — it says whether contention or
+the corpus moved — so it is printed, not gated.
+
+The two "not measured" lines had been printed on the reference machine for months while the
+semantic arm was live in production with 160 996 embeddings. Not red, unrun, and the distinction
+was invisible in any summary. The bench now finds the model the same way the daemon does; the
+CPU on purpose, because the gate is about what a machine without a GPU pays.
+
+**Revisit if:** a machine of the reference class fails the 40 ms query-embedding gate with eight
+threads — the number was chosen as half the keystroke budget, not measured against a range of
+CPUs.
+
+### D105 — Two files side by side, Quick Look, and column headers; grouping and other views deferred, on purpose
+
+**Status:** ACCEPTED · 2026-09-06 · M4 / M6 — the human surface, after the reviews of 2026-09-05
+
+Built: **(1)** selecting exactly two rows turns the preview slot into a comparison — both names,
+directory / size in bytes / date / permissions / owner / tier / link target in the same order on
+both sides, the facts that differ marked, both previews underneath (`ComparePane`). **(2)** Quick
+Look — Space with an empty search field, Ctrl+Space always — shows the cursor's file over the
+whole window at the screen's pixel count up to the thumbnailer's 2048 px cap, with two zoom states
+(fit, 1:1) and nothing else (`QuickLook`). **(3)** Column headers over a directory listing that
+name the columns and show and change the order (`ListHeader`); not over a search, which is ordered
+by relevance. **(4)** `disambiguation.spec.ts`, the owner's own example as a gate.
+
+Deferred, and written down so that a future session can tell "cut" from "never thought of":
+**grouping** (by type, date bucket, zone or concept), **Miller columns**, and a **grid view** for
+media. The owner's stated priority is stability before appearance; each of these is a new view
+with its own keyboard model and its own virtualiser, and none of them answers the question the
+reviews found unanswered, which was disambiguation. The daemon already knows zones, tiers and
+concepts, so grouping when it comes is a `view.open` option and a row-shape question, not a
+frontend one (D4, D85).
+
+**Why.** Three reviews agreed that every piece needed to tell `content.png` from
+`content(1).png` existed and nothing put the pieces together or tested them. Reading two
+directory strings and holding one in mind while looking at the other is what the compare view
+replaces. And the pane's 512 px is a first impression: "is there a typo in this screenshot" needs
+the screen. The compare view computes nothing — `brain.diff` is an episode feed, not a file diff,
+as the third review corrected — because seeing both was the ask.
+
+One thing the test found on its first run: the row rounds, and 1.20 MB against 1.18 MB read
+"1.2 MB" on both rows, as two files from the same year both read "3 y". The row alone was never
+going to be enough for close cases, which is why the compare view prints the byte count and the
+full date.
+
+**Revisit if:** the owner asks for any of the three deferred views — then in this order: grouping
+(cheapest, daemon-side), grid, Miller.
+
+### D106 — Gates are run by a machine, and every gate names its exceptions
+
+**Status:** ACCEPTED · 2026-09-06 · M9 — after the second review of 2026-09-05 found the suite red and nothing running it
+
+Five things, one idea. **(1)** `.github/workflows/ci.yml`: `cargo fmt --check`, `cargo clippy`,
+`cargo test --workspace` (counted by summing every `test result:` line), `npm test`, the
+Playwright suite on every push; `bench-latency` on demand only, because a latency number from a
+shared runner under unknown load is not a number. **(2)** The hygiene gate's allow-list gained the
+documentation hosts it was missing (`debian.org` first — the copyright-format URL in the Debian
+packaging had made the Rust suite red for a day at a commit the progress file recorded as green),
+and its error text no longer suggests `--no-verify`. **(3)** `NODE_ENV=test` is pinned in
+`vite.config.ts` and `package.json`, so the unit suite is green whatever the shell exports.
+**(4)** `NOT_A_TOOL` in `cortex-mcp`: every RPC method is either an MCP tool or on that list with
+a reason, asserted by a test — so a brain tool added to the daemon cannot be silently invisible to
+agents. **(5)** `.brainignore`: a marker file that keeps a directory and its subtree out of the
+first walk, the reconcile and the watcher alike; the corpus generator writes it, and the live
+index stops being 74 % synthetic at the next reconcile.
+
+**Why.** The first review of the date recorded 1054/0 by reading the progress file; the second
+re-ran the suite and found 1052/2, at the same commit. Nothing had run the suite in between,
+because nothing runs it. A gate nobody runs is a comment, and the project's own progress document
+warns about exactly this in the paragraph it keeps "because it cost a session". Each of the five
+is small; together they are the difference between "done" as a machine-checked fact and "done" as
+a session's memory.
+
+The hygiene rule stays deny-by-default over an allow-list rather than being inverted to look only
+at `peer =` assignments: the guarantee is "no unknown host anywhere in the public repository",
+including comments and test strings, and the price of a new documentation host is one line.
+
+**Revisit if:** the allow-list grows past what a person can read in one look — then group it, do
+not weaken it. Or if the seventeen dead-code warnings are cleared — then make clippy fatal.
+
+### D107 — A deleted chunk takes its vector with it
+
+**Status:** ACCEPTED · 2026-09-06 · M2 — found while deploying D103
+
+The extraction stage notes every chunk id it deletes in `dead_chunks` (migration 0009); the
+embedding stage removes those vectors from the ANN index on its next idle pass and clears the
+note, skipping any id a live chunk has since taken over. The index-versus-table count that
+triggers a full rebuild is then off only when something is genuinely missing.
+
+**Why.** The first run of the new daemon showed the embedding stage rebuilding the whole vector
+index every five minutes: `expected=49257 present=49258`, twelve seconds each time, for ever.
+The table was right and the index held one orphan — the vector of a chunk deleted when a file
+was re-extracted, which nothing ever removed. Every edit since the last rebuild was one more
+orphan, and a rebuild was the only path that caught up. On a machine where somebody is working,
+that is a rebuild per idle pass. The bookkeeping table is the handle the deleting side lacked:
+it runs in another thread and has no reference to the index.
+
+Two details the tests forced. SQLite hands a deleted row id straight back to the next insert,
+so a noted id can already belong to the replacement chunk, whose vector is the right one and
+must stay — the first version removed it. And a removal of a key the index does not hold is
+not an error, because after a rebuild the note is stale by design.
+
+Also fixed in the same deployment: the idle release of D103 was called from the branch the
+stage takes once, when the queue first empties, and never from the settled short-circuit every
+later pass takes — so nothing was ever released. Found because the journal stayed silent for
+twenty idle minutes.
+
+**Revisit if:** `dead_chunks` ever grows without bound — that would mean the embedding stage is
+not reaching its idle branch, which is a different bug.
+
+### D108 — The start screen reads one call, and the daemon writes the sentence
+
+**Status:** ACCEPTED · 2026-09-14 · asked for by the owner: "a statistical start display that also
+summarises the behaviour of the agents"
+
+One method, `stats.overview`, returns everything the start screen shows: what is in the index, what
+the memory holds, how the agents have been using it, the last consolidation pass, and the daemon's
+own state — plus a `headline` and a `basis` sentence that the daemon writes. The window prints all
+of it. It does not add numbers up and it does not phrase anything (D4). The screen reads once when
+it comes up, re-reads every sixty seconds, and only while the window is visible (D59), because these
+are real `count(*)` scans over the whole database.
+
+**Why.** The alternative was six methods and a window that assembled the picture, which puts the
+arithmetic in the one place that cannot be checked against the database. `cortex overview` prints the
+same numbers in the same order from the same call, so a number that looks wrong can be checked from
+a terminal without opening a window. The two sentences belong to the daemon for the same reason: a
+sentence about a database is a claim about the database, and the place that counted is the place
+that may claim it. The store counts what it can see; only the process knows uptime and whether the
+agent surface is open, so `DaemonFacts` is filled in by `cortexd` rather than by the store.
+
+**Revisit if:** the screen grows something that needs a series rather than a snapshot — a sparkline
+of the last hour is a second method with its own window and its own test, not more fields on this
+one.
+
+### D109 — The window has two screens, and the places list stays where it is
+
+**Status:** ACCEPTED · 2026-09-14 · the interface session the owner asked for
+
+The window opens on the start screen. A rail beside it names two destinations — *Übersicht* and
+*Dateien* — and the Agent Inspector as a panel. The places list is not a third destination: it is
+the path `places:` the browser already had, and it is still reached the way it always was. Typing in
+the field leaves the start screen for the list on the first character, because a query is answered
+in the list (M6).
+
+**Why.** A rail item for the places list would give the window two navigation models — a path inside
+the browser and a destination beside it — and the thing a person cannot discover by looking (a
+sentinel path) was one of the reasons the rail exists. The rail says where you are and what else
+there is. Where you are is still `browse.state.path`, and there is one of those. A rail that
+answered "where am I" from a second piece of state would eventually answer it wrongly.
+
+**Revisit if:** the places list gains something that is genuinely not a path — a mount dialog, a
+list of devices outside the index. Then it is a screen, and this decision is wrong.
+
+---
+
+### D110 — The interface borrows its materials from a showcase, and writes each one down once
+
+**Status:** ACCEPTED · 2026-09-14 · the interface session, after the owner pointed at the showcase
+
+`ui/inspo/minimalist-glassmorphism-file-explorer` ships a design kit: a `glass/` folder of
+primitives, a `styles/glass.css` of material recipes, and a page that lists them as code to use
+rather than as a look to copy. This window takes the kit's *vocabulary* — the material names
+(`glass`, `glass-flat`, `raised`, `raised-bezel`, `well`, `solid`, `glass-sheen`,
+`glass-specular`), the control names (`GlassButton`, `GlassSegmented`, `GlassToggle`,
+`GlassCheckbox`, `GlassPanel`, `GlassCard`, `GlassInput`, `GlassSearch`, `Kbd`, `CountBadge`,
+`StatusDot`, the specular hook), and the recipes themselves — and writes each recipe down once, in
+`ui/src/glass.css` and `ui/src/kit.css`, on this project's tokens.
+
+**Why.** The window had already arrived at the same look by hand, one element at a time: the card
+fill, the rims, the hairline, the sheen pseudo-element, the segmented track, the pressed inset,
+the pill. That is six copies of four recipes, each free to drift, and the drift is invisible until
+somebody compares two surfaces side by side. A kit with a single body per material is the same
+look with one source. The owner's words were that the showcase is there to be built *with*; the
+cost of not doing so was already visible in the diff.
+
+**Revisit if:** the kit's classes start being overridden by surface-specific rules often enough
+that the body stops being the truth. Then the material needs a parameter, not another copy.
+
+---
+
+### D111 — The kit is ported, not imported, and the three places it was extended are named
+
+**Status:** ACCEPTED · 2026-09-14 · same session
+
+The showcase is React + Tailwind v4 + `lucide-react` + `clsx`. This window is React on plain CSS
+with exactly three runtime dependencies (`ui/src/test/architecture.test.ts`), so the kit is
+*ported*: its Tailwind utility strings become class bodies in `src/kit.css`, its lucide icons
+become the four SVGs in `src/components/glass/icons.tsx`, and its `cn` becomes a local join that
+does not use the collection operations D4's guard forbids anywhere in `src/`.
+
+Three things the port does that the kit does not, each for a reason a test now holds:
+
+- **The segmented control answers the arrow keys and keeps one tab stop per strip.** A
+  `role="tablist"` without that is the ARIA pattern with its most useful half missing, and this
+  window's tab strip already had it before the kit arrived.
+- **The search field takes an `onClear`.** The kit's clear button only empties the field; the
+  person who pressed it was mid-query, so this window wants the caret back.
+- **`.gb-block`** — one full-width, left-aligned row button, because a panel here can end in a
+  single way out and the kit has no such control.
+
+**Why.** A port that silently "improves" a kit is how a kit stops being a kit; a port that
+silently *drops* behaviour the window already had is how a refactor makes the product worse. Both
+are avoidable by writing the differences down where the next person will look.
+
+**Revisit if:** the kit is ever vendored as a package. Then these three are its first three issues.
+
+---
+
+### D112 — A material token is listed, not spelled out: the shadow that was invalid on every surface
+
+**Status:** ACCEPTED · 2026-09-15 · the explorer's kit pass
+
+`getComputedStyle` on an element carrying a material class came back with `box-shadow: none` — on
+`.glass`, `.glass-flat`, `.raised`, `.raised-flat`, `.raised-bezel`, `.well`, `.solid` and
+`.hc-pill`, that is every material this window has. One class was fine, `.hc-tile`, and that one
+was the clue: its rule lists the tokens as whole items.
+
+The tokens in `src/tokens.css` carry their own geometry — `--hc-glass-rim` *is*
+`inset 0 1px 0 rgba(255, 255, 255, …)`, not the colour for one — while the recipes ported from the
+kit write the kit's prefix in front of them, because the kit's tokens are bare colours:
+
+```css
+/* kit */      inset 0 1px 0 0 var(--glass-rim)      /* --glass-rim: rgba(255,255,255,0.16) */
+/* ported */   inset 0 1px 0 0 var(--hc-glass-rim)   /* --hc-glass-rim: inset 0 1px 0 rgba(…) */
+```
+
+That is `inset 0 1px 0 0 inset 0 1px 0 rgba(…)`, which is not a shadow. A declaration that becomes
+invalid at computed-value time is not partially applied and does not warn: the browser drops the
+whole `box-shadow` and reports `none`.
+
+**Why it stayed invisible for a whole pass.** The fill is `background-color` and the sheen is a
+`background-image`, so both still rendered. A surface with a fill and no rim is not a broken
+surface, it is a *flat* one — and flat is exactly what the material was supposed to stop being. On
+the column header strip, before any of this was fixed, the fill was measurably there (45.1 against
+the panel's 41.1) and the rim was not there at all; afterwards the strip's top row reads 82.1.
+
+**Held by a test, not by review.** `ui/tests/materials.spec.ts` walks the DOM on two screens and
+asserts that every element carrying a material class comes back with a shadow, and that it found at
+least a handful of them — a guard that cannot pass by finding nothing. A wrong token inside a
+shadow list is invisible in a diff and invisible in a screenshot; the layout engine is the only
+thing in this project that knows. There is no CSS validator in the build, and adding one for this
+would be a build step for a class of bug a five-line browser test already catches.
+
+**Revisit if:** a build step starts validating this CSS. Then the test is the second net, not the
+first — and the tokens may as well become bare colours, which is how the kit writes them.
+
+---
+
+### D113 — The materials' numbers are the kit's dark theme, not this window's earlier guesses
+
+**Status:** ACCEPTED · 2026-09-15 · same session
+
+With D112 fixed the recipes rendered, and the surfaces were still flat. They were flat because they
+had been *tuned down*, token by token, against the kit's own dark theme:
+
+| token | this window | the kit, dark |
+| --- | --- | --- |
+| `glass-fill` | 0.035 | 0.06 |
+| `glass-fill-weak` | 0.02 | 0.035 |
+| `glass-fill-strong` | white 0.055 | `rgba(48, 48, 56, 0.9)` |
+| `glass-rim` | 0.07 | 0.16 |
+| `glass-rim-bottom` | black 0.3 | black 0.45 |
+| `glass-sheen` | 0.05 | 0.24 |
+| `raised-top` / `raised-bottom` | white 0.12 / white 0.02 | `#3b3b44` / `#2a2a31` |
+
+**Why the rim matters more here than in the kit.** §8.1 forbids `backdrop-filter`, so the blur the
+kit leans on is not available and the rim, the fill and the sheen are the whole material. A rim at
+44 % of the kit's and a sheen at 21 % of it is a surface that measures as slightly lighter than the
+background and reads as a rectangle — which is what the owner said before any of this, and what a
+fresh look at a screenshot says about the version with the old numbers.
+
+**The raised pair was the largest of these.** The kit builds a convex surface out of two *solid*
+greys; this window used a translucent white wash, and `rgba(255, 255, 255, 0.12)` over `#101012` is
+26 levels lighter at one end and 4 at the other. Every pressed, current and selected state here is
+a `.raised` — the rail's current place, a chosen option, an active segment — so that wash was what
+„does this look like a control" was really asking about. Measured after the change: the rail's
+current item spans 52 levels with an 82.1 rim row on top; the same item before spanned 19.
+
+**Where this window deliberately stays different, and why.**
+
+- `--hc-glass-edge` keeps this window's light value (0.055 white) even though the kit's dark edge is
+  a dark seam (`rgba(0, 0, 0, 0.35)`): in this file it is also the colour of every panel divider in
+  `shell.css`, and a divider here is a light hairline. The kit's seam is its own token now,
+  `--hc-glass-seam`, and the material recipes ring with that one.
+- `--hc-well-rim` stays the dark inner rim it was; the kit's is a light floor line. Both read as a
+  recess and this one is already used as a whole item in three places (`.well`, two `.hc-bar`s).
+- The rail's gradient starts at `--hc-glass-fill`, not `-strong`: the kit's `strong` is a nearly
+  opaque panel fill for menus and hovers, not „a bit more fill".
+
+**Housekeeping in the same pass.** `--hc-glass-drop` and `--hc-glass-edge-strong` were never read
+by a rule and went; the window shadows (`--hc-shadow-rest`, `--hc-shadow-lift`) gained the kit's
+1 px `rgba(255, 255, 255, 0.06)` ring, which is what gives the frame an edge.
+
+**Revisit if:** the owner's screen says the glass is now too loud. Then the numbers move together —
+one of them at a time is what produced the flat version.
+
+---
+
+### D114 — The glass needed a canvas under it, and the canvas needed a measurement before it moved
+
+**Status:** ACCEPTED · 2026-09-15 · the explorer's kit pass, after D112/D113
+
+D113 left one thing visibly unexplained: the material was the kit's to the digit, and the window
+still read flatter than the kit. The difference was not in the glass. It was under it. The kit's
+glass sits over a *lit* canvas — `--bg-canvas: #0a0a0d` with three very large coloured glows
+(`--bg-canvas-glow-1/2/3`: a slate blue-violet at 0.35, a magenta at 0.22, a steel blue at 0.25)
+drifting over 28, 34 and 40 seconds — while this window painted its glass over one flat `#09090b`.
+With §8.1's ban on `backdrop-filter` and a panel fill of six percent white, a six-percent fill over
+a black rectangle is a black rectangle with a hint of grey, however exactly it is specified.
+
+So the canvas is the kit's, with two changes of mechanism and no change of value: the three glow
+colours are taken verbatim, and the softness comes from a radial gradient with a solid core instead
+of the kit's `filter: blur(90px)`, because §8.1 keeps filters out of this window. Measured effect on
+the file-list screen: the window's median luminance 44.5 → 49.5, the rail (the one fully
+translucent panel) 48.8 → 59.6, and the spread of medians across a 6 × 4 grid of tiles 12.0 → 25.2 —
+the canvas is lit and uneven now, which is what the panels needed to be read as glass over something.
+
+**The drift did not survive the measurement.** The kit animates the three blobs with `transform`
+only, which §6 calls compositor-only — and that is true in the sense that no paint and no layout
+happen, but not in the sense that it is free. Counted over CDP (`LayerTree.enable`) and timed as
+frame deltas in the same run, same page, drift on against drift off:
+
+| | composited layers | idle, p50 / p95 | under scroll, p50 / p95 |
+|---|---|---|---|
+| drift on (the kit's numbers) | 15 | 21.0 / 22.2 ms | 21.0 / 21.9 ms |
+| drift off, canvas still painted | **11** | **16.7** / 16.9 ms | **16.7** / 18.1 ms |
+
+Three large layers moving under translucent panels mean the whole window is re-composited every
+frame, for as long as the window is open — this one is a resident overlay, so that is not a
+thirty-second demo, it is until logout. §8 says a nicer look that drops frames loses to the rule,
+and the rule is right even here, where the drop is 60 → 48 fps in a *software* compositor and will be
+smaller on a GPU: a cost that is permanent and buys only that the light moves is a cost this window
+does not pay. **The canvas is painted and still.** The structural check that the still canvas is free
+is the same instrument: seven composited layers with it, seven without it — a painted gradient that
+does not move is not a layer.
+
+The still canvas is a first-class state of this design rather than a compromise, which is why
+nothing had to be special-cased for reduced motion: with the drift gone there is no motion left in
+the canvas to reduce.
+
+**What would bring the drift back:** the three `animation-duration`/`animation-delay` pairs and the
+keyframes are the kit's (`src/styles/glass.css`, `@keyframes blob-drift`, `@utility canvas-blob`) —
+28 s, 34 s with -9 s, 40 s with -18 s, `translate3d(4 %, -3 %)` at a third, `(-3 %, 4 %)` at two
+thirds, `scale` 1.06 and 0.96. They are not in this window's CSS; whoever wants them adds them *and*
+re-measures on the real machine, because the numbers above are from a software compositor and a GPU
+is the only place that could disagree.
+
+**Revisit if:** the owner asks for movement in the canvas, or a future renderer makes the frame cost
+disappear; both are answers to a measurement, not to a look.
+
+### D115 — The canvas stays flat: a showcase's backdrop is not a tool's
+
+**Status:** ACCEPTED · 2026-09-15 · owner's verdict after seeing the pictures
+
+**Context.** The kit port left one visible difference: the kit's glass sits over a lit canvas and this
+window's was flat `#09090b` (D113). The canvas was therefore built from the kit's own tokens — three
+very large glows, unchanged colours (`rgba(70,80,130,0.35)`, `rgba(150,80,150,0.22)`,
+`rgba(60,100,170,0.25)`), one `inset: 0` layer behind everything, no filter (§8.1) and without the
+kit's 28/34/40-second drift (measured out in D114: four composited layers, 21 ms against 16.7 ms per
+frame, at rest and under scroll).
+
+**Decision.** The glows are removed again. The owner's words: *„Die glows nehmen irgendwie die
+Minimalistic raus aus dem GUI Konzept."* The measurements were never the objection — the canvas was
+cheaper than a keystroke and it did what it was built to do (the file list's median luminance 44.5 →
+50.0, its blue-over-red bias +8.4) — the objection was the concept: this is a tool for reading an
+index, not a surface to be admired, and coloured light in the background is the first thing that has
+to go when the two disagree. **A kit's showcase elements are the part of a port most likely to be
+wrong**, because a showcase is built to display glassmorphism and a tool is built to be worked in.
+The drift measurement (D114) stands and is the reason a future canvas would still have to justify
+itself; the colours are gone for a reason no measurement can argue with.
+
+**After the removal**, measured on the same screenshot pair: median 42.5, bias +2.4, and the spread
+of tile medians across the window 26.3 → 12.9 — an even, quiet surface. The one thing that lights
+this window is the breath (§6.1), and it lights it because there is work to report.
+
+**If a surface ever measures too flat again**, the calm levers, in order of how little they cost:
+raise the breath's own gradient (one value in an existing layer, no new layer, no hue), or paint the
+same three glows as greys at a fraction of their alpha — same geometry, no colour, and then re-measure
+before it stays.
+
+**Revisit if:** the owner asks for colour in the background, or the panels are measured flat *and*
+the breath has already been tried.
+
+---
+
+### D116 — The nightly pass is a timer, not a loop inside the daemon
+**Status:** ACCEPTED · 2026-09-15 · the pass had no trigger at all
+
+**Context.** Consolidation had exactly one trigger: somebody typing `cortex consolidate`. Nothing in
+`cortexd` schedules it, no timer existed, and the consequence was measurable on the owner's own
+index — `cortex overview`, 2026-09-15: `last pass  23d 0h 54m ago`, with the daemon up for 7 hours
+before that and running at every login. An index that is never consolidated has no tier movement,
+nothing decays and nothing is promoted, so salience, pinning and the memory layer as a whole look
+like decoration rather than a mechanism. The plan's own words for this step are *"nightly
+consolidation job"* (`01-BUILD-PROMPT.md` §Milestones, the sleep-consolidation row).
+
+**Decision.** A systemd **user timer** (`hippocampus-consolidate.timer`, `OnCalendar=*-*-* 03:00:00`)
+starts a oneshot service that runs `cortex consolidate`. The pass is unchanged: it stays a **call
+into the daemon** (`brain.consolidate` over the socket), the daemon stays the only writer, and no
+process ever opens the store to consolidate it. `Persistent=true`, because the reason the pass did
+not happen for 23 days is that nobody was awake at the right moment and a missed job is
+indistinguishable from a quiet index.
+
+**Not a loop inside the daemon**, for three reasons: the operating system already has a scheduler
+with the catch-up semantics this needs, and a private one would have to reimplement them; a sleeping
+loop is a reason for the daemon to be alive that the design does not otherwise have (an idle daemon
+is *supposed* to be doing nothing, D22); and the plan files this step as infrastructure rather than
+as core. D65 makes the choice cheap either way — the pass replays the whole log, so it is idempotent
+and a doubled pass changes nothing (1.2 s over 19 186 episodes on this index, 138 ms on the pass
+that followed it).
+
+**Consequence.** `scripts/install-user.sh` installs four units now and its closing note says the
+timer is what makes the brain run by itself; `scripts/uninstall-user.sh` reverses it. Anybody who
+installs the binaries without enabling the timer gets an index that never consolidates, and that is
+now written down where the install happens.
+
+**Revisit when:** the daemon grows a scheduler for something else and the two should be one place,
+or a pass ever costs enough that its timing matters to the machine.
+
+---
+
+### D117 — A connection that has not identified itself is not the human
+
+**Status:** ACCEPTED · 2026-09-15 · M12 step 1, criterion 1
+
+**Context.** Until today every connection started as `Actor::Human`, and a client that sent no
+actor kept that value. The comment that justified it is still in the tree: "which is the safe
+assumption because it is the one that grants nothing." That was true while `Actor` was attribution
+only — it decided whose name stood in the undo journal. M12 gives a human origin the one authority
+that may create an *instruction* (`Authority::Instruction`, D98), and the moment that exists the
+same default grants the *most* rather than the least: any process that opens the socket and stays
+quiet writes a memory that `may_motivate_a_write`.
+
+**What that cost, measured.** On this index, `cortex overview`, `cortex consolidate` and every read
+this session ran were attributed to `human` in the episode log — including the ones an agent ran.
+The log could not tell the two of us apart, which is the one thing the log is for.
+
+**Decision.** `Actor::Unknown` exists. It is the initial actor of a connection and what
+`actor_from_client(None)` returns. The window identifies itself as `human` explicitly when it
+connects — written rather than awaited, so it is on the wire before the first call and a daemon that
+never answers cannot hang the window on startup. The CLI acts as the human with `--as human`, on
+purpose and in writing. `Origin::from_actor` maps the four actors to origins: Human → Human,
+Agent → Agent, System → File (everything the daemon writes on its own account is bookkeeping over
+indexed material), Unknown → Peer.
+
+**Why not something stricter.** A single-user Unix socket cannot tell a person at a terminal from a
+process that person started; anything claiming otherwise is theatre. What *can* be honest is the
+label: the request may not carry its own origin, the connection's actor decides it, and the log
+records which one it was.
+
+**Revisit if:** the log fills with `unknown` for writes a person clearly made — then the CLI wants a
+TTY-aware default rather than a flag — or a second user ever exists on this machine.
+
+---
+
+### D118 — The origin is projected from the episode, and a row older than the column keeps the least
+
+**Status:** ACCEPTED · 2026-09-17 · M12 step 1, criteria 1 and 15
+
+**Context.** D98 puts an origin on every node and an authority on every memory; D117 decides where
+the value comes from — the connection's actor, never a request body. Neither says where it is
+*kept*. The index on this machine holds a year of rows written before either decision, and every
+memory in it was equal: the text a person typed as a rule, the sentence an agent read on a web page
+and the line a tool printed sat in one table with one standing, distinguished only by an `actor`
+string that nothing filtered on. A backfill that guessed would be raising authority by guessing,
+and criterion 3's imperative detector does not exist yet — a migration that imitated it would be
+the first lie in a table whose purpose is to stop them.
+
+**Decision.**
+
+- One migration, `0010_origin_authority.sql` (v10): `nodes.origin` (default `file`),
+  `memories.authority` (default `observation`), `memories.basis_json` (`'[]'`) and the two validity
+  columns (nullable, empty). Not a table rebuild — the columns are additive, and `rebuilds_tables`
+  stays false because a rebuilt store gets them from the write path instead.
+- The derivation lives in the store's write path, in one place (`Store::remember`):
+  `origin = Origin::from_actor(the connection's actor)`, `authority = origin.ceiling()`. No request
+  type in `cortex-rpc` has either field, so there is nothing in a request to lie with — criterion 1
+  is a property of the shape of the protocol, which is why it can be asserted per surface.
+- The rebuild re-derives both from the *episode's* actor rather than copying the projection,
+  because R10 says a rebuild reproduces the write and the write is where they were decided. The
+  canonical dump now carries both, so a rebuild that derived differently fails the dump comparison
+  instead of quietly producing a different store.
+- The backfill: a file, a directory and every chunk cut from one keep `file`; a node whose creating
+  episode is still in the log takes that episode's actor through `Origin::from_actor` spelled out in
+  SQL (`system` → `file`, an anonymous connection → `peer`); a legacy memory row gets the ceiling of
+  the actor in its own row — `instruction` for the human's own words, `observation` for everything
+  else, including a legacy `agent:*` row, which was never re-read and is therefore not a fact.
+- Neither validity column is backfilled. `ts` is when a memory was *recorded*, and filling
+  `valid_from` with it would have the daemon claim that a memory written today became true today —
+  the shortcut the scope section rules out by name. NULL is the honest value until step 2 gives
+  `brain.remember` a field for it.
+- `Memory` and `Basis` both carry the two fields, and a pack item serialises them unconditionally:
+  a pack that omitted the label on its least trustworthy items would be hiding exactly the lines
+  that matter, and the default a reader assumes in their place is the confident one.
+
+**Why the least, and not the obvious.** "Everything written before we kept track was written by the
+person at this machine" is true of most rows and false of the ones that matter. Authority is
+non-malleable *downward* (D98) precisely so that a wrong initial value can only ever be too
+cautious: over-cautious memories cost an agent a fact it could have used as a fact, and
+over-confident ones cost the machine its files.
+
+**Why not `untrusted` as the column default.** `untrusted` is a verdict about *content* — the
+imperative detector of criterion 3 — not a fallback for a column nobody filled. The least the ladder
+itself can produce for a claimant is `observation`, and that is what a row without a value means
+here; when the detector lands it will write `untrusted` for the rows it actually read.
+
+**Revisit if:** criterion 3's detector decides that `tool`, `file` and `peer` writes should *begin*
+at `untrusted` rather than `observation`. Then the column default, the backfill and
+`Origin::ceiling` all move down together, in one migration, and the canonical dump is what proves it
+moved.

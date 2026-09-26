@@ -10,6 +10,7 @@
  */
 
 import { AnimatePresence, motion } from "framer-motion";
+import { Kbd } from "./glass";
 import { useEffect, useRef, useState } from "react";
 import { spring } from "../motion";
 
@@ -47,7 +48,7 @@ export function CommandPalette({
   return (
     <AnimatePresence>
       <motion.div
-        className="hc-palette"
+        className="hc-palette glass glass-sheen"
         role="dialog"
         aria-label="Befehle"
         ref={ref}
@@ -88,7 +89,7 @@ export function CommandPalette({
           >
             <span className="hc-row-text">{command.label}</span>
             {command.detail && <span className="hc-meta hc-command-detail">{command.detail}</span>}
-            <kbd className="hc-pill">{command.binding}</kbd>
+            <Kbd>{command.binding}</Kbd>
           </div>
         ))}
       </motion.div>

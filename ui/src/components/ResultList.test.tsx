@@ -162,6 +162,42 @@ describe("ResultList", () => {
     expect(screen.getByText("Nichts gefunden")).toBeTruthy();
   });
 
+  it("hands its zone to the stylesheet rather than painting itself", () => {
+    withViewport(VIEWPORT);
+    const { container } = render(
+      <ResultList
+        rows={sampleRows(3)}
+        cursor={0}
+        selected={new Set([0])}
+        onSelect={() => {}}
+        onActivate={() => {}}
+        rowHeight={ROW}
+        visible={true}
+        zoneHues={new Map([[1, 210]])}
+        emptyMessage="nichts"
+        selectedPaths={[]}
+      />,
+    );
+
+    // `hits` puts every third row in zone 1, so row 1 is outside every zone.
+    const zoned = container.querySelectorAll(".hc-row")[0] as HTMLElement;
+    const plain = container.querySelectorAll(".hc-row")[1] as HTMLElement;
+    const zonedStyle = zoned.getAttribute("style") ?? "";
+
+    expect(zonedStyle).toContain("--hc-zone: hsl(210, 58%, 62%)");
+    expect(zonedStyle).toContain("--hc-zone-border: hsla(210, 58%, 62%, 0.85)");
+    expect(zonedStyle).toContain("--hc-zone-soft: hsla(210, 58%, 62%, 0.06)");
+
+    // The regression this exists for: the row used to write `background` and `border-left-color`
+    // inline, and an inline declaration beats every rule in every stylesheet — so the selected
+    // row's fill and its bar, both of which live in `app.css`, never painted. A custom property
+    // travels the same way but cannot win anything: this window sets none of these three.
+
+    expect(zonedStyle).not.toContain("background");
+    expect(zonedStyle).not.toContain("border-left-color");
+    expect(plain.getAttribute("style") ?? "").not.toContain("--hc-zone");
+  });
+
   it("selects on mousedown without stealing focus from the input", () => {
     withViewport(VIEWPORT);
     const onSelect = vi.fn();
@@ -190,5 +226,58 @@ describe("ResultList", () => {
     // Preventing the default is what keeps the caret in the search input; without it, typing
     // stops working the moment somebody clicks a row once.
     expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("draws the kit's empty state, with the glyph it was handed", () => {
+    withViewport(VIEWPORT);
+    const { container } = render(
+      <ResultList
+        rows={[]}
+        cursor={0}
+        selected={new Set()}
+        onSelect={() => {}}
+        onActivate={() => {}}
+        rowHeight={ROW}
+        visible={true}
+        zoneHues={new Map()}
+        emptyMessage="Nichts gefunden"
+        emptyIcon={<span data-testid="glyph" />}
+        selectedPaths={[]}
+      />,
+    );
+
+    // The kit's `EmptyState`: a circle, a glyph inside it, the sentence under it. The circle is the
+    // element that carries the kit's material classes, so the test asks for both.
+    const empty = container.querySelector(".hc-empty") as HTMLElement;
+    const mark = empty.querySelector(".hc-empty-mark") as HTMLElement;
+    expect(mark.classList.contains("glass")).toBe(true);
+    expect(mark.classList.contains("glass-sheen")).toBe(true);
+    expect(mark.querySelector("[data-testid='glyph']")).not.toBeNull();
+    // And the sentence is still the element's text, because that is what a screen reader gets.
+    expect(empty.textContent).toBe("Nichts gefunden");
+  });
+
+  it("leaves the circle off when there is no glyph for it", () => {
+    withViewport(VIEWPORT);
+    const { container } = render(
+      <ResultList
+        rows={[]}
+        cursor={0}
+        selected={new Set()}
+        onSelect={() => {}}
+        onActivate={() => {}}
+        rowHeight={ROW}
+        visible={true}
+        zoneHues={new Map()}
+        emptyMessage="…"
+        selectedPaths={[]}
+      />,
+    );
+
+    // A list that is loading, or a share that did not answer: not empty states, and a glass circle
+    // over either of them would dress a failure up as an empty folder.
+    const empty = container.querySelector(".hc-empty") as HTMLElement;
+    expect(empty.querySelector(".hc-empty-mark")).toBeNull();
+    expect(empty.textContent).toBe("…");
   });
 });

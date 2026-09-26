@@ -81,7 +81,7 @@ in four shippable steps with acceptance criteria. Its scope and Definition of Do
 picking it up. **It waits behind M6's mandatory list**: a file manager that cannot do the basics
 will not be used, however good the brain is.
 
-**M12 is specified and not built** (2026-09-05). It is daemon work like M11 and does not wait behind M6; its first two steps — origin and authority — are the cheapest change in the plan with the strongest evidence behind it, and they go first. The research that argues for it is `paper/WHAT-2026-CHANGED.md`; the decisions are D98–D102.
+**M12 is specified and being built** (specified 2026-09-05; step 1 — origin and authority — started 2026-09-17: migration v10, the derivation in the write path, the labels on every pack item and a per-surface test are in, and what step 1 still owes is listed at the top of `docs/03-PROGRESS.md`). It is daemon work like M11 and does not wait behind M6; its first two steps — origin and authority — are the cheapest change in the plan with the strongest evidence behind it, and they go first. The research that argues for it is `paper/WHAT-2026-CHANGED.md`; the decisions are D98–D102 and D117–D118.
 
 **M11 does not wait behind M6**, and that is a deliberate exception rather than an oversight.
 M6 gates the *window*; M11 is mostly daemon, and its one window component — the Agent Inspector —
@@ -102,6 +102,8 @@ workstation class (see `03-PROGRESS.md` §Environment).
 | Keystroke → first visible row | **80 ms** | M4 |
 | Fuzzy path match (in-memory trigram) | 10 ms | M1 |
 | BM25 top-100 | 30 ms | M2 |
+| BM25 top-100 while the indexer writes | 45 ms (1.5 × the BM25 budget, as a fixed number — D104) | M2 |
+| Query embedding, one query, CPU | 40 ms (D104) | M2 |
 | Vector ANN top-100 | 40 ms | M2 |
 | RRF fusion + salience boost | 5 ms | M2 |
 | Cross-encoder rerank top-30 (async, GPU) | 150 ms | M2 |
@@ -109,7 +111,7 @@ workstation class (see `03-PROGRESS.md` §Environment).
 | Daemon cold start → socket accepting | 200 ms | M0 |
 | GUI cold start → interactive | 300 ms | M4 |
 | Watcher event → per-event processing cost | 5 ms | M1 |
-| Idle RSS, daemon, 100 k files indexed | 250 MB (anonymous memory — see D27) | M1 |
+| Idle RSS, daemon, 100 k files indexed | 250 MB (anonymous memory — see D27; **with the embedding model released or absent.** The resident ONNX/CUDA session costs about 1.3 GB more and is not budgeted — it is put down after idling, D103) | M1 |
 | Idle CPU, daemon, no filesystem activity | < 0.5 % of one core | M1 |
 | `brain.context`, 2 048-token budget, 5 000 memories | **120 ms** | M11 |
 | Memory ANN top-100 in the memory collection | 5 ms | M11 |

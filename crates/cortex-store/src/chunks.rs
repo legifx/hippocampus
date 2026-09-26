@@ -509,6 +509,7 @@ fn delete_chunks_on(conn: &rusqlite::Connection, node: NodeId) -> Result<usize> 
     };
     for id in &ids {
         conn.execute("DELETE FROM chunks_fts WHERE rowid = ?1", [id])?;
+        conn.execute("INSERT OR IGNORE INTO dead_chunks (chunk_id) VALUES (?1)", [id])?;
     }
     conn.execute("DELETE FROM chunks WHERE node_id = ?1", [node.0])?;
     Ok(ids.len())
@@ -552,6 +553,9 @@ fn replace_chunks_on(
         for id in leftovers {
             conn.execute("DELETE FROM chunks_fts WHERE rowid = ?1", [id])?;
             conn.execute("DELETE FROM chunks WHERE id = ?1", [id])?;
+            // The vector index keys by chunk id and cannot be reached from here; the
+            // embedding stage removes the vector from this note (0009 migration).
+            conn.execute("INSERT OR IGNORE INTO dead_chunks (chunk_id) VALUES (?1)", [id])?;
             delta.deleted += 1;
         }
     }

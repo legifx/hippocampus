@@ -14,8 +14,9 @@
  * | ≥ 980   | results, preview and context         |
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Ambient } from "./components/Ambient";
+import { FolderOpenIcon, SearchIcon } from "./components/glass/icons";
 import { Breadcrumb } from "./components/Breadcrumb";
 import { AgentInspector, type InspectorTab } from "./components/AgentInspector";
 import { CommandPalette, type Command } from "./components/CommandPalette";
@@ -26,10 +27,17 @@ import { PlacesView, useFlatPlaces } from "./components/PlacesView";
 import { usePlaces, PLACES } from "./hooks/usePlaces";
 import { useVisibility } from "./hooks/useVisibility";
 import { PreviewPane } from "./components/PreviewPane";
+import { ComparePane, type Compared } from "./components/ComparePane";
+import { QuickLook } from "./components/QuickLook";
+import { ListHeader } from "./components/ListHeader";
 import { ResultList } from "./components/ResultList";
 import { useOperations } from "./hooks/useOperations";
+import { useOverview } from "./hooks/useOverview";
+import { NavRail, type Section } from "./components/NavRail";
+import { Overview } from "./components/Overview";
 import { useSelection } from "./hooks/useSelection";
 import { useView } from "./hooks/useView";
+import { GlassButton, GlassInput, GlassMenu, GlassSearch } from "./components/glass";
 import { throttled, useDeferred } from "./hooks/useDeferred";
 import { useViewport } from "./hooks/useViewport";
 import {
@@ -70,6 +78,33 @@ function splitPathName(path: string): string {
 /** The daemon needs to know somebody is here, not how fast they type. */
 const pingSometimes = throttled(5000);
 
+/**
+ * A row as the panes want it. Built from the row rather than from whichever call produced it:
+ * every field the panes read is on the row now, including the ones only a ranked source fills —
+ * so there is no "was this a search result" question left to ask.
+ */
+function hitFromRow(row: Row): SearchHit {
+  return {
+    node_id: row.nodeId ?? -1,
+    path: row.path,
+    kind: row.isDir ? "dir" : "file",
+    size: row.size,
+    mtime: row.mtime,
+    zone_id: row.zoneId,
+    tier: row.tier ?? "stm",
+    score: row.score ?? {
+      path_rank: null,
+      lexical_rank: null,
+      vector_rank: null,
+      fused: 0,
+      salience_boost: 1,
+      rerank: null,
+      final_score: 0,
+    },
+    snippet: row.snippet,
+  };
+}
+
 const SORT_LABELS: Record<Order, string> = {
   name: "Name",
   size: "Größe",
@@ -77,6 +112,14 @@ const SORT_LABELS: Record<Order, string> = {
   salience: "Salienz",
   none: "unsortiert",
 };
+
+/**
+ * The orders a directory can be in, in the order they are offered.
+ *
+ * One list, read by the palette and by the menu under the status line: two places that offer the
+ * same four answers are two places that can drift into offering five.
+ */
+const SORT_ORDERS: Order[] = ["name", "size", "modified", "salience"];
 
 /**
  * What to call a place that has no path.
@@ -112,6 +155,23 @@ function emptyMessage(
   return searching ? "Nichts gefunden" : "Dieser Ordner ist leer";
 }
 
+/**
+ * The glyph over that sentence — the kit's empty-state circle wants one, and the two modes have one
+ * each: a magnifier for a search that found nothing, an open folder for a folder with nothing in it.
+ *
+ * `undefined` for the loading list and for the share that did not answer, on purpose: those are the
+ * two states that are not „nothing here", and the kit's circle over a diagnosis would dress a
+ * failure up as an empty folder.
+ */
+function emptyIcon(
+  searching: boolean,
+  loading: boolean,
+  browse: { loading: boolean; error: string | null },
+): ReactNode {
+  if (loading || browse.loading || browse.error) return undefined;
+  return searching ? <SearchIcon /> : <FolderOpenIcon />;
+}
+
 /// Where browsing starts. The home directory is the only defensible guess before the daemon
 /// has been asked which roots it indexes, and it is what every file manager opens on.
 /**
@@ -133,13 +193,20 @@ export type AppProps = {
    * the thing they are about once.
    */
   startPath?: string;
+  /**
+   * Which screen to open on, for the tests that are about one of them.
+   *
+   * The window itself opens on the start screen; the browser tests open on the browser, for the
+   * same reason as `startPath`: a test about the list should not begin by leaving a summary.
+   */
+  startSection?: Section;
 };
 
 /** One array rather than a fresh one per render: the chooser resets its cursor when the list it
  * is given is a different list, and `[]` written twice is two different lists. */
 const NO_APPLICATIONS: Application[] = [];
 
-export function App({ startPath = START_PATH }: AppProps = {}) {
+export function App({ startPath = START_PATH, startSection = "overview" }: AppProps = {}) {
   // One hook, one row stream, whatever the source (M10 step 1). `view.state.searching` is a
   // fact about the window — which of the two held views is showing — and nothing downstream of
   // `view.rows` knows the difference.
@@ -158,6 +225,8 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
   const [renaming, setRenaming] = useState<Row | null>(null);
   const [creating, setCreating] = useState<string | null>(null);
   const [comfortable, setComfortable] = useState(false);
+  const [sortOpen, setSortOpen] = useState(false);
+  const [sortAt, setSortAt] = useState({ x: 0, y: 0 });
   const [zoneHues, setZoneHues] = useState<Map<number, number>>(new Map());
   const [load, setLoad] = useState(0);
   const [daemonError, setDaemonError] = useState<string | null>(null);
@@ -176,6 +245,28 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
   // Nothing periodic runs while nobody is looking. See `useVisibility` for what that was
   // costing before it was measured.
   const visible = useVisibility();
+
+  // Which screen the window is on: the numbers, or the browser. Two, not three — the places list
+  // is a path inside the browser, not a destination of its own, and a rail that pretended
+  // otherwise would be a second navigation model beside the one `useView` already is (M10).
+  const [section, setSection] = useState<Section>(startSection);
+  // The window the numbers are read over. Held here rather than inside the start screen, because
+  // the rail reads over the same one, and two places that each remembered a window would
+  // eventually disagree about which one is on screen.
+  const [windowSecs, setWindowSecs] = useState(86_400);
+
+  // The start screen's numbers. Read while the window is visible and whether or not that screen is
+  // the one on show — the rail carries four of them at all times — and stopped while it is hidden
+  // (D59), which is the whole reason `useVisibility` exists.
+  const stats = useOverview(visible, windowSecs);
+
+  // Going somewhere else. Landing on the browser puts the caret in the field, because searching is
+  // what the browser is for; landing on the numbers leaves the caret alone, because there is
+  // nothing there to type into.
+  const goSection = useCallback((next: Section) => {
+    setSection(next);
+    if (next !== "overview") input.current?.focus();
+  }, []);
 
   // Three screens, one window: the places, a directory, or results. Typing always wins — that
   // is M6's shape, "search as an overlay, not a separate page".
@@ -209,30 +300,28 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
 
   // The panes want a `SearchHit`, which a directory entry is not. Only a search result carries
   // a score and a tier, so a browsed row is given the shape with those left honestly empty.
-  const hit: SearchHit | null = useMemo(() => {
-    if (!current) return null;
-    // Built from the row rather than from whichever call produced it. Every field the panes
-    // read is on the row now, including the ones only a ranked source fills — so there is no
-    // "was this a search result" question left to ask here.
-    return {
-      node_id: current.nodeId ?? -1,
-      path: current.path,
-      kind: current.isDir ? "dir" : "file",
-      size: current.size,
-      mtime: current.mtime,
-      zone_id: current.zoneId,
-      tier: current.tier ?? "stm",
-      score: current.score ?? {
-        path_rank: null,
-        lexical_rank: null,
-        vector_rank: null,
-        fused: 0,
-        salience_boost: 1,
-        rerank: null,
-        final_score: 0,
-      },
-      snippet: current.snippet,
-    };
+  const hit: SearchHit | null = useMemo(() => (current ? hitFromRow(current) : null), [current]);
+
+  // Exactly two rows selected: the preview slot compares them instead of showing the cursor's
+  // one. This is the answer to "content.png oder content(1).png?" — both, side by side, with
+  // what differs marked. Any other count and the slot is the ordinary preview.
+  const compared: [Compared, Compared] | null = useMemo(() => {
+    if (selection.state.indices.size !== 2) return null;
+    // In list order, whichever was selected first: the left side is the upper row.
+    const [a, b] = [...selection.state.indices] as [number, number];
+    const upper = rows[Math.min(a, b)];
+    const lower = rows[Math.max(a, b)];
+    if (!upper || !lower) return null;
+    return [
+      { hit: hitFromRow(upper), row: upper },
+      { hit: hitFromRow(lower), row: lower },
+    ];
+  }, [rows, selection.state.indices]);
+
+  // Quick Look follows the cursor while it is open, and closes when there is nothing to show.
+  const [quickLook, setQuickLook] = useState(false);
+  useEffect(() => {
+    if (!current) setQuickLook(false);
   }, [current]);
 
   // The list follows the arrow key; the panes follow the list once it stops. Holding a key
@@ -473,6 +562,22 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
         run: () => setComfortable((c) => !c),
       },
       {
+        id: "quicklook",
+        label: quickLook ? "Schnellansicht schließen" : "Schnellansicht",
+        binding: "Leertaste",
+        detail: "die Datei so groß wie das Fenster; 1 = Pixel für Pixel, 0 = einpassen",
+        run: () => current && !current.isDir && setQuickLook((open) => !open),
+      },
+      {
+        id: "compare",
+        label: "Vergleichen",
+        binding: "—",
+        detail: compared
+          ? "zwei Dateien sind ausgewählt — der Vergleich steht rechts"
+          : "zwei Zeilen auswählen (Strg+Klick oder Umschalt+Pfeil); der Vergleich erscheint rechts",
+        run: () => setPane("preview"),
+      },
+      {
         id: "startup",
         label: "Startzeit anzeigen",
         binding: "—",
@@ -495,7 +600,7 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
       },
       ...(searching
         ? []
-        : (["name", "size", "modified", "salience"] as Order[]).map((order) => ({
+        : SORT_ORDERS.map((order) => ({
             id: `sort-${order}`,
             label: `Sortieren: ${SORT_LABELS[order]}`,
             binding: "—",
@@ -632,6 +737,7 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
       if (event.key === "Escape") {
         event.preventDefault();
         if (paletteOpen) setPaletteOpen(false);
+        else if (quickLook) setQuickLook(false);
         else if (inspectorOpen) setInspectorOpen(false);
         else if (renaming || creating !== null) {
           setRenaming(null);
@@ -678,6 +784,42 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
       // overlay's Enter opens the selected row and prevents the form from submitting, so the
       // rename silently never happens — which is how two browser tests found it.
       if (renaming || creating !== null) return;
+
+      // The start screen is numbers, not a list: it has nothing to point at. Everything below acts
+      // on a cursor in a list that is not on screen, so it is refused here — Escape, Ctrl+K,
+      // Ctrl+Shift+A and typing are handled above and still work, and the arrow keys are left to
+      // the page, which is what scrolling a page means.
+      if (section === "overview") return;
+
+      // Space, with an empty search field, or Ctrl+Space always: Quick Look on the cursor's
+      // file. Plain Space is left to the field while there is a query in it — a space is a
+      // character there — and a directory has nothing to look at.
+      if (
+        event.key === " " &&
+        !atPlaces &&
+        (event.ctrlKey || event.metaKey || query === "")
+      ) {
+        event.preventDefault();
+        if (current && !current.isDir) setQuickLook((open) => !open);
+        return;
+      }
+      // While Quick Look is open the arrows still move the cursor — it follows — and Escape
+      // closes it above; everything else that would act on files waits until it is closed.
+      if (quickLook) {
+        switch (event.key) {
+          case "ArrowDown":
+          case "ArrowUp":
+          case "PageDown":
+          case "PageUp":
+            break;
+          default:
+            // Swallowed, not typed: a character typed here would land in the search field,
+            // change the list under the picture, and close the picture with it. `1` and `0`
+            // are Quick Look's own zoom keys and it has already taken them.
+            event.preventDefault();
+            return;
+        }
+      }
 
       // The places screen has no selection and no operations — you do not cut a drive — so it
       // takes the movement keys and nothing else, before anything below can act on a list that
@@ -860,6 +1002,7 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
       openPlace,
       extractSelected,
       pasteHere,
+      quickLook,
     ],
   );
 
@@ -880,16 +1023,41 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
     >
       <Ambient load={load} />
 
+      <NavRail
+        section={section}
+        onSection={goSection}
+        index={stats.overview ? stats.overview.index : null}
+        daemon={stats.overview ? stats.overview.daemon : null}
+        agentOpen={inspectorOpen}
+        onAgents={() => setInspectorOpen((open) => !open)}
+      />
+
       <header className="hc-head">
-        <input
+        {/* The kit's search field: a recessed pill whose box, padding and type are one decision
+            (`src/components/glass/GlassInput.tsx`, `.gi-*` in `src/kit.css`), which is the thing
+            the showcase hands over — not a look to copy by hand. The field before it was a bare
+            15.5 px input inside a header that grew with the window, and that is why the text and
+            the box stopped agreeing. Empty, it names the shortcut the palette listens for; typed
+            in, it offers the way out, the way the kit's own field does. */}
+        <GlassSearch
           ref={input}
-          className="hc-input hc-title"
+          className="hc-input"
+          containerClassName="hc-field"
           value={query}
-          onChange={(event) => onQuery(event.target.value)}
+          aria-label="Suche"
           placeholder="Wonach suchst du?"
+          size="md"
           spellCheck={false}
           autoComplete="off"
-          aria-label="Suche"
+          onChange={(value) => {
+            // Typing always wins (M6), including over the start screen: the first character typed
+            // there leaves it for the list, because a query's only answer is a list of files.
+            if (section !== "files" && value !== "") setSection("files");
+            onQuery(value);
+          }}
+          shortcut="Strg K"
+          onShortcutClick={() => input.current?.focus()}
+          onClear={() => input.current?.focus()}
         />
         <span className="hc-meta hc-status">
           {browse.state.error ? (
@@ -907,9 +1075,33 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
                   ? `${selection.state.indices.size}/${rows.length}`
                   : rows.length}
               </span>
-              <span>{browse.state.order}</span>
+              {/* The label, not the daemon's key: `order` arrives as an identifier („name"), and a
+                  status line read by a person should say what the palette says („Sortieren: Name").
+                  One map, so the header and the palette cannot drift into two words for one thing. */}
+              {/* The order is a question with four answers the daemon already knows, so it is a
+                  press and a menu now (the kit's `GlassButton` + `GlassMenu`) instead of a word
+                  that only told you what you were looking at. The button carries the title the
+                  word had — „Sortiert nach …“ — so the header still names the order in words,
+                  from the same map the palette reads. */}
+              <GlassButton
+                size="sm"
+                variant={sortOpen ? "raised" : "ghost"}
+                className="hc-sort-btn"
+                aria-haspopup="menu"
+                aria-expanded={sortOpen}
+                title={`Sortiert nach ${SORT_LABELS[browse.state.order] ?? browse.state.order} — ändern`}
+                onClick={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  setSortAt({ x: rect.right, y: rect.bottom + 6 });
+                  setSortOpen((open) => !open);
+                }}
+              >
+                <span className="hc-sort">
+                  {SORT_LABELS[browse.state.order] ?? browse.state.order}
+                </span>
+              </GlassButton>
               {operations.clipboard && (
-                <span className="hc-pill" title="Ctrl+V fügt hier ein">
+                <span className="hc-pill hc-clip" title="Ctrl+V fügt hier ein">
                   {operations.clipboard.mode === "move" ? "ausgeschnitten" : "kopiert"}{" "}
                   {operations.clipboard.paths.length}
                 </span>
@@ -921,9 +1113,10 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
               )}
             </>
           )}
-          <button
-            type="button"
-            className={inspectorOpen ? "hc-pill hc-pill-on" : "hc-pill"}
+          <GlassButton
+            size="sm"
+            variant={inspectorOpen ? "raised" : "ghost"}
+            className="hc-pill"
             title="Agenten-Inspektor (Ctrl+Shift+A)"
             aria-label="Agenten-Inspektor"
             aria-pressed={inspectorOpen}
@@ -935,9 +1128,27 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
             }}
           >
             Agenten
-          </button>
+          </GlassButton>
         </span>
       </header>
+
+      {/* The order menu, anchored under the word it belongs to and drawn in a portal, so a narrow
+          tiling column cannot clip it — the same reason the palette is one. Four answers, one of
+          them ticked: what the status line said it was looking at, now also the way to change it. */}
+      <GlassMenu
+        open={sortOpen}
+        x={sortAt.x}
+        y={sortAt.y}
+        align="end"
+        label="Sortieren"
+        items={SORT_ORDERS.map((order) => ({
+          id: `sort-${order}`,
+          label: SORT_LABELS[order],
+          checked: browse.state.order === order,
+          onSelect: () => browse.orderBy(order),
+        }))}
+        onClose={() => setSortOpen(false)}
+      />
 
       {(renaming || creating !== null) && (
         <form
@@ -959,9 +1170,11 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
           <label className="hc-meta" htmlFor="hc-name">
             {renaming ? "Umbenennen" : "Neuer Ordner"}
           </label>
-          <input
+          <GlassInput
             id="hc-name"
             name="name"
+            size="sm"
+            containerClassName="hc-naming-field"
             className="hc-name-input"
             defaultValue={renaming?.name ?? ""}
             autoFocus
@@ -998,9 +1211,9 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
                 ? splitPathName(operations.running.current)
                 : "…"}
             </span>
-            <button type="button" className="hc-pill" onMouseDown={() => operations.cancel()}>
+            <GlassButton size="sm" variant="ghost" className="hc-pill" onMouseDown={() => operations.cancel()}>
               Abbrechen (Esc)
-            </button>
+            </GlassButton>
           </span>
         </div>
       )}
@@ -1015,6 +1228,25 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
       )}
 
       <main className="hc-body">
+        {/* The start screen, or the browser. The header above stays on both, because the field in
+            it is where looking starts and a window that hid it would be a window you have to
+            remember to type into (the first character typed leaves this screen — see `onChange`),
+            and the notices below stay because they are about the daemon, not about a list. */}
+        {section === "overview" ? (
+          <Overview
+            state={stats}
+            windowSecs={windowSecs}
+            onWindow={setWindowSecs}
+            onFiles={() => goSection("files")}
+            onAgents={() => setInspectorOpen(true)}
+            onAudit={() => {
+              // The audit log lives in the panel's Live tab, which is where it is read from.
+              setInspectorTab("live");
+              setInspectorOpen(true);
+            }}
+          />
+        ) : (
+          <>
         <div className="hc-column">
           {/* What this list is, in the daemon's words.
             *
@@ -1046,6 +1278,16 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
               error={places.error}
             />
           ) : (
+          <>
+          {!searching && (
+            <ListHeader
+              order={browse.state.order}
+              reverse={browse.state.reverse}
+              onOrder={browse.orderBy}
+              narrow={!showPreview}
+              hasSalience={rows.some((row) => typeof row.salience === "number")}
+            />
+          )}
           <ResultList
             rows={rows}
             cursor={selected}
@@ -1060,12 +1302,20 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
             visible={visible}
             zoneHues={zoneHues}
             emptyMessage={emptyMessage(searching, browse.state.loading, browse.state)}
+            emptyIcon={emptyIcon(searching, browse.state.loading, browse.state)}
             selectedPaths={targets}
           />
+          </>
           )}
         </div>
 
-        {showPreview && (showBoth || pane === "preview") && <PreviewPane hit={settled} />}
+        {showPreview &&
+          (showBoth || pane === "preview") &&
+          (compared ? (
+            <ComparePane left={compared[0]} right={compared[1]} />
+          ) : (
+            <PreviewPane hit={settled} />
+          ))}
         {showContext && (
           <ContextSidebar
             hit={settled}
@@ -1077,6 +1327,8 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
               browse.goTo(source);
             }}
           />
+        )}
+          </>
         )}
       </main>
 
@@ -1115,6 +1367,8 @@ export function App({ startPath = START_PATH }: AppProps = {}) {
           onCancel={closeChooser}
         />
       )}
+
+      {quickLook && hit && <QuickLook hit={hit} onClose={() => setQuickLook(false)} />}
 
       <AgentInspector
         open={inspectorOpen}

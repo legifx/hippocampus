@@ -99,7 +99,7 @@ content_roots = []             # directories whose file contents may be read (R3
 extra_deny = []                # glob patterns added to the built-in deny-list; it never shrinks
 debounce_ms = 500              # how long a burst of filesystem events is allowed to settle
 reconcile_interval_secs = 3600 # full comparison of index against filesystem
-respect_gitignore = true       # .gitignore and .brainignore are honoured (R2)
+respect_gitignore = true       # reserved — .gitignore is NOT read yet; see the note below the table
 watch_budget = 20000           # inotify watches the daemon may hold; beyond it, degraded and said so
 zone_budget = 64               # how many spatial zones (coloured areas) are detected
 
@@ -149,6 +149,14 @@ send_file_activity = true      # which files were touched (metadata) does, unles
 [log]
 filter = "info"                # a `tracing` filter, e.g. "cortexd=debug"
 ```
+
+**Excluding a tree from the index.** Put an empty file named `.brainignore` in a directory, and
+the daemon leaves that directory and everything below it alone: it is not indexed on the first
+walk, not watched, and the hourly reconcile removes it if it had been indexed before the marker
+appeared. This is the mechanism for build output the built-in list does not know, for a mirror
+of somebody else's data, and for the benchmark corpus inside this repository (its generator
+writes the marker). `respect_gitignore` is accepted but not yet acted on — no walk reads a
+`.gitignore` today; the key exists so that a configuration which sets it keeps loading.
 
 ## 5. Troubleshooting
 

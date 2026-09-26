@@ -15,6 +15,11 @@ async function open(page: Page) {
   await page.goto("/harness.html?at=/&hits=20");
   await page.waitForSelector(".hc-row");
   await page.getByLabel("Suche").fill("module");
+  // Wait for the search to have been *applied*, not merely typed. The context panel is painted from
+  // the first paint — it describes whatever was selected before the query — so „the panel is there"
+  // was never evidence that the results were: the note below was then attached to the entry that
+  // happened to be selected, once every three full-suite runs and never when run alone.
+  await expect(page.locator(".hc-row-selected")).toContainText("module");
   await page.waitForSelector(".hc-context");
 }
 
@@ -53,6 +58,14 @@ test.describe("why is this here", () => {
     page,
   }) => {
     await open(page);
+    // The panel, not the list. `App.tsx` paints this sidebar from `useDeferred(focus)`, so the
+    // highlighted row moves a frame or two before the panel does — and the note is written from
+    // *this* panel. Waiting on `.hc-row-selected` therefore asked a question the window cannot
+    // answer yet: in 1 run of 60 the note went to the directory the list had shown before the
+    // query (`/a-rather-long-directory-name-for-testing`), which is the one thing this test
+    // exists to catch. The app is coherent — displayed subject and acted subject are the same
+    // object — the wait was on the wrong one.
+    await expect(page.locator(".hc-context-title")).toHaveText(/module-/);
     await page.locator(".hc-annotate-input").fill("gehört zum Parser-Umbau");
     await page.keyboard.press("Enter");
 
@@ -61,12 +74,19 @@ test.describe("why is this here", () => {
       () => (window as unknown as { __hcAnnotated?: { path: string; note: string } }).__hcAnnotated,
     );
     expect(written?.note).toBe("gehört zum Parser-Umbau");
+    // The note has to land on the row the query produced. The probe that ran here on 2026-09-17
+    // (printing the window's selection at the moment of the write, over three repeat-each runs)
+    // never caught the failure a second time; the assertion stays because the property is the
+    // point, and `.hc-row-selected` is waited for in `selectAndSearch` above.
     expect(written?.path).toContain("module");
 
     // And the panel re-reads rather than pushing the note into its own list: what it shows has
-    // to be what the daemon stored.
-    const asked = (await calls(page)).filter((c) => c.command === "node_why");
-    expect(asked.length).toBeGreaterThan(1);
+    // to be what the daemon stored. The re-read is a second `node_why` and it is *polled* for,
+    // because the call is issued after the confirmation is painted — reading the log straight after
+    // the confirmation was a race, lost about one full-suite run in three and never alone.
+    await expect
+      .poll(async () => (await calls(page)).filter((c) => c.command === "node_why").length)
+      .toBeGreaterThan(1);
   });
 
   test("Verbunden is a place now, and the panel sends you there", async ({ page }) => {

@@ -20,7 +20,11 @@ const LUMINANCE = `(value) => {
   const parts = match[1].split(",").map((n) => Number(n.trim()));
   const [r, g, b, a = 1] = parts;
   if (a === 0) return 0;
-  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  /* A translucent fill is not a light one: over the near-black window, the colour the screen
+     actually shows is the fill pre-multiplied by its alpha - 5.5% white (the kit's glass
+     fill) is the darkest paint in this window, not the brightest. Multiply first. */
+  /* NB: this function travels as a template string to the page, so no backticks inside. */
+  return ((0.2126 * r + 0.7152 * g + 0.0722 * b) * a) / 255;
 }`;
 
 async function lightControls(page: Page): Promise<string[]> {

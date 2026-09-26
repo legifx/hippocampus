@@ -138,6 +138,12 @@ Three rules, and the first two are what keep the three surfaces from drifting ap
    feature that writes the projection without the assertion has made the index un-rebuildable.
    The failure is silent until somebody runs `cortex rebuild`, and then it is total.
 
+And one bookkeeping rule the test suite enforces: **every RPC method is either a row in
+`cortex-mcp`'s `TOOLS` or an entry in its `NOT_A_TOOL` list with a reason.** A method that is
+neither fails `every_method_is_a_tool_or_deliberately_not_one`. This exists because the other
+failure is silent — a new brain tool that works from the CLI and the socket and simply does not
+exist for an agent on MCP (D106).
+
 The reference for what "not derivable" costs in practice is `crates/cortex-store/src/memories.rs`
 and D74; the tests that hold it are `the_whole_memory_layer_survives_a_rebuild` and
 `a_thousand_memories_survive_a_rebuild`.

@@ -1,0 +1,211 @@
+{
+  "review_date": "2026-09-05",
+  "review_pass": "independent-third-pass (claims verification, empirical audit, disambiguation & agent brain deep-dive)",
+  "reviewer": "Gemini 3.8 Flash (High)",
+  "commit": "45367ca7922747fe19624fbc3688f318ea42d5a2",
+  "parent_reviews": [
+    {
+      "reviewer": "Claude Fable 5.1",
+      "commit": "bbef90d",
+      "file": "review/2026-09-05-review.md"
+    },
+    {
+      "reviewer": "Claude (second pass)",
+      "commit": "8ae1ff8",
+      "file": "review/2026-09-05-code-review.md"
+    }
+  ],
+  "machine": {
+    "os": "Linux (Ubuntu 26.04 x86_64)",
+    "compositor": "niri / Wayland",
+    "gpu": "NVIDIA GeForce RTX 5070 Ti (Driver 595.84, CUDA 13.3)"
+  },
+  "verdict_summary": {
+    "human_navigation_and_search": "met",
+    "human_overview_and_surveying": "met with gap (single flat list only; no multi-column, no Miller columns, no grid, no grouping)",
+    "human_preview_and_disambiguation": "met with critical gaps (512px preview cap, no side-by-side comparison, no zoom/QuickLook, no file diff, 0 tests for same-name files)",
+    "ai_agent_brain_architecture": "met (design, policy, append-only episodes, graph, salience decay, context packs, 2-phase mutation)",
+    "ai_agent_brain_readiness": "built, unproven (0 memories, 0 agent sessions recorded; never used for real tasks)",
+    "performance_latency": "met (all 8 tested latency gates pass comfortably)",
+    "performance_memory": "contradicted and failing (1646 MiB RssAnon vs 250 MiB budget; upward drift from 1524 MiB -> 1563 MiB -> 1646 MiB)",
+    "test_and_ci_hygiene": "contradicted (cargo test red: 1052 passed / 2 failed; npm test red under NODE_ENV=production: 28/56 failed; 0 CI workflows)"
+  },
+  "empirical_measurements": {
+    "process_status": {
+      "daemon": "cortexd",
+      "pid": 109249,
+      "uptime_hours": 2.75,
+      "vmsize_kb": 21338152,
+      "vmrss_kb": 1767416,
+      "rss_anon_kb": 1646768,
+      "rss_file_kb": 110408,
+      "threads": 48,
+      "memory_budget_kb": 256000,
+      "budget_ratio": 6.43,
+      "smaps_breakdown_mb": {
+        "anonymous_allocations": 1089,
+        "heap": 503,
+        "cuda_runtime_libs": 12
+      }
+    },
+    "test_suites": {
+      "rust_workspace": {
+        "command": "cargo test --workspace --no-fail-fast",
+        "passed": 1052,
+        "failed": 2,
+        "total": 1054,
+        "failing_tests": [
+          "cortex-sync::hygiene::the_public_repository_names_no_endpoint_no_private_path_and_no_credential",
+          "cortex-sync::hygiene::the_entire_history_names_no_secret_and_no_private_identifier"
+        ],
+        "cause": "scripts/pre-commit:93 flags https://www.debian.org in packaging/deb/build.sh:56 because debian.org is missing in scripts/pre-commit:94"
+      },
+      "vitest_frontend": {
+        "command_default_test": {
+          "passed": 60,
+          "failed": 0,
+          "files": 7
+        },
+        "command_production_env": {
+          "passed": 28,
+          "failed": 28,
+          "files_failed": 5,
+          "files_passed": 2,
+          "error": "act(...) is not supported in production builds of React"
+        }
+      },
+      "playwright_browser": {
+        "command": "npm run test:ui",
+        "passed": 159,
+        "failed": 0,
+        "duration_seconds": 16.8,
+        "executed_against": "harness.html (in-memory mock fixture)"
+      },
+      "playwright_perf": {
+        "command": "npm run test:perf",
+        "passed": 16,
+        "failed": 0,
+        "duration_seconds": 53.2,
+        "render_p50_ms": 2.4,
+        "render_p95_ms": 10.0,
+        "render_max_ms": 10.1,
+        "worst_scroll_update_ms": 32.5
+      },
+      "ci_pipeline": {
+        "github_workflows": 0,
+        "gitlab_ci": 0,
+        "status": "missing"
+      }
+    },
+    "latency_gates": {
+      "command": "cargo run --release -q -p bench-latency -- --corpus bench/corpus/data/standard",
+      "corpus_paths": 100000,
+      "corpus_chunks": 122137,
+      "corpus_files": 99744,
+      "gates": {
+        "fuzzy_path_match_literal": {
+          "p50_ms": 0.48,
+          "p95_ms": 1.13,
+          "p99_ms": 1.28,
+          "budget_ms": 10.0,
+          "result": "PASS"
+        },
+        "keystroke_path_prefix": {
+          "p50_ms": 0.498,
+          "p95_ms": 7.02,
+          "p99_ms": 9.16,
+          "budget_ms": 10.0,
+          "result": "PASS"
+        },
+        "abbreviation_full_scan": {
+          "p50_ms": 4.0,
+          "p95_ms": 4.79,
+          "p99_ms": 6.48,
+          "budget_ms": 25.0,
+          "result": "PASS"
+        },
+        "bm25_top100": {
+          "p50_ms": 16.02,
+          "p95_ms": 23.99,
+          "p99_ms": 26.21,
+          "budget_ms": 30.0,
+          "result": "PASS"
+        },
+        "bm25_top100_concurrent_writes": {
+          "p50_ms": 19.36,
+          "p95_ms": 28.89,
+          "p99_ms": 32.43,
+          "budget_ms": 35.98,
+          "write_batches": 329,
+          "result": "PASS"
+        },
+        "vector_ann_top100": {
+          "p50_ms": 0.672,
+          "p95_ms": 0.983,
+          "p99_ms": 1.14,
+          "budget_ms": 40.0,
+          "result": "PASS"
+        },
+        "rrf_fusion_salience_boost": {
+          "p50_ms": 0.0105,
+          "p95_ms": 0.0141,
+          "p99_ms": 0.0184,
+          "budget_ms": 5.0,
+          "result": "PASS"
+        },
+        "context_pack_2048tok_5000mem": {
+          "p50_ms": 9.41,
+          "p95_ms": 10.77,
+          "p99_ms": 12.95,
+          "budget_ms": 120.0,
+          "result": "PASS"
+        }
+      },
+      "ungated_reported_metrics": {
+        "worst_case_stopword_query_p95_ms": 95.46,
+        "hybrid_search_p95_ms": 30.53,
+        "hybrid_search_p99_ms": 40.03,
+        "hybrid_keystroke_budget_ms": 80.0,
+        "vector_index_build_time_s": 124.5,
+        "vector_index_resident_mib": 145.3,
+        "path_index_resident_mib": 50.2,
+        "unmeasured_budgets": [
+          "query_embedding (HIPPOCAMPUS_TEST_MODEL unset)",
+          "cross_encoder_reranking_150ms (HIPPOCAMPUS_TEST_RERANKER unset)"
+        ]
+      }
+    },
+    "hippocampus_ai_brain": {
+      "live_daemon_state": {
+        "indexed_files": 102918,
+        "indexed_dirs": 5775,
+        "memory_chunks": 158084,
+        "embeddings_count": 161025,
+        "episodes_logged": 13572,
+        "stored_memories": 0,
+        "active_or_past_agent_sessions": 0,
+        "watcher_directories": 5781,
+        "outbox_pending": 0,
+        "synthetic_benchmark_files_in_index": 293344
+      },
+      "agent_surfaces": {
+        "rpc_methods_registered": 65,
+        "mcp_tools_catalogued": 29,
+        "catalog_drift_protection": false
+      },
+      "live_gating_verification": {
+        "command": "cortex --as reviewer write /tmp/hc_probe2.txt 'test'",
+        "status_code": 1002,
+        "message": "the write allow-list is empty, so no filesystem mutation is permitted",
+        "file_created": false,
+        "audit_entry_created": true,
+        "actor": "agent:reviewer",
+        "tool": "fs.write"
+      },
+      "disambiguation_correction": {
+        "previous_review_claim": "brain.diff exists on the agent surface and could back a human 'compare these two'",
+        "actual_code_reality": "brain.diff is an episode changelog/event-stream (episodes_after) returning Vec<Episode> for agents to avoid polling; it does NOT compare files or images"
+      }
+    }
+  }
+}

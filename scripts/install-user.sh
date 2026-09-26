@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# Install Hippocampus for the current user: five binaries into ~/.local/bin, two systemd user
-# units, and nothing outside the home directory.
+# Install Hippocampus for the current user: five binaries into ~/.local/bin, four systemd user
+# units (two services, a consolidation service and its timer), and nothing outside the home
+# directory.
 #
 # The overlay is installed as a *resident* service (M4, D41): it starts hidden at login and is
 # summoned with Ctrl+Alt+Space. Its cold start is 265 ms — inside the 300 ms the milestone asks
@@ -38,7 +39,8 @@ for binary in "${binaries[@]}"; do
   echo "  ${bin_dir}/${binary}"
 done
 
-for unit in hippocampus-cortexd.service hippocampus-overlay.service; do
+for unit in hippocampus-cortexd.service hippocampus-overlay.service \
+            hippocampus-consolidate.service hippocampus-consolidate.timer; do
   install -m 0644 "${repo_root}/packaging/systemd/${unit}" "${unit_dir}/${unit}"
   echo "  ${unit_dir}/${unit}"
 done
@@ -51,6 +53,9 @@ Installed. Nothing is running yet — enable what you want:
 
   systemctl --user enable --now hippocampus-cortexd.service   # the daemon, at login
   systemctl --user enable --now hippocampus-overlay.service   # the overlay, resident and hidden
+  systemctl --user enable --now hippocampus-consolidate.timer # the nightly pass (D116)
+
+Without the timer nothing consolidates: the pass has no other trigger than a person asking for it.
 
 The overlay is summoned with Ctrl+Alt+Space. If your compositor already owns that combination,
 the service logs a warning and you can bind `hippocampus --show` in the compositor instead.

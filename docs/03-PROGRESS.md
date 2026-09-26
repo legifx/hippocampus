@@ -10,11 +10,35 @@ If you finish work without editing this file, the next agent starts from nothing
 | | |
 |---|---|
 | **Active milestone** | **M12 — The Governed Brain, specified 2026-09-05 (D98–D102), not built.** It is the next thing to build; its first step is origin + authority on every memory. M9 — Release, built on 2026-09-05 (D96, D97) as far as code can build it; its scorecard is the first section below. M7 built the same day (D93–D95). M10 done (D85–D88). M11, M8 and M5 as before. |
-| **Status** | **M9 is built as far as it can be without a second person: `cortex setup`, a `.deb` and an AppDir from scripts that need only what Debian ships, `docs/09-INSTALL.md`, and the hygiene gate run over every tracked file *and every patch in the history* under `cargo test` — see its scorecard. What waits on a human: the timed install by somebody else (§1), and the license (D13).** **M7 is built: the wire format, a derived outbox, two transports, a reference peer, and every one of its five criteria asserted by a test — see its scorecard below. What it does not have is a real peer, which is the Extension's to write as a `sync` plugin.** M10 landed in full on 2026-08-24 — all four steps: `view.open` with one row shape from every source (D85), the memory columns on every row — measured before they were built, and cheaper than the per-row queries they sit beside (D86) — and the places the index makes (D87). Step 2 is complete: its by-hand criterion was checked by the owner against their own index and the salience order held. M6's mandatory list is complete as of the same day: archives (`fs.extract`, D81/D82), thumbnails in the list (D83) and network locations (D84, staged — what is mounted is offered, mounting is not built). What is left of M6 is its own §3, a week of exclusive use by the owner. 1054 Rust tests (2026-09-05), 60 vitest, 159 functional browser tests and 12 perf (run separately, on an idle machine — see the step 3 entry).** **M11 is ten of its twelve criteria in — see its own scorecard below before anything else, and every benchmark gate is green including the new one.** M4 complete. M6's mandatory list is done; its acceptance now needs a week of use rather than more code. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formation, a consolidation pass with a human-readable report, `brain.graph`, and a three-dimensional read-only view of the result that runs live against the daemon and as a single self-contained HTML file. The semantic abstraction step is now built too (D68): concept nodes clustered from co-access and named from what their members' paths have in common. Only promotion into the sync outbox is left, and that belongs to M7. The embedding model is resident on the GPU and the vector arm of search is filling in. **A note on counting, kept because it cost a session:** this file once said 399 tests and accused the previous entry's 812 of being unreproducible. The 399 was wrong — the counting command piped `cargo test` through `tail -60` before summing, so it added up the last few test binaries and silently dropped the rest. The previous entry was right. Count by summing every `test result:` line. Check the measuring tool before disbelieving the measurement; this file already says that about latency, and it applies to counting. |
-| **Last updated** | 2026-09-05, evening (M12 specified — D98–D102, `docs/paper/WHAT-2026-CHANGED.md`; earlier that day M7 built — D93–D95; M9 built — D96, D97) |
+| **Status** | **2026-09-15 (second session), the installation caught up to the tree: five binaries and both units were dated 2026-09-06, so the window was asking a daemon that has no `stats.overview` for one — rebuilt, installed, store backed up (1.1 GB) and migrated to schema 9. `cortex overview` answers in real numbers now (2 657 files, 184 754 vectors at 100 % coverage, 19 186 episodes), and the memory is empty: 0 memories, 0 agent sessions, 2 tool calls. The consolidation pass had no trigger but a person and had not run for 23 days; it is a nightly systemd timer now (D116), verified. M6's mandatory list was checked live where the surface allows it (trash, undo, permissions, symlinks, xdg-mime, places); mounts, thumbnails, archives, drag and drop and SMB/SFTP are not claimed. M12's first step — origin and authority — is next.** **2026-09-15, the explorer's kit pass: the file rows, the column strip, the places column, the empty states and the materials are the kit's now. Two bugs came out of the pictures: every material class had been rendering *no* shadow at all (a token spelled out on top of a token — D112), and the material numbers were this window's at roughly half the kit's dark strength (D113). tsc clean, 76 vitest, build clean, browser suite 187/187 and the perf suite green — the material guard this pass was about had never run in the gate at all, because `test:ui` kept its own list of spec files (it is `playwright test` now). The kit's lit canvas was built, measured and taken out again: its drift cost four composited layers and 48 fps against 60 (D114), and its colours cost the minimalism the concept is built on (D115).** **2026-09-14, interface session two: the showcase's design kit is ported and the UI moved onto it (D110, D111).** **M9 is built as far as it can be without a second person: `cortex setup`, a `.deb` and an AppDir from scripts that need only what Debian ships, `docs/09-INSTALL.md`, and the hygiene gate run over every tracked file *and every patch in the history* under `cargo test` — see its scorecard. What waits on a human: the timed install by somebody else (§1), and the license (D13).** **M7 is built: the wire format, a derived outbox, two transports, a reference peer, and every one of its five criteria asserted by a test — see its scorecard below. What it does not have is a real peer, which is the Extension's to write as a `sync` plugin.** M10 landed in full on 2026-08-24 — all four steps: `view.open` with one row shape from every source (D85), the memory columns on every row — measured before they were built, and cheaper than the per-row queries they sit beside (D86) — and the places the index makes (D87). Step 2 is complete: its by-hand criterion was checked by the owner against their own index and the salience order held. M6's mandatory list is complete as of the same day: archives (`fs.extract`, D81/D82), thumbnails in the list (D83) and network locations (D84, staged — what is mounted is offered, mounting is not built). What is left of M6 is its own §3, a week of exclusive use by the owner. **1060 Rust tests (2026-09-06, all green — the 2026-09-05 suite was 1052/2 on a hygiene false positive, see the reviews section), 60 vitest (green whatever `NODE_ENV` the shell exports), 165 functional browser tests and 16 perf (run separately, on an idle machine — see the step 3 entry).** **M11 is ten of its twelve criteria in — see its own scorecard below before anything else, and every benchmark gate is green including the new one.** M4 complete. M6's mandatory list is done; its acceptance now needs a week of use rather than more code. **M5 complete except its M7 half, and M8 on top of it:** salience with explainable components, decay, tiering, co-access edge formatio... [truncated]
+| **Last updated** | 2026-09-15, second session (the installed system caught up to the tree; the consolidation pass has a trigger at last — D116); before that the same day, the explorer's kit pass — D112 the invisible shadows, D113 the material numbers, D114 the drift that was declined, D115 the flat canvas |
 | **Blocked on** | nothing |
 
 ## Start here
+
+**If you are picking this up after the second session of 2026-09-15, the one thing to know
+first is that the installation was nine days behind the tree** — everything the window had gained
+since 2026-09-06 (the start screen, the Inspector, the memory columns) was in the source and not in
+`~/.local/bin`, which is the whole reason the window looked broken. `scripts/install-user.sh` closes
+that gap; it builds the window through the Tauri CLI, so do not rebuild it with a bare `cargo build`.
+Two files this session added: `packaging/systemd/hippocampus-consolidate.service` and `.timer` — without
+the timer nothing consolidates, which is D116 and was worth 23 days of a stale index. Then read the
+2026-09-15 (second session) entry in the log and M12's `Order of work`: origin and authority first.
+
+**If you are picking this up after the kit pass of 2026-09-15, read three things in this
+order:** the 2026-09-15 entry in the session log below (what the port of the rows, the strip and the
+materials changed, the two bugs it turned up, and the canvas that was built and taken out again),
+D112–D115 in `02-DECISIONS.md` (a material token is listed as an item, never spelled out; the
+material numbers are the kit's dark theme; the canvas does not drift; and the canvas stays flat,
+because a showcase's backdrop costs the minimalism this interface is built on), and §"Ein Kit
+benutzen, nicht nachbauen" of the Hippocampus-UI skill. **The gate itself was the other finding:**
+`test:ui` named its spec files one by one and `tests/materials.spec.ts` — the guard over exactly
+those material numbers — was never in it, so the gate stayed green while the guard never ran; it is
+`playwright test` now. **Nothing is left with the owner from that session**, and one thing is
+deliberately open: whether the file view still reads as "not 100 % the kit" now that the coloured
+canvas is gone — that verdict is the owner's eye, not a measurement. Pictures of the state as it
+stands: `/tmp/hippocampus-shots/v11/` (flat canvas, the state that stayed) and `v10/` (the kit's
+coloured glows, the state that did not).
 
 **If you are picking this up after the M11 session of 2026-08-24, read three things in this
 order:** the M11 scorecard below (what is in and what is not), D74–D80 (why the agent brain is
@@ -93,6 +117,199 @@ subshell and `utime + stime` is a process's own time and not its children's. It 
 every good result and could not be distinguished from one. Point it at `yes > /dev/null` first;
 it must read 100%.
 
+
+## Where the interface stands — rebuilt 2026-09-14 (D108, D109)
+
+The owner asked for the interface to be made better and clearer, and for a start screen that
+summarises what is in the index and how the agents have been using it. Both halves are built and
+tested. What has *not* happened is the owner looking at it — this entry is code and measurements,
+not a review.
+
+**The start screen.** One method, `stats.overview`, answers with everything the screen shows: the
+index counts, the memory facts, how the agents have been using the brain, the last consolidation
+pass, the daemon's own state, and two sentences the daemon writes itself (`headline`, `basis`).
+`cortex overview` prints the same numbers in the same order from the same call, so a number that
+looks wrong can be checked from a terminal. New: `crates/cortex-core/src/overview.rs`,
+`crates/cortex-store/src/overview.rs` (622 lines of counting, ordered deterministically — the store
+test found a real tie-order bug: `ORDER BY count(*) DESC` alone returns rows in arbitrary order),
+the method and its types in `cortex-rpc/src/protocol.rs`, the daemon arm in `cortexd/src/server.rs`,
+the Tauri command and `ipc.statsOverview` in the window.
+
+**The shell.** `ui/src/shell.css` is new and loads after `app.css`, which was not rewritten: the
+overlay keeps its grid and gains one column for the rail. `NavRail.tsx`, `Overview.tsx` and
+`useOverview.ts` are new. The rail names two destinations (*Übersicht*, *Dateien*) and the Inspector
+panel; the places list stays the path it always was, because a rail item for it would be a second
+navigation model beside `browse.state.path` (D109). The window opens on the start screen, and typing
+in the field leaves it on the first character (M6). The rail collapses to 58 px under 720 px and
+keeps its glyphs.
+
+The screen arrives on the window's own springs: one element after another on `spring("content")`
+and `stagger(index)` from `motion.ts`, the same pair the panels use (§5). It was a CSS keyframe
+first, which would have been a second motion system beside the one that already knows about reduced
+motion — `spring()` and `stagger()` collapse on their own, so the screen needs no media query and
+the animation cannot run at all for somebody who asked for less of it.
+
+**The MCP test caught the new method.** `stats.overview` was served by the daemon and was neither an
+MCP tool nor on `NOT_A_TOOL`, and `every_method_is_a_tool_or_deliberately_not_one` refused to let
+that pass silently. The reason is now written down beside it: it is the window's summary, its two
+sentences are written for a reader rather than a caller, it carries the daemon's own paths and
+uptime, and `brain_report` is what an agent should read.
+
+**The German was wrong, and running the thing is what said so.** `cortex overview` against a
+throwaway root printed „Kein Agent hat die Oberfläche letzte 24 Stunden benutzt" and „Das Fenster ist
+letzte 24 Stunden" — a label that reads fine above a number does not survive being put into a clause.
+There is now `Overview::window_phrase`, built from `window_label`'s own arms, and a test that pins the
+two to the same window length: 72 hours stays „in den letzten 72 Stunden" instead of becoming „in den
+letzten 3 Tagen" beside a label that says hours. It did exactly that in the first version, and the
+test was written to catch it.
+
+**The file manager came next, and the type stopped being a fixed number.** The owner's second
+reading of the shell was that it had been built *around* the file manager — the rail, the start
+screen and the animation were new while the list, the panels and the place column still wore their
+original sizes — and that the text did not fit its boxes: „in der suchleiste der text von der
+größe nicht an das Feld angepasst“, and the face should be something like SF Pro Display.
+
+- **One scale instead of forty-odd sizes.** Seven steps, each clamped to the window width (§3 of the
+  design system has the numbers), replacing 43 fixed `px` declarations across `app.css`, `shell.css`
+  and `tokens.css`. The four relative sizes left (`0.75em` and its neighbours) stayed relative on
+  purpose: a mark printed inside a row should follow the row, not the window. At about 1024 px every
+  step is the size it used to be; a narrow window gets the same relationships smaller and a wide one
+  larger, which is what „responsive" has to mean for type rather than for boxes alone.
+- **The field is a field.** It was a bare 15.5 px input on a transparent line — 21 px tall inside a
+  48 px strip — because the text and the box were two independent numbers, which is exactly why
+  they agreed at one window width and nowhere else. It is a recessed pill now (`--hc-well-fill`,
+  `--hc-well-rim`, the material already in §2b) with a magnifier, a „Strg K" cap while it is empty and
+  a way out of a query once one is typed; every measurement inside it is `em` against its own step, so
+  the pill and its text are one decision. The strip's padding is `em` too and follows.
+- **The header wraps at 400 px instead of hiding things.** Three `display: none`s (the sort label,
+  the shortcut cap, the clipboard pill) were buying room for the field by subtracting what the header
+  said; the room they bought was measured — 79 px of input, under the width the layout test calls
+  usable — and the honest version is that the header takes two lines: the field first, the counts
+  under it, right-aligned. Nothing is hidden, nothing is clipped, and the field is 234 px wide at
+  400 px instead of 79.
+- **The face is the one that was asked for.** `SF Pro Display` is first in the stack, so a machine
+  that has it uses it. It cannot be shipped — SF is Apple's and not redistributable — so the stack
+  falls back to `Inter Display`/`Inter`, which is installed here and is what the pictures show. The
+  fallback is written down in §3 so a screenshot is not read as a Mac.
+- **The file manager itself.** Rows carry a hover state and a selection that is a fill *plus* a 2 px
+  accent bar (hover and selection used to be the same faint tint, so neither could be read); they are
+  set one step below the panels' prose, so a name is no longer the same size as the sentence about it;
+  and their rhythm is `em`, so the pitch follows the type. The place column is the same step and the
+  same pitch — the sidebar and the list are two columns of one screen and the eye compares their
+  rhythm whether or not the code does. The inspector's values are no longer the same dim grey as the
+  captions they sit under.
+
+**The third defect was in the columns, and only a picture could show it.** Photographing the file
+manager (`/tmp/hippocampus-shots/v3`, throwaway spec, nothing asserted) turned up a heading that was
+not over its own values: `Salienz` stood above `drwxr-xr-x`. Two causes, both real:
+
+- The row never rendered the salience value. The heading named a column whose cell did not exist, and
+  the permission string slid up into the gap it left — the heading was a claim about a value that
+  never arrived.
+- `hasSalience` was `rows.some((row) => row.salience !== null)`, and `!== null` is *true* for
+  `undefined`: the column appeared even when no row carried a number. It is `typeof … === "number"`
+  now, the value is rendered in the header's own order, and heading and values are given the same
+  `em` tracks. Measured at 1440 px: each heading sits within 0.5 px of the right edge of its values.
+  A test in `memory-columns.spec.ts` measures that, and also that the metadata cannot push out of its
+  row — it sat in the row's `auto` track sized to its own max-content and ran out over the panel
+  beside it once the columns had widths.
+- A directory has no size in a listing, so the cell says `—`, the mark the inspector already uses for
+  a number it does not have; a blank cell reads as a zero.
+
+An attempt in between — moving the „neu" badge into the name cell, on the theory that it pushed the
+permission column sideways — was wrong twice over and is recorded because it was reverted: the
+metadata is right-aligned with fixed tracks, so a badge in front of the first track cannot move the
+ones behind it, and `.hc-row-name` is what the tests, the screen reader and the row's accessible name
+read as *the name*, where „neu content.png" is not one. `browse.spec.ts` caught it.
+
+**Rendering it found two things the tests could not.** The screen was photographed at 1440, 1024,
+700 and 400 px (`/tmp/hippocampus-shots`, made with a throwaway spec that asserted nothing and was
+deleted again — a picture is not a test), and reading the pictures turned up two defects:
+
+- The header's status line printed the daemon's *key* for the sort — „5 name" and „0 name" on the
+  start screen — which is one English identifier in the middle of a German sentence on the screen
+  that is looked at most. It now prints `SORT_LABELS[...]`, the same map the palette's action uses
+  („Sortieren: Name"), so the two cannot drift into two words for one thing. One browser test
+  (`browse.spec.ts`) pins it.
+- At 400 px the 58 px rail was still printing its footer *values* with their keys hidden, which
+  squeezed „0.4.1 · 2 h 14 m" and the write path into `/ho….` — noise where a glance wants a shape.
+  The values go with their keys now, the agent chip keeps its dot and loses its word (the word
+  stays as its `title` and its accessible name, so nothing is carried by colour alone), and the
+  header drops its sort label so the search field keeps its width.
+
+**Tests.** 181 functional browser tests — 15 new in `tests/overview.spec.ts` plus one in
+`browse.spec.ts` for the sort label, the other 165
+unchanged — 60 vitest, and 1081 Rust tests across the workspace, all green (`cargo test --workspace`:
+1081 passed, 0 failed — 1079 before this work plus the two that pin label and phrase together). The
+harness now opens on the browser unless `?section=overview` is asked for, for the same reason `?at=`
+exists: a test about the list should not begin by leaving a summary.
+
+The path was also walked end to end for real, not only under fixtures: a throwaway daemon
+(`cortexd --root /tmp/hc-live2`), five indexed entries, `cortex overview` — which printed
+`4 files, 1 directories, 0 chunks, 0 vectors (0 % covered), 5 episodes (5 in den letzten 24 Stunden)`,
+the daemon's headline and basis, and `daemon 0.0.1 schema 9, up 8s`. That is the RPC method, the
+daemon's counting and the CLI's printing, all three exercised against a real database. The
+*temporary* root was thrown away afterwards; the installed daemon on this machine (`~/.local/bin`,
+built 2026-09-06) is untouched and predates this work, so it does not yet answer `stats.overview`.
+
+**What the new browser tests found,** all three of them real and all three in `shell.css`:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| The screen scrolled sideways at 400 px, by 128 px | a card track `minmax(320px, 1fr)` in a 316 px column | `minmax(min(320px, 100%), 1fr)` |
+| A session line ran 58 px past its card | `.hc-session-meta` was a nowrap flex row | it wraps, with a 2 px row gap |
+| The allow-list chip ran 140 px off the screen | a path in a chip that could not break | the long chip wraps at the slashes instead of being cut off |
+
+## Where the reviews of 2026-09-05 stand — answered 2026-09-06
+
+Three reviews of the same day (`review/README.md`: a survey, a claims-verified second pass, and a
+third by another model) named twelve findings between them. This is what happened to each. Every
+"done" below was verified in this session by the command named; the numbers are in the last
+column of the table and were taken on the reference machine, not read from a document.
+
+| # | finding (review) | what was done | verified by |
+|---|---|---|---|
+| 1 | No CI; gates run only when somebody types them (2nd §1.3, 3rd F04) | `.github/workflows/ci.yml` — fmt, clippy, `cargo test` counted by summing every `test result:` line, `npm test`, Playwright; `bench-latency` on demand (D106) | the file exists; its commands are the ones run below |
+| 2 | Rust suite red: hygiene gate flags `debian.org` (2nd §1.1, 3rd F05) | allow-list widened with the documentation hosts it lacked; error text no longer invites `--no-verify` (D106) | `cargo test --workspace --no-fail-fast` → **1060 passed, 0 failed** |
+| 3 | `npm test` red under `NODE_ENV=production` (2nd §1.2, 3rd F08) | `NODE_ENV=test` pinned in `vite.config.ts` and the `test` script (D106) | `NODE_ENV=production npm test` → **60 passed** |
+| 4 | Daemon `RssAnon` 1.5–1.6 GB against 250 MB, CUDA runtime resident (all three) | `embedding.unload_after_idle_secs` (default 600): the ONNX session is put down after idling, the index stays; a query while it is down is answered by two arms and triggers the reload in the background; the spec row now names its configuration (D103) | unit tests for the release/reload; `cortex model reload` measured at 1.58 s (why a query must not wait). **The effect on `RssAnon` is not yet measured — it needs the new binary running for ten idle minutes; see below** |
+| 5 | Same-name disambiguation untested; no side-by-side; preview capped at 512 px, no zoom (all three) | `ComparePane` (two selected rows → both, differences marked), `QuickLook` (Space / Ctrl+Space, screen-sized up to 2048 px, fit / 1:1), `disambiguation.spec.ts` with six tests (D105) | `npm run test:ui` → **165 passed** (159 + 6) |
+| 6 | Benchmark corpus inside the live index: 293 k synthetic files (2nd §4.4, 3rd F06) | `.brainignore` marker honoured by the first walk, the reconcile and the watcher; the generator writes it; written to `bench/corpus/data/` on this machine (D106) | walker tests in `indexer.rs` and `reconcile.rs`, including "a marker added later removes the tree on the next scan". **The live index clears at the next hourly reconcile of the new binary, or `cortex reconcile`** |
+| 7 | Contention gate's budget derived from its own measurement (2nd §4.2, 3rd F10) | fixed 45 ms = 1.5 × the specified BM25 budget; the ratio to the run's own baseline is printed as information (D104) | `bench-latency` → 28.73 ms against 45 ms, 1.24× own baseline, PASS |
+| 8 | Query embedding and rerank never measured (2nd §4.2, 3rd F11) | the bench looks in the daemon's model store when the environment is silent; query embedding gated at 40 ms CPU (D104); the rerank stays "not measured" on this machine because no cross-encoder has been fetched | `bench-latency` → **3.98 ms P95** (onnx, cpu, 8 threads), all 9 gates PASS |
+| 9 | MCP tool table can drift silently from the RPC registry (2nd §3.2, 3rd F09) | `NOT_A_TOOL`: every method is a tool or excluded with a reason, asserted (D106) | `cargo test -p cortex-mcp` → 5 passed |
+| 10 | No details view / column headers, no grouping; neither recorded as a decision (2nd §2.3, 3rd F07) | column headers over a listing, clickable, showing the order (`ListHeader`); grouping, Miller columns and grid **deferred and recorded** (D105) | `disambiguation.spec.ts` "the listing has column headers" |
+| 11 | The brain has never been used: 0 memories, 0 sessions (all three) | **not code.** Still open; only the owner can do it | `cortex memories --json; cortex sessions` |
+| 12 | 159 browser tests run against a fixture (2nd §2.4, 3rd F12) | **correct as designed**, nothing changed; the real-daemon coverage is `ui/src-tauri/tests/against_daemon.rs` and the Rust integration tests | — |
+
+**Found on the first deployment, 2026-09-06, and fixed the same night (D107):** the embedding
+stage rebuilt the whole vector index every five minutes (`expected=49257 present=49258`, twelve
+seconds each) because a re-extracted file's deleted chunks left their vectors in the index and
+nothing removed them; deleted ids are now noted in `dead_chunks` and their vectors dropped on the
+next idle pass. And the idle release of D103 was never reached from the settled path the stage
+takes on every idle pass — fixed; the first deployment ran twenty idle minutes without a release.
+One measurement from that deployment is worth keeping: with the model resident on CUDA and only
+84 chunks embedded since start, `RssAnon` was **213 MiB** — inside the 250 MiB budget. The
+1.5 GB of the reviews was the runtime's pools after embedding 160 000 chunks, so the pools grow
+with work done and the idle release is what gives them back.
+
+Also fixed while in there: `respect_gitignore` was documented as honoured and was not read by
+any walk. The config comment and `09-INSTALL.md` now say so; the key stays so configs keep loading.
+
+**What waits on the owner, in order:**
+
+1. **Restart the daemon on the D107 build, let it embed something, then measure.** After ten
+   minutes with no search and nothing to index: `grep RssAnon /proc/$(pgrep -x cortexd)/status`,
+   and `journalctl --user -u hippocampus-cortexd -o cat | grep -i "released after idling"` for
+   the release line. Also confirm the rebuild loop is gone: no `rebuilding the vector index`
+   lines after an edit under `~/Projects`.
+2. ~~`cortex reconcile`~~ — done 2026-09-06: the index went from 102 900 to 2 191 files.
+3. The two thirty-second checks that have been open since August: drag a row into another
+   application; copy in the overlay, hide it, `wl-paste --list-types`.
+4. **Use the brain for one real task through Claude Code, twice** (M11 §12). Still the one
+   criterion that decides whether the most novel half of the project earns its budget.
+5. Then M6 §3's week, the Inspector layout, the Extension bridge — the owner's order.
+
 ## Where M12 stands — specified 2026-09-05, not built
 
 **Read `docs/paper/WHAT-2026-CHANGED.md` first, then M12 in `docs/01-BUILD-PROMPT.md`, then
@@ -126,6 +343,55 @@ nothing from it is vendored here, and paths into it must not be committed (R9).
 5. **Per-kind half-lives** (D100) and **adaptive fusion**: criteria 9, 13 — *after* 3, because
    3 decides whether they stay.
 6. **Fitted weights** (criterion 14) last; it is advice, and it needs the log to have history.
+
+### Step 1 — origin and authority: the file map, written before the build
+*Written 2026-09-15, at the start of the build. D98 is the decision; criteria 1–4 of M12 are the
+target. Read this before touching anything, so the migration is designed once.*
+
+**What exists.** `nodes` carries `path, parent_id, mime, size, mtime, ctime, inode, dev,
+content_hash, tier, salience, pinned, zone_id, first_seen, last_seen, extract_state, extract_note,
+label`. `memories` carries `node_id, scope, …` and **no** authority, basis or validity. The schema
+files are numbered `0001`–`0009`, so step 1 is **`0010_origin_authority.sql`**. Nothing in
+`cortex-*` matches `authority`, `motivated_by` or `untrusted` outside comments — the patch is as
+unbuilt as the documents say.
+
+**The pattern to follow, already in this codebase.** `cortex-store/src/graph.rs` says it for
+`annotations`: *"The row in `annotations` is derived; the authority is the `annotate` episode it came
+from."* Origin and authority are the same shape: written into the episode, projected onto the node
+and the memory, and reproducible by `cortex rebuild` (R10, criterion 4's second half, criterion 6).
+
+**Where each piece goes.**
+| piece | file |
+|---|---|
+| two enums, `Origin` and `Authority`, with `Ord` so "lowest wins" is one call | `crates/cortex-core/src/model.rs` |
+| `origin` on `nodes`, `authority` + `basis` on `memories`, `valid_from`/`valid_to` for step 2 | `crates/cortex-store/src/schema/0010_origin_authority.sql` |
+| the projection: episode → node, and the rebuild path that reproduces it | `crates/cortex-store/src/memories.rs`, `crates/cortex-store/src/graph.rs` |
+| the write path: defaults per origin, the imperative detector, inheritance from `basis` | `crates/cortex-store/src/memories.rs` + `crates/cortex-agent/src/memory_tools.rs` |
+| the tool surface: `origin`/`basis`/`motivated_by` fields, and the MCP descriptions that say to send them | `crates/cortex-core/src/tools.rs`, `crates/cortex-mcp/src/tools.rs` |
+| the refusal: a gated write whose `motivated_by` memory is below `instruction` | `crates/cortex-core/src/denylist.rs` and the gated path in `cortex-core/src/tools.rs` |
+| the label in the pack, plus the `omitted` accounting | `crates/cortex-agent/src/brain_tools.rs` (`brain.context`) |
+| the human path: `--as human` on the CLI, the Inspector's confirm | `crates/cortex-cli/src/main.rs`, `ui/src-tauri/src/lib.rs`, the Inspector |
+
+**Four things that will bite, in the order they will bite.**
+1. **`origin = human` must be unforgeable from the socket** (criterion 1). The socket knows its
+   actor — `--as` and the MCP server's `--actor` — so the rule is: `origin` is derived from the
+   *connection's* actor, never from the request body. A request that asks for `human` gets the
+   policy error, not a quiet downgrade, because a silent downgrade is indistinguishable from a bug.
+2. **The imperative detector is a heuristic and must be named as one.** "Anything that parses as an
+   imperative aimed at an agent" (D98) decides `untrusted`. It will have false positives; it must
+   therefore only ever *lower* authority, never raise it, and its verdict belongs in `why` where a
+   human can overrule it. A false positive costs a promotion step, not a wrong action.
+3. **`basis` is what makes criterion 2 testable**, and it is the *only* input to inheritance —
+   derived from `supersedes`, from the `about` path, and from anything an agent names. If a memory
+   cites a `file` chunk, the file's `observation` ceiling applies whatever the request said. Three
+   levels deep is the test (criterion 2's chain of three).
+4. **Rebuild is the criterion nobody remembers to test.** `cortex rebuild` must reproduce both the
+   labels and any elevation, because the elevation is an episode and the label is a projection. If
+   the derivation lives anywhere else, criterion 4's second half fails and nothing else notices.
+
+**First slice, and what "green" means for it:** the two enums, the migration, and
+`origin = f(connection actor)` with a test per surface (MCP, socket, CLI-as-human, Inspector).
+Criterion 1 is that slice, and it is worth finishing alone rather than half of four things.
 
 ### What waits on the owner
 
@@ -906,6 +1172,310 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
 
+### 2026-09-17 — M12 step 1: the origin is projected from the episode, and the red test was a test
+
+The session in the order the work demanded: the previous agent's two open problems first, then the
+last of the design-kit port, then M12 step 1.
+
+**The red test in `ui` was a test bug, and the wrong half of a decision was documented.**
+`cargo test -p hippocampus-ui` failed on the connect test because `bridge.rs` now sends
+`identify` on connect (D117) and the fake daemon answered *every* request with a notification — the
+test saw two messages and its assertion "the notification was the answer" had nothing left to point
+at. Fixed in the fake daemon (it records what it heard, so the property is still checked) rather
+than by weakening the bridge. `cortex-rpc/src/protocol.rs` also still said an unclaimed connection
+is `human` — the comment and the default outlived D117 and would have taught the next reader exactly
+the thing that decision forbids. It now says `unknown`. `cargo test -p hippocampus-ui`: 36 green.
+
+**The design-kit port is finished.** Every hard-coded colour left `app.css`/`shell.css`
+(`tokens.css` gained the last of them), QuickLook's zoom control — the last button in the
+application that owned its own fill — became a `GlassButton`, and ConflictDialog's two sides sit on
+the kit's `well`. The port is now *enforced*: `ui/src/test/architecture.test.ts` fails on any hex or
+`rgba()` outside `tokens.css` ("a hex colour outside tokens.css means the design document stopped
+being the contract"). Falsified with a probe stylesheet before being believed.
+
+**The Playwright flake is found and fixed — in the test.** Reproduced with
+`npx playwright test --repeat-each=3`: 561 executions, 1 failure, in
+`sidebar.spec.ts › a note can be written without leaving the window or touching the file`. The note
+went to `/a-rather-long-directory-name-for-testing` — the *directory* the list had shown before the
+query — while the assertion wants the row the query produced. Playwright's failure snapshot showed
+the window in the right state (module-0 selected), so the note was written *before* the window
+caught up. The cause is in `App.tsx`, not in the daemon: this sidebar is painted from
+`useDeferred(focus)`, so the list highlight moves a frame or two before the panel does, and the note
+is written from the panel (`ipc.annotate(hit.path, …)` in `ContextSidebar`). Displayed subject and
+acted subject are the same object — that is coherent — but the test waited on `.hc-row-selected`
+(the list) and the app could not answer that question yet. The wait is now
+`expect(page.locator(".hc-context-title")).toHaveText(/module-/)`: the panel, not the list. The
+property is unchanged and is the point of the test.
+
+The same `--repeat-each=3` run found *two more* of the same class, in tests nothing had touched:
+`layout.spec.ts › the button and Ctrl+Shift+A are the same control` waited 30 s for a panel that
+never opened, because the keystroke went into the gap between `page.goto` and the app's focus effect
+— the shortcut is a React handler on the window's element, so a key pressed while `<body>` has the
+focus bubbles past it and is gone, and nothing presses twice. It now waits for
+`expect(page.getByLabel("Suche")).toBeFocused()` first. And `disambiguation.spec.ts › Quick Look
+shows the file as large as the window` read `after[after.length - 1]` and caught the *pane's* 512
+request: the pane behind the overlay is still mounted and may re-request, so "the last request" is a
+race. The property is "exactly one request is larger than the pane's, and it is this file", which is
+now what it asserts. `--repeat-each=3` afterwards: **561 passed, 0 failed** (56 s), and `tsc --noEmit`
+clean before it.
+
+One residual, deliberately not claimed as fixed: in a *pre-fix* tree the same sidebar test also
+failed twice in six suite passes as a 30 s test timeout *inside* `page.evaluate` (`calls(page)`) —
+the renderer's main thread not answering, not the wrong subject. It has not reappeared in 561
+post-fix executions, and the plausible cause is load rather than a wait: `playwright.config.ts` runs
+`fullyParallel` with one worker per core, each building a 10 000-row fixture in-page, and this box
+had load 17 on 16 cores with 1 GB free RAM and a 99 %-full root disk while it ran. If it comes back,
+measure before believing a wait is at fault: `npx playwright test --workers=4` on the same tree
+separates "the test asks the wrong question" from "the box cannot hold sixteen of these pages at
+once". Reducing the default worker count is a change to how everybody runs the suite, so it is left
+as a decision rather than made quietly here.
+
+**M12 step 1 (criteria 1 and 15).** Migration v10 `0010_origin_authority.sql` — five columns and one
+index, additive, `rebuilds_tables: false`; `nodes.origin`, `memories.authority`, `basis_json`, and
+the two validity columns. The derivation lives in *one* place, `Store::remember`: origin is a
+function of the connection's actor, authority is that origin's ceiling, and no request type in
+`cortex-rpc` has either field, so criterion 1 is a property of the protocol's shape. `replay_memories`
+re-derives both from the episode's actor instead of copying the projection (R10), and `canonical_dump`
+now carries them, so a rebuild that derived differently fails the dump comparison. `Memory` and every
+pack `Basis` carry both fields and a pack item serialises them unconditionally; the CLI's `memories`
+and `recall` print them as `as instruction (human)`. The backfill rule and its reasons are D118.
+
+Evidence: 3 new store tests (the backfill keeps the least: an old chunk is `file`, an old community
+node takes its episode's actor, an old agent memory row is `observation` and *not* a fact; the
+validity columns stay empty rather than being filled with `ts`), a rebuild test that writes as
+`agent:a` and earns `agent`/`fact` through a replay, and the per-surface test
+`every_surface_writes_the_origin_its_connection_implies` in `cortexd/tests/three_surfaces.rs`, which
+writes the same sentence over MCP, over the CLI as the human, over the socket the window uses, over
+an unidentified socket and over a CLI with no `--as`, then reads all five back. Criterion 15: the
+per-surface test was falsified by making `Origin::from_actor` return `Human`, and it failed on the
+first assertion — with every memory in the pack coming back as `authority: instruction`.
+
+What step 1 does *not* do, so nobody reads the green as more than it is: the pack **renderer** still
+prints no labels (the fields are on the items; the text an agent reads does not yet say them — the
+open design question is where a label goes in a token budget, and the honest rule is probably
+"whenever the item is not the human's"); `basis_json` is written by nobody yet; criteria 2 to 4
+(inheritance, the imperative detector and `pending`/`untrusted`, elevation as an episode) are
+untouched; the Inspector does not show the two fields yet; and the validity columns are deliberately
+empty until step 2 gives `remember` a field for them.
+
+For the next agent: `cargo build --workspace --bins` before judging a `three_surfaces` failure —
+that test shells out to `target/debug/cortex`, and a stale binary serialises the pack without the
+newest fields and looks exactly like a surface disagreeing (the assertion message now says so).
+`migrate_to(&mut conn, 9)` in `cortex-store/src/migrations.rs`'s test module is how a pre-migration
+store is built. And `canonical_dump` is the evidence for R10: if a column matters to a rebuild, it
+belongs in that dump or the rebuild tests are not testing it.
+
+### 2026-09-15 (second session) — the installation was nine days behind the tree, and the pass had no trigger
+
+The owner's order for this session: *"Fang jetzt an das ganze GUI komplett funktionsfähig und
+effizient ist. Und mache die Agent Pipeline noch fertig. Heißt: Agents anbinden, Hippocampus Brain
+vollständig einbauen und laufen lassen, Page zur visualisierung über die GUI, direkte Verbindung mit
+dem Main Brain auf dem server, nachtragen aller daten in das Brain."* The first hour went into
+finding out what "not functional" actually meant, and it was not the window.
+
+**What was installed was from 2026-09-06.** All five binaries and both units still had that date:
+`cortexd`, `cortex`, `cortex-mcp`, `cortex-preview` and `hippocampus` itself. Everything the last
+two sessions built for the window — the start screen's `stats.overview`, the Agent Inspector and its
+five tabs, the whole memory column — was written *after* that binary was installed, so the window on
+this desktop was asking a nine-day-old daemon for methods it does not have. Nothing in the window's
+code was broken; the installation was. Rebuilt and installed with `scripts/install-user.sh` (which
+builds the window through the Tauri CLI on purpose — a plain `cargo build` bakes the dev server's
+URL into it), with the store backed up first (1.1 GB, `~/.local/state/hippocampus/backups/`), the
+daemon stopped and started, and the migrations ran through to schema 9 without a complaint.
+
+**What the daemon says about itself now**, `cortex overview`, 2026-09-15: 2 657 files, 564
+directories, 53 247 chunks, **184 754 vectors, 100 % covered**, 19 186 episodes (1 093 of them in
+the last 24 hours), 1 concept, 80 associations, 14 zones, 15 annotations, 193 duplicate files, and
+last pass — 23 days ago. The memory is empty: **0 memories, 0 human-confirmed, 0 superseded**; the
+agent surface is nearly untouched: 0 sessions, 2 calls, both `fs.places`. That is the honest state of
+"the brain runs": the index is alive and watching, the memory layer is built and has never been fed.
+
+**The pass had exactly one trigger, and it was a person.** Nothing in `cortexd` schedules
+consolidation and no timer existed, so it ran when somebody typed `cortex consolidate` — hence 23
+days. An index that is never consolidated has no tier movement and nothing decays, which makes
+salience, pinning and tiering look like decoration. Fixed as infrastructure rather than core work:
+**D116**, `packaging/systemd/hippocampus-consolidate.service` and `.timer` (03:00, `Persistent=true`
+— the machine is not awake at 03:00 every night, and a job that silently did not happen is
+indistinguishable from a quiet index). The timer calls `cortex consolidate`, which is a *client*
+call into the daemon (`brain.consolidate` over the socket), so the single-writer rule holds and
+nothing here needs the store. Verified: the timer is enabled and scheduled for 2026-09-16 03:00,
+`systemd-analyze --user verify` is clean, and starting the service by hand returned
+`Result=success` with a fresh pass in `cortex report` (138 ms). `install-user.sh` and
+`uninstall-user.sh` know about four units now, and the install note says out loud that the timer is
+what makes the brain run by itself.
+
+**M6's mandatory list, checked live against the running daemon** (`/tmp/hc-audit/`, not the home
+directory): trash ✓ and `cortex undo` ✓ — and the file landed in `/tmp/.Trash-1000/files/`, which is
+the spec's per-filesystem top-level trash rather than `~/.local/share/Trash`, so that item is worth
+checking on a second filesystem for exactly that reason; permissions, ownership and symbolic links ✓
+(`cortex ls` prints `lrwxrwxrwx legi legi 5 link.txt -> a.txt`); `xdg-mime` open-with ✓ (`cortex
+apps` on a `.txt`: DMS Notepad as default, Vim listed); `places` ✓; `stat` ✓. Not yet checked live,
+and therefore not claimed: mounts (no device was plugged in), thumbnails, archives, drag and drop,
+SMB/SFTP.
+
+**The gate, run after the swap:** the Rust workspace suite is green — **1 081 tests, exit 0** —
+and the window's gates are where the last session left them (76 vitest, 187 browser tests, the perf
+suite 16/16).
+
+**The efficiency baseline, taken while nothing was happening** (hidden overlay, no search open):
+`hippocampus` 69 MB RSS, 30 threads, **0.10 % of one core**; `cortexd` 89 MB RSS, 48 threads,
+**0.40 %**; the store 1.1 GB plus 47 MB of vectors. So the resident window is not the problem it is
+often assumed to be, and "efficient" in this session's order is about the *store* first: 193 files
+have a byte-identical twin in the index, 2 366 touched nodes have nothing linking to them, and
+184 754 vectors cover 53 247 chunks. Those are the numbers to move.
+
+**The first slice of M12 step 1 is in the tree.** `Origin` (human · agent · tool · file · peer)
+and `Authority` (untrusted · observation · fact · instruction) live in
+`crates/cortex-core/src/memory.rs`, each with the three rules that are decisions rather than
+conveniences: `Origin::ceiling()` (only a human origin may create an instruction),
+`Authority::may_motivate_a_write()` (only an instruction may be the stated reason for a gated write)
+and `Origin::is_trusted()` (a file and a peer are not two witnesses). The variant order of
+`Authority` *is* the inheritance rule, so `min()` is the whole arithmetic of criterion 2. Six new
+unit tests; `cargo test --release -p cortex-core --lib memory` → **16 passed, 0 failed**. Next in
+this step: `0010_origin_authority.sql`, then `origin = f(connection actor)` (criterion 1), then
+`motivated_by` in the gated path (criterion 3).
+
+**Criterion 1 has its teeth, and they were not where the plan expected them.** The socket could
+not name its own origin — but it did not have to: `Actor::Unknown` did not exist, so an un-identified
+connection *was* the human by default (`actor_from_client(None)` and the daemon's initial `ctx.actor`
+both said `Human`, justified by a comment that read "the one that grants nothing"). Measured: every
+read and every pass this session ran was written into the episode log as `human`, including the ones
+an agent ran — the log could not tell us apart. **D117** closes it: un-identified is the weakest
+origin (`peer`, authority capped at `observation`), the window says `human` explicitly when it
+connects, the CLI does it with `--as human`, and the daemon's search episode stops claiming to be a
+person. One consequence for the person at the terminal, written down because it will be noticed:
+`cortex remember "…"` without `--as human` stores an observation, not an instruction. That is the
+point of the label, not a side effect. `cargo test --release -p cortex-core -p cortex-agent --lib`
+→ **146 + 114 green**.
+
+**What this session did not touch:** M12 itself. Its first step — origin and authority (D98,
+criteria 1–4) — is still the next thing to build, and the plan's own order (`Where M12 stands`) says
+it goes first. The two other blocks behind the owner's order are M7 to a real peer (the Core's half
+is built and green; what is missing is the Main Brain on the server, which does not exist there yet
+— `jlhome6353` has no cortex binary, no unit and no store), and the backfill: 28 projects' worth of
+documents and insights into a memory that currently holds zero.
+
+### 2026-09-15 — the file explorer in the kit's clothes, and two bugs the materials had been hiding
+
+The kit port of 2026-09-14 named three places still in the hand-written skin: the file rows, the
+panels' inner lists, the places column. This session ported them — and then found out why the result
+still looked flat.
+
+**The rows.** A row carries the kit's separator now: 1 px, at the row's bottom edge, inset past the
+icon column and 12 px short of the right edge, and it is *gone* on a selected row so no seam runs
+through the fill D15 paints. The rule lives on the row's own `::after`, which is why `.hc-row` grew
+a `position: relative`. Measured on a crop: the rule reads 57.1 against a row fill of 41.1. Held by
+`tests/layout.spec.ts`, which asks the engine rather than the eye —
+`getComputedStyle(row, "::after")` is 1 px, `left` past the border, `right` 12 px, `opacity` 0 on
+the selected row.
+
+**The column header is the kit's strip.** It had been a heading row with a rule under it and, as the
+probe showed, a *two-row* grid: `.hc-list-header-meta` asked for `grid-area: meta` in a strip that
+declared no such area, so the grid invented two 0 px columns and a second row, and the three
+headings stood half a line below „Name". Existing coverage could not see it because it compares the
+*right* edges, which were correct. The strip declares `grid-template-areas: "name meta"` now,
+carries the kit's material (`glass-flat glass-weak`), and is 30 px tall where it was 52. Headings and
+their values are set in `--hc-text-dim` (0.55) — measured 158.1, the same step as the metadata they
+head.
+
+**The empty state** is the kit's: a 72 px glass circle with the glyph of the search it belongs to
+and the sentence under it — and *no* circle where there is nothing to search with (a dead share, a
+refused read), because a circle there would decorate an error. **The breadcrumb** hovers like the
+kit's (`accent-soft` plus primary text), and so does the rail's current entry.
+
+**Then the two bugs, both found by measuring rather than by looking.**
+
+1. **Every material class had no shadow at all.** `getComputedStyle` said `box-shadow: none` on
+   `.glass`, `.glass-flat`, `.raised*`, `.well`, `.solid` and `.hc-pill` — every material this
+   window has. The ported recipes spell out the kit's `inset 0 1px 0 0` in front of tokens that
+   already *are* that phrase (`--hc-glass-rim: inset 0 1px 0 rgba(…)`), which makes the declaration
+   invalid, and the browser drops the whole list without a word. The fill is a separate property and
+   still rendered, so the surfaces looked flat rather than broken: the header strip's fill was
+   measurably there (45.1 against the panel's 41.1) and its rim was not there at all — 41.1 → 53.1
+   once the recipe parsed. Now `tests/materials.spec.ts`: on two screens, every element carrying a
+   material class must come back with a shadow, and the walk must have found something to check.
+   D112.
+2. **The numbers were this window's, at about half the kit's strength.** Rim 0.07 against the kit's
+   dark 0.16, fill 0.035 against 0.06, sheen 0.05 against 0.24, and the raised pair a translucent
+   white wash against the kit's two *solid* greys (`#3b3b44` over `#2a2a31`). With §8.1's ban on
+   backdrop blur those three ingredients *are* the material, and at 44 % and 21 % a surface measures
+   as slightly lighter than its background and reads as a rectangle. The values are the kit's now;
+   `--hc-glass-seam` rings a surface with the kit's dark seam; the rail's gradient starts at
+   `--hc-glass-fill` because the kit's `strong` is a nearly opaque panel fill for menus, not „a bit
+   more fill". Measured after: the rail's current entry spans 52 levels with an 82.1 rim row, where
+   it spanned 19 before. `--hc-glass-drop` and `--hc-glass-edge-strong` were read by no rule and
+   went; the window shadows gained the kit's 1 px white ring. D113.
+
+**Then the backdrop — built, measured, and taken out again by the owner.** The last visible
+difference to the kit was its lit canvas (D113), so the kit's own was built: three very large glows in
+its unchanged dark canvas colours on one `inset: 0` layer, as radial gradients with a solid core
+because §8.1 keeps the kit's `blur(90px)` out. **Measured:** the file list's median 44.5 → 49.5, the
+rail 48.8 → 59.6, and the spread of tile medians across the window 12.0 → 25.2 — a canvas that is lit
+and uneven, which is what the panels had been missing. **The drift did not survive being measured:**
+counted over CDP (`LayerTree.enable`) and timed as frame deltas in one run, drift on against off, 15
+composited layers against 11 and 21.0 ms against 16.7 ms per frame — at rest *and* under a scroll, a
+permanent 60 → 48 fps in a window that never closes, for light to move. So it was kept still (7 layers
+with it, 7 without) and shown to the owner. The verdict took the colour out too: *„Die glows nehmen
+irgendwie die Minimalistic raus aus dem GUI Konzept."* The numbers had been fine; the concept had
+not, and that is an argument no measurement answers. The glows are gone, `Ambient.tsx` paints one
+gradient again, and the only light this window has is the breath, which is lit because there is work
+to report. Measured after the removal: median 42.5, blue-over-red bias +2.4, spread 12.9. D114 (the
+drift) and D115 (the colour) hold the two halves.
+
+**Green, and two things that were not.** tsc clean, **76 vitest**, build clean, and the browser suite
+is **187 tests, 187/187 green serially** (55 s). It was 185 when this session started and should
+have been 187 the moment `tests/materials.spec.ts` was written: that file — the guard on the very
+material numbers D113 is about — was written last pass and **never ran in the gate**, because `test:ui`
+named its spec files one by one and that list was a second truth nobody checked. A guard that does not
+run is not a guard, and the numbers it holds are the ones this session had just measured by hand.
+`test:ui` is `playwright test` now, with the reason written into `package.json`; a new spec under
+`tests/` is in the gate the moment it exists. **The second thing is that the parallel gate is
+load-sensitive, and this machine was busy:** with a load average of 20 on 16 cores one run came back
+`1 failed, 186 passed` in `operations.spec.ts`, while `operations.spec.ts` alone is 49/49 and the same
+suite serially is 187/187. That is the shape the skill's *Spec-Zuverlässigkeit* section describes, and
+nothing to do with what changed here — **a red parallel run under load is a reason to re-run it
+serially, not to go looking for a regression.** The perf numbers still have to come from an idle
+machine: `npm run test:perf` is 16/16, the keystroke budgets and the ten-thousand-row scroll where they
+were, and "with nothing being indexed the heartbeat does not animate at all" still holds. The six scratch specs used for the pass
+(`tests/tmp-*`) are deleted; the measurement scripts live in `/tmp/hippocampus-shots/`.
+
+### 2026-09-14 — the interface is rebuilt from the showcase's design kit
+
+The showcase (`ui/inspo/minimalist-glassmorphism-file-explorer`) was no longer imitated; its
+design kit was ported and the interface moved onto it. `src/glass.css` carries the kit's material
+vocabulary once (`glass`, `glass-flat`, `glass-strong`, `glass-sheen`, `glass-specular`, `raised`,
+`raised-bezel`, `well`, `solid`), `src/kit.css` the class bodies of the kit's controls, and
+`src/components/glass/` the primitives: `GlassButton`, `GlassSurface`, `GlassInput`/`GlassSearch`,
+`GlassSegmented`, `GlassToggle`, `GlassCheckbox`, `GlassMenu`, the four lucide icons redrawn by
+hand, `Kbd`, `CountBadge`, `StatusDot`. `src/cn.ts` and `src/useSpecular.ts` are the kit's
+helpers without new dependencies; `motion.ts` maps the kit's spring names onto the six springs.
+The search field, the sort word, the segments (time windows, inspector tabs), the panel cards and
+the header buttons are kit parts now; `shell.css`/`app.css` gave up their six private copies of
+the materials (D110, D111).
+
+**Gate:** tsc clean, **73/73 vitest** (13 new: `src/components/glass/glass.test.tsx`), build
+green, **184/184 browser tests** — after four findings the kit port surfaced: two tests still
+spoke the old field class names (`hc-field-hint/clear` → the kit's `gi-shortcut/gi-clear`), the
+sort word's title moved from a span to its button, `GlassInput`'s shell was a `<label>` and so
+named an already-labelled field twice (now a `<div>` with click-to-focus written in, caught by
+the suite's strict locator), and the controls test's luminance read ignored alpha — it
+pre-multiplies now, or every translucent glass fill would read as "light on dark" forever.
+
+**Not yet, in the order agreed with the owner:** the file rows (`.hc-row`) still carry their own
+hand-written hover/selection skin; after them the panels' inner lists and the places column. Each
+step ends with the gate and a fresh set of pictures — the owner steers by pictures, not prose.
+
+**Port pitfalls this session added to the skill** (so the next agent does not rediscover them):
+a kit component's shell element can carry an implicit accessible name (`GlassInput` shipped as a
+`<label>` and named an already-labelled field twice — the shell is a `<div>` now, with
+click-to-focus written in); a test helper sent to the page as a template string (`page.evaluate`)
+must not contain backticks, not even in comments — it dies in the scanner, not the browser; and a
+luminance check that divides rgba by 255 without pre-multiplying by alpha reads every translucent
+glass fill as "light on dark" — pre-multiply, then compare.
+
+**Session-log rule for tomorrow:** one gate per finished step, numbers into this file, pictures
+into `/tmp/hippocampus-shots/v5/` (or higher), and the D-log only for decisions, not for steps.
+
 ### 2026-09-05 (evening) — the brain, read against the 2025–2026 field; M12 specified
 
 A scientific deep-research pass on agent memory (salience, forgetting, consolidation, retrieval
@@ -1194,1531 +1764,3 @@ methods use; `view.update` carries a reranked order as rows. In the window, `use
 
 **The `hit` the panes are given is now built from the row** rather than from whichever call
 produced it — a `Row` carries `nodeId` and `score` now, so the "was this a search result"
-question has nowhere left to be asked.
-
-**What "no branch" honestly means** is written up in D85, because the DoD sentence is easy to
-overclaim: the *row path* has no branch, and nineteen mentions of `searching` remain in `App.tsx`
-for things that are about the window rather than about a row — whether a drop has a directory to
-land in, whether the breadcrumb shows, which of the two held views is on screen.
-
-**A defect in a test nobody wrote this session, found by looking at why it kept failing.**
-`context.spec.ts` failed three times in full runs and never on its own. The error read "waiting
-for tab Gedächtnis" for thirty seconds, which looks like a broken tab strip; the page snapshot
-showed no panel at all. Its helper pressed Ctrl+Shift+A immediately after `goto`, without waiting
-for the application — under load the press landed before React had attached its keydown listener
-and was simply lost. It waits for a row and then for the panel now. Six repeats at six workers
-pass, and so does a full run under a parallel `cargo test`. **A test that races the thing it is
-testing fails as a mystery rather than as a message.**
-
-**What step 2 needed** is done the same day, and so is step 3 — see the entries above. Step 4 is
-the sidebar's new job: `brain.explain` a keystroke away, episodes for the selection, annotating
-without leaving the window.
-
-### 2026-08-24 — M6: network locations, and the calls that do not come back
-
-The last item on M6's mandatory list. Shares that something has already mounted are their own
-section of the places screen, browsable and searchable; nothing here mounts one, and D84 says
-where that line is and why.
-
-**990 Rust tests** against 979 — 5 new in `cortex-agent::places`, 3 in the new
-`cortex-core::mounts`, 1 in `cortex-ingest::reconcile` — **60 vitest**, **154 browser tests**
-(4 new in `ui/tests/network.spec.ts`). Green.
-
-**The whole feature is one fact and three consequences.** What is behind the mount point is on
-another machine, over a network that can be gone without anything saying so. So: the places
-screen never calls `statvfs` on a share (it blocks); `fs.list` knocks once with a two-second
-deadline on a thread it is willing to abandon; and the indexer stops at a network mount point
-without even stat-ing it, counting what it did not enter in `network_skipped`.
-
-**`/proc/mounts` moved to `cortex-core::mounts`.** Two crates now need the same answer for
-opposite reasons — the places screen to offer a share, the indexer to avoid one — and two parsers
-would be two opinions about what a share is. The octal-escape handling and its test moved with
-it, which is the part that would have been reimplemented slightly differently.
-
-**Two things that were nearly wrong.**
-
-- **A share under `/mnt` was offered twice.** `/mnt` is one of the roots where anything mounted
-  counts as removable media, so a CIFS mount there appeared as a drive *and* as a network
-  location — with a capacity bar, which means the screen would have called `statvfs` on it after
-  all. `is_place` refuses network filesystems first now, and there is a test.
-- **A thirty-second test.** The first version of "a wedged gvfs costs the screen nothing" slept
-  thirty seconds in an injected closure to prove it. It passed, and it would have added half a
-  minute to every run for a property that `answers_within`'s own test already asserts in eighty
-  milliseconds. Replaced with a test about the listing's order, which is what that layer actually
-  decides.
-
-**And one the screenshot found, which no test would have.** With the share section in it, the
-places sidebar showed `server:/export/backup` and *no name at all* for that row: the row's third
-grid column was `auto`, so a long address took its full width and the name — the thing somebody
-reads — collapsed to nothing. The name column has a floor now and the address elides instead;
-the capacity bar is pinned at 56 px, because making that column shrinkable squashed it to a stub
-on the first attempt, and a bar that gives way is a bar showing the wrong number. Both are
-asserted, at 1200 px and at 400 px.
-
-**A note on measuring, again.** The Playwright perf suite failed once during this session on
-"a keystroke reaches a painted row well inside 80 ms" — while `cargo test --workspace` was using
-every core in the background. On an idle machine the full run is 154/154. A performance gate
-measured against a busy machine measures the machine.
-
-### 2026-08-24 — M6: thumbnails in the list, and the queue that is not slowness
-
-The second item off M6's mandatory list. `thumbnails` in `cortex-preview`, `useThumbnails` in the
-window, and a picture in the rows that have one.
-
-**979 Rust tests** against 977 — 2 new in `cortex-preview/tests/process.rs` — **60 vitest**
-(4 new) and **150 browser tests** (4 new). Green.
-
-**The shape, and why.** Two calls rather than one: a batch cache lookup that provably never
-renders, and the existing per-file render for the misses. The previewer is one process answering
-one request at a time and the preview pane shares it — a call that *might* render turns a flick
-through a directory of photographs into two hundred queued decodes with the selected file's
-preview behind them. D83 has the argument and the three consequences.
-
-**Two things this session had to be careful about, both about not breaking what is measured.**
-
-1. **The row height.** The virtualiser is told the height rather than measuring it, so a picture
-   that made a row four pixels taller would put every scroll position progressively out — worse
-   the further down the list, which is the kind of bug that gets reported as "scrolling feels
-   wrong". The image is `1.35em` in the line box, and a browser test compares a row with a
-   picture against one without at both densities' compact value.
-2. **The hidden window.** D59 measured what periodic work for nobody costs. The hook takes
-   `visible` and asks for nothing when the overlay is hidden, and a unit test asserts the
-   transport is never called in that state.
-
-**Two things found while building it.**
-
-- **The architecture test earned its keep.** `useThumbnails` was first written with `filter` and
-  `find`, which D4's guard forbids anywhere in this frontend. Nothing in the hook reshapes what
-  the daemon sent — these were "which paths to ask about" — so the temptation was to add an
-  exception. It was rewritten as loops instead: a blunt rule with one carve-out is a rule, and a
-  blunt rule with two is a habit.
-- **A NUL byte in a source file.** A `join(" ")` in the new hook contained `\x00` instead of a
-  space after a scripted edit. It compiled, ran and passed its tests — a separator is a
-  separator — but `file` reported the source as `data`, and the repository's own `grep` skips
-  binary files, so a search for `filter` in that file silently found nothing while the test that
-  reads it with `readFileSync` kept failing. **Two tools disagreeing about whether a file
-  contains a string is worth stopping for**; the tool that reads bytes was right.
-
-### 2026-08-24 — M6: archives, and four things an archive is not allowed to do
-
-The first item off M6's mandatory list since the milestone was reordered. `fs.extract` in
-`cortex-agent/src/archive.rs`, dispatched by the daemon the way `fs.transfer` is, reachable from
-the window with Ctrl+E.
-
-**977 Rust tests** against 965 at the start — 9 new integration tests in `cortexd/tests/archives.rs`
-and 3 in the module — **56 vitest**, and **134 browser tests** in `test:ui` including 5 new ones in
-`ui/tests/archives.spec.ts` (146 with the perf suite). Everything green.
-
-**One flake worth knowing about, and it is not new.** Under the full Playwright run at five
-workers, `context.spec.ts` "states a preference outright" timed out once waiting for the memory
-tab, and passed on its own and on the next full run. It is a load-dependent wait in a test that
-drives the Inspector, not an extraction problem — recorded here rather than fixed blind.
-
-**What it does.** Zip, tar and gzipped tar, identified by magic bytes with the extension only as
-a fallback. A dry run answers what is inside, where it would go and whether something is already
-there; the real call answers with a handle and reports progress until it is done or cancelled.
-Refused entries are named in the answer rather than skipped. Undo removes exactly what was
-written. The reasoning is D81 (why it reports as a transfer) and D82 (the four rules about paths
-that came from a stranger).
-
-**Three things found by building it, in the order they would have hurt.**
-
-1. **An archive can unpack into itself.** The destination is the archive's name with its suffix
-   stripped — and a file identified by its *bytes* need not have one. `bundle.bin` produced
-   `bundle.bin` as its own destination, which the conflict check then reported as "already
-   exists": a correct refusal for entirely the wrong reason, and one that would have read as a
-   bug in the conflict handling rather than in the naming. Found by a test that was about gzip
-   detection and named the file `.bin` for unrelated reasons.
-2. **`tar_gz` is not a word.** `#[serde(rename_all = "snake_case")]` spelled the format `tar_gz`
-   on the wire while the type's own `as_str` said `tar.gz`. Two names for one thing, and the one
-   a client would have shown a person was the wrong one.
-3. **A field nothing reads.** `FsExtractParams` was drafted with a `plan` field beside `dry_run`,
-   copied from `FsTransferParams` — where it is also unread. It was removed rather than added to:
-   an extraction is gated like a transfer, by the kill switch and the write allow-list, because
-   the plan handshake fingerprints targets and an extraction's targets do not exist yet. This
-   file has a section about things that were written, tested and called by nothing; the way not
-   to extend it is to notice at the time.
-
-**What is not built:** `.tar.bz2` and `.tar.xz`, encrypted archives, and creating one.
-
-### 2026-08-24 — M11 built: the memory layer, the second collection, and the pack
-
-Three slices, 942 tests against 881 at the start of the session, every one of them green.
-`cargo test --workspace`, counted by summing `test result:` lines rather than by reading the
-last one — the note above about the measuring tool applies to counting, and it is why this
-number is trustworthy.
-
-**What exists now.** Migration 7; `kind = 'memory'` as a node kind; scopes, kinds, supersession,
-expiry, usefulness and the counts behind it; a second usearch collection over memory chunks with
-its own embedding pass and its own reconcile; `brain.context` in `cortex-query`; and the whole
-family on the socket, the CLI and MCP with the three-surface test extended to prove they agree.
-
-**Three bugs found by building it, and all three would have shipped.**
-
-1. **The first migration would have destroyed the index.** Widening a CHECK constraint means
-   dropping and recreating the table, and `DROP TABLE nodes` with foreign keys enforced runs
-   every `ON DELETE CASCADE` on the way out: edges, chunks, annotations, salience_log. The
-   obvious guard — `PRAGMA foreign_keys = OFF` at the top of the migration — **does nothing**,
-   because that pragma is a no-op inside a transaction and every migration runs in one. It reads
-   exactly like protection. The runner now handles it around the transaction for migrations that
-   declare `rebuilds_tables`, runs `foreign_key_check` before committing, and restores what it
-   found. The regression test is behavioural — real children, enforcement genuinely on — and it
-   was checked against the broken version before being kept: it fails with "edges were cascaded
-   away".
-
-   The same first draft also silently dropped the `extract_note` column and four indexes, which
-   is why the table was dumped and compared rather than rewritten from memory. There is now a
-   test that every index on a rebuilt table survives.
-
-2. **`canonical_dump` could not see a memory.** It walks `nodes WHERE path IS NOT NULL`, so a
-   rebuild that lost every memory would have compared equal and Definition of Done §2 would have
-   passed while being false. It has a memory section now, keyed by `(scope, kind, text)` because
-   the rebuild renumbers the ids it would otherwise be keyed by.
-
-3. **Two vector counts could not tell the collections apart.** `indexable_vector_count` joined
-   chunks to embeddings and nothing else, so the first embedded memory would have pushed the
-   file collection's expected count past what the file index holds, the reconcile would have
-   concluded the index had drifted, and it would have rebuilt 122 137 vectors on every pass for
-   ever. Both queries are scoped by `n.path IS NOT NULL` now, with a test that fails if either
-   forgets.
-
-**And one that only an end-to-end run could find.** A task is a sentence — *"where does the
-reference corpus come from"* — and `match_expression` builds a conjunction of every word in it,
-deliberately, because an OR over a hundred thousand files ranks noise above the answer. Over a
-memory store of a few thousand that reasoning inverts: the conjunction matched nothing, and a
-context pack that returns nothing looks exactly like an empty memory. `task_expression` is a
-disjunction over content words with a short bilingual stopword list. The first version of that
-compared case-sensitively, so a sentence starting with "Der" or "The" kept its stopword.
-
-**What was decided while building, and written down.** D79: the token budget is an estimate.
-The Definition of Done asked for "a tokeniser rather than a divisor", which hides the question
-it does not answer — *whose*. The only tokeniser this repository ships belongs to a
-384-dimension retrieval model. The estimate is structural, biased upwards because the two errors
-are not symmetric, and bounded below by the word count, which a byte-pair encoding cannot go
-under. Both build prompts are amended.
-
-**What is not built yet**, in the order it should be picked up:
-
-- **The Agent Inspector** (M11 §8) — the button, the panel, the five tabs. Nothing of it exists.
-- **The live 3D view** (M11 §9) — `ui-agent` still eats a static `graph.json`.
-- ~~**The benchmark** for `brain.context`~~ Written, and it earned its keep twice within an hour
-  of existing. See the M11 benchmark note below.
-- **`brain.explain` over a memory.** It explains a file's ranking; a memory's `usefulness` and
-  its counts are in the pack's basis but not in `explain`.
-- **Consolidation over memories.** They are nodes, so salience and tiering reach them for free,
-  but nothing has been *run* over a corpus of them and no number says whether the decay curve
-  that suits files suits a memory. D76's revisit trigger is the honest place to start.
-- ~~**`decay_unreported` is not called by anything.**~~ Done in the same session: the
-  consolidation pass now expires session scratch and penalises memories that keep arriving in
-  packs and that nobody has ever reported on. It is in the pass rather than on a timer of its
-  own because it is the same question the rest of the pass asks — what still deserves to be in
-  the hot part of the index — and a second scheduler is a second thing to be wrong about when
-  it last ran. The dry run reports both numbers and changes neither, which is asserted.
-
-### 2026-08-23 — M11 specified: the agent brain, and the vector question answered
-
-Specification only; no code in this commit. The owner asked for the agent area to be built out,
-for Hippocampus itself to become the memory an agent works from, and for that to go into the
-build prompt and the documentation before it goes into the code. It is milestone **M11** in both
-build prompts, with five decisions behind it.
-
-**The design in one sentence: a memory is a node.** What an agent learns that is not in a file
-becomes `kind = 'memory'` — no path, its own text, a scope — and every faculty the file memory
-already has applies to it unchanged. The alternative, a second agent-flavoured store, was
-considered and rejected in **D74** for three reasons that are one reason: two stores means two
-rankings and the second is always worse; the interesting queries cross the boundary and merging
-two incomparable score scales is the mistake RRF exists to avoid; and a second store holding the
-only copy of what an agent learned would not satisfy R10.
-
-**Was the vector database supposed to become Qdrant? No — D75 says why**, and the table in it is
-the short answer: a network service against R5, a second install step against M9, and a measured
-1.01 ms P95 against a 40 ms budget on the index that already exists. What is actually missing is
-not a different engine but **a second collection**: a memory recall against one index shared with
-122 137 file chunks competes for twenty slots and loses, whatever the engine is. The existing
-`VectorIndex` gets instantiated twice.
-
-**The two ideas in it that are not obvious:**
-
-- **Retrieval without use is evidence *against* a memory (D76).** Every salience component so far
-  rewards being touched, which is right for files — a human opening a file found it useful — and
-  wrong for a memory, because a memory in a context pack was not chosen by anybody, it was chosen
-  by the ranking being evaluated. So `brain.outcome` reports back, and a memory that keeps
-  arriving in context and is never reported useful decays *faster* than one never retrieved.
-- **`brain.context` returns a pack, not rows (D77).** Budget in measured tokens rather than
-  characters over four; pinned preferences unconditionally, because their whole value is being
-  present; MMR before truncation, because restatement is the specific failure of embedding
-  retrieval over a memory store; a basis on every item, because a memory an agent cannot attribute
-  is one it cannot argue with.
-
-**M6 still gates M10 and this does not change that.** M11 was put ahead of the file-manager
-basics deliberately and the exception is written into the milestone map: M6 gates the *window*,
-M11 is mostly daemon, and its window component is a panel inside the existing toplevel rather
-than a new surface. Archives, drag-and-drop out of the window, network locations and correct
-permission display are still missing and still come before M10.
-
-Next: migration 0007, the store layer, then `brain.context`, then the Inspector. The
-Definition of Done is twelve items and item 2 — a rebuild reproducing a byte-identical dump
-including usefulness counts and deletions — is the one that will find the bugs.
-
-### 2026-08-21 — The password prompt, and a negative that was not evidence
-
-The owner read the new refusal — an internal disk needs an administrator — and asked the obvious
-question: can the explorer not just ask for the password? It can, and the change is small: the
-ordinary `fs.mount` still never waits, but it now refuses with a code of its own (1004,
-`NEEDS_AUTHORISATION`), and the window answers that code by asking a second time with
-`interactive: true`. That second call lets polkit put a dialog in front of somebody who pressed
-Enter a moment ago and is therefore still there. 120 seconds, then it gives up. D61 has the rest.
-
-**The diagnosis before it was wrong, and the way it was wrong is the lesson.** `ps` showed no
-polkit agent in the session, so the conclusion was that there was none — a package was installed
-and a line added to the compositor's config to fix it. The new agent refused to start: *an
-authentication agent already exists for the given subject*. It was inside the desktop shell, a
-thread of a Quickshell process, invisible to a search for process names. Both changes were
-reverted. **A negative from `ps` is not evidence of absence**; polkit knew, and answered in one
-line. The only thing that had ever been wrong was our own `--no-user-interaction`.
-
-Verified on the real disk: refused with 1004 without asking, mounted at `/run/media/<user>/Videos`
-with `--ask`, and unmounting needs no authorisation at all.
-
-### 2026-08-21 — What "everything is buggy and it hangs" turned out to be
-
-The owner used the drives an hour after they shipped and reported that selecting one that is not
-the stick broke everything. **The logs could not settle it and a screenshot could**: the window
-was not frozen at all. It showed the places list with the cursor where he had left it, and a
-banner reading `[object Object]` painted over the top of the previous message.
-
-Three defects, all mine, all from the same morning's work:
-
-1. **`[object Object]`** — a daemon error arrives as `{ code, message }` rather than as a string,
-   which the shell documents and which the frontend already had a function for. I wrote a second
-   one beside it. The two are one function now, in `format.ts`, and a browser test drives the
-   failure with an object rather than an `Error` because a fixture that threw a string would have
-   hidden exactly this.
-2. **A failed mount left no audit entry**, so `cortex audit` showed the successful one and
-   nothing else — R8 says allowed *and* refused. The red-team suite asserts it now.
-3. **The message was noise.** `udisksctl` prefixes every failure with a complaint about not being
-   able to open `/dev/tty`; the actual answer is on the second line. An internal disk now gets a
-   sentence that says a permission is needed, that this window never asks for one, and what
-   command would work.
-
-**What is not settled: whether the window also stopped repainting.** The overlapping text in the
-screenshot is the signature of a region that was written and not cleared, and "it does not react"
-is what a stale image looks like from the outside — the page was alive, idle and answering. One
-contributing candidate was found and changed on its own merits: the breath layer kept
-`will-change: opacity` after D59 stopped animating it, so the compositor was holding a layer for
-something that never changes. Whether that was the cause is unproven, and the next report is the
-measurement.
-
-### 2026-08-21 — Drives that are not mounted yet
-
-M6's mounts, and the surprise is how little of it needs udisks2. Finding the drives is
-`/sys/class/block`, the disk above a partition, and udev's own database in `/run/udev/data` —
-world-readable, `E:KEY=value` a line — so the first screen stays off D-Bus and the daemon stays
-off a GLib main loop. Only the mounting shells out to `udisksctl`, and always with
-`--no-user-interaction`.
-
-Written against this machine and then reproduced in a fixture: a stick plugged in and unmounted,
-three unmounted Windows partitions, an EFI partition, a recovery partition and six snap loop
-devices carrying squashfs images that udev reports as filesystems. The scan offers the stick and
-the Windows volumes and none of the machinery. `cortex mount` put the stick at
-`/run/media/<user>/ESD-USB` with no authentication prompt, and `cortex unmount` put it back.
-
-Three things worth carrying forward:
-
-- **The dangerous rule had no test, and the break-check is what said so.** `power-off` on a disk
-  that cannot be unplugged takes it off the bus while a running system is using it — one argument
-  away from the ordinary case. The check lived inside `Surface::unmount`, where deleting it broke
-  nothing any test noticed. It is `plan_unmount` now: a decision with a name, and deleting it
-  fails `an_internal_disk_is_never_powered_off`.
-- **A refusal that misdirects is worse than no message.** Refusing an agent's mount with
-  `OutsideAllowlist` told it to add `/dev/sdb1` to `agent.write_allowlist` — which would not have
-  helped, because nothing permits this. `Refusal::NotForAgents` says what is true, and it fixes
-  the same misdirection in yesterday's `apps.set_default`.
-- **An unmounted volume's `path` is a device node**, because there is no directory yet. Opening
-  it means mounting first and going to *the mount point udisks2 answers with*. A path guessed
-  from the label sends the window somewhere empty, and the guess looks right on a stick called
-  ESD-USB.
-
-### 2026-08-21 — The heartbeat, and what a running animation actually costs
-
-The measurement D57 asked the next session to take, taken: **the stepped breath layer bought
-nothing.** 116% of one core before, 110% after, window on screen and untouched. So the
-explanation was wrong, and eight variants were measured before a new one was believed — the full
-table is in D59. The short version is that none of the suspects did it: not the renderer (111%
-on WebKit's GPU path, 111% under software compositing), not the backdrop filter, not the
-gradient, and not the size of the animated element, because a **three-pixel strip still cost
-71%**. Any running animation recomposites the whole window every frame.
-
-The heartbeat now runs only while the daemon has something to index. Visible and idle, the
-window measures **4.8–5.1% of one core** against 111%; hidden, 0.22%. The last five per cent
-has not been chased — the next suspect is the caret blinking in the search field, which is an
-animation like any other. §6 reads better for it
-too: the layer exists to make background work legible, so a still layer is what "no background
-work" looks like. Design system §8 gains a rule — no animation runs continuously in a resident
-window — and it is a performance rule with a measurement behind it rather than a taste.
-
-**And the commit that carried all this went out without the change in it.** A break-check —
-delete the rule, watch the named test fail — ended with `git checkout` on the file, which
-restored it to `HEAD`, which did not yet have the rule. The docs, the tests and the design-system
-entry were committed; the four lines they were about were not. What caught it was the *number*:
-the shipped build measured 111.5% again. The perf gate would have caught it too and was not
-re-run after the restore. **After a break-check that reverts a file, run the gate again before
-committing** — the whole point of the exercise is that the file has been changed twice.
-
-Two notes for whoever measures next. **The CPU tool read 0.0% for a process spinning a full core
-the first time it was pointed at one**, again, for a different reason than last session: the
-spinner's output went to the journal and it never spun. Point it at `yes > /dev/null` in a
-scope of its own before believing anything it says. And **`install-user.sh` builds `dist`
-without the test harness**, which is exactly the trap `package.json` documents: an `npx
-playwright test` straight after an install times out on every test waiting for a row. Use
-`npm run test:ui`, which rebuilds first.
-
-### 2026-08-21 — Öffnen mit, and the desktop as the source of truth
-
-The last session's work — the measured scroll lead and the stepped breath layer — was finished
-but never committed. It is committed now, unchanged, and the suite was green before and after.
-
-Then the next thing M6 is missing: **"Öffnen mit"**. What it does is above; what is worth
-carrying forward is how it was checked. Reading the specifications gives a plausible
-implementation, and a plausible implementation was wrong in three places that only a comparison
-with the machine could show — `xdg-mime query filetype` for the type, `gio mime` for the default
-and the order, twenty-five file types. It now agrees with both on all twenty-five. **A desktop
-integration that has not been diffed against the desktop is not finished**, and the diff took ten
-minutes.
-
-Two defects found on the way, neither of them in the new code:
-
-- **A browser test failed seven runs in ten under parallel load**, and it was not the test. The
-  chooser reset its cursor in an effect, which commits one frame with the old position still
-  highlighted — the same shape as the bug D56 paid for, except that Enter in that frame opens an
-  application nobody pointed at. The cursor is derived during render now and carries the list it
-  is a position in.
-- **`the_places_are_the_same_through_all_three` compared free disk space across three calls.**
-  It failed once during this session's full run and could not be reproduced afterwards, which is
-  the worst way for a test to fail. Capacity is measured per call, so three identical numbers
-  were never the property being asserted; it asserts that each surface reports one, and compares
-  the rest exactly.
-
-**And a defect found while measuring, not while reading:** every application opened from the
-overlay — by Enter, which predates this session, as well as by "Öffnen mit" — was a child of the
-overlay's systemd service, and therefore in its cgroup, and therefore killed by the next restart
-of it. Launches go through `systemd-run --user --scope` now. The mechanism is measured in both
-directions (a plain child dies even after `setsid`; a scope survives) and the wrapping is
-asserted by three tests, but **the end-to-end proof is still to be done by hand**: open something
-from the overlay, restart the overlay, and see whether it stays open.
-
-And one thing found in passing, not fixed: **`fs.list` accepts a `glob` parameter and ignores
-it.** The field is on the wire type, documented there, and no implementation reads it — so a
-caller that filters a large directory with it gets the whole directory back and no error. Either
-it works or it is not a parameter.
-
-And one measurement to distrust: **the perf scroll gate fails reproducibly while the Rust suite
-compiles in parallel** and passes on an idle machine. It measures frame time, so that is the
-tool being right about a busy machine — but anything that runs both at once will see a red gate
-that means nothing. It is the same trap §1 fell into.
-
-Still not measured, both needing the window on screen and therefore the owner: what the stepped
-breath layer costs against the 116% it replaces, and whether the scrolling feels right in
-WebKitGTK. Dragging a row out into another application is still untried.
-
-### 2026-08-20 — "es laggt": four things that were costing frames
-
-The owner used the overlay and said it lagged. The measurements said 2 ms. When those two
-disagree the measurements are wrong, so this is what they were missing.
-
-1. **The breath layer was a JavaScript animation.** Framer Motion drives values from a
-   `requestAnimationFrame` loop, so an animation with `repeat: Infinity` is a callback on every
-   frame for as long as the window is open. Design system §6 says ambient layers are
-   compositor-only, and this violated the rule it was implementing. It is a CSS keyframe
-   animation now, and the render benchmark — which never claimed to be measuring this — dropped
-   from 9.7 ms at p95 to **2.4 ms**.
-2. **Holding an arrow key fired two round trips per row.** The context sidebar and the preview
-   each request per selection, so thirty rows a second is sixty requests, fifty-nine of them
-   about rows nobody looked at. The list still follows the key immediately; the panes follow the
-   list once it settles, 120 ms later.
-3. **Every keystroke pinged the daemon** to say a human was present. The first keystroke says
-   that; the rest repeat it. Throttled to once every five seconds.
-4. **`backdrop-filter: blur(24px)` over the whole window.** §8 permits it on the overlay
-   container and nowhere else — but permission is not a requirement, and a backdrop filter is
-   recomputed whenever anything behind it changes. It is behind `--hc-blur`, which is 0.
-
-And the environment: WebKitGTK's DMABUF renderer with the proprietary NVIDIA driver is a known
-bad pair. `WEBKIT_DISABLE_DMABUF_RENDERER=1` is set in the service unit, with a comment saying
-to remove it and compare.
-
-**What this does not settle.** None of the four was measured *in the real window* — three are
-"obviously wasteful whatever the number is" and the fourth is a known driver problem. The bridge
-now logs any daemon call over 50 ms and any preview over 50 ms, so the next report of lag can be
-answered from the journal instead of from reasoning.
-
-### 2026-08-20 — M6: selecting several things, and doing something with them
-
-The half that decides whether this can replace a file manager. 745 tests.
-
-**The shared trash (D45).** Deleting and overwriting put things in `~/.local/share/Trash` with
-a `.trashinfo` each, or `$topdir/.Trash-$uid` for another filesystem — never a copy across a
-boundary to delete something. The info file is written before the move: a crash between them
-must leave an entry pointing at a file still in place, rather than a file nobody can restore.
-The trash picks the name, so the journal writes a placeholder and rewrites it, which is the one
-place a journal row is updated rather than appended.
-
-**Copying (§4).** Measure first so the bar has a denominator; check for cancellation inside the
-byte loop so a large file stops within a chunk; write to a temporary in the destination and
-rename, so an interrupted copy is absent rather than a plausible half. Tested against a running
-daemon: a cancel sent over the socket reaches a copy in flight, and nothing partial is left.
-
-**Who the allow-list is for (D44).** It gates agents. The first version ignored the actor, which
-was harmless while only agents mutated anything and absurd once the GUI grew a file manager —
-with the shipped configuration the owner could not move his own file. The red-team suite is
-unchanged and still passes, which is the evidence the gated path stayed gated.
-
-**Four bugs found by tests that were about something else:**
-
-1. `copy()` reset its progress for every file, so a batch counted from zero each time — the bar
-   would have restarted per file, and the batch cancellation test failed because `files_done`
-   never passed one.
-2. Ctrl+A was taken by the overlay even while the caret was in the search field, so selecting a
-   query to replace it selected every file instead. A browser test found it by no longer being
-   able to clear the input it had just typed into.
-3. Enter was taken by the overlay while the rename field was open, so the form never submitted
-   and the rename silently did not happen.
-4. `mkdir` at the root produced `//name`.
-
-And one that was mine in the test rather than the code: `fill("")` does not clear a controlled
-React input in this Playwright version — an empty insertion fires no event — so the test now
-clears the way a person does.
-
-### 2026-08-20 — §1 was measured wrong, and the hotkey never worked
-
-Two corrections, both found by somebody actually using the thing.
-
-**The cold start is 265 ms, not 418, and §1 passes.** The original measurement ran while the
-same machine was compiling the workspace and running three test suites — it measured the load.
-Ten runs on an idle machine: median 265, min 260, max 280, ten of ten inside the budget. D41 is
-rewritten around the correction and the GTK4 question it raised is closed. The resident model
-stays, because that is what a launcher is, and no longer because of a budget it turned out to
-meet.
-
-The same mistake had already appeared once that week — the frontend's render test failed in the
-parallel Playwright run and passed alone — and it was diagnosed correctly there and not here.
-
-**The global hotkey could never have worked** (D42). A Wayland client cannot grab a key; the
-plugin falls back to an X11 grab that, with XWayland running, *succeeds*, lands in XWayland and
-never fires. The overlay logged "summon with the hotkey" and the first person to press it found
-nothing happening and nothing in the journal. It now registers nothing under Wayland and prints
-the compositor line to paste; summoning is `hippocampus --show` through the single-instance
-plugin.
-
-**And a footgun found by walking into it:** a bare second invocation used to present the window,
-so a measurement loop opened it ten times on somebody's desktop. Only `--show`, `--toggle` and
-`--hide` move the window now.
-
-Everything is installed as systemd user services — `scripts/install-user.sh`, the daemon on
-`default.target` and the overlay on `graphical-session.target`.
-
-### 2026-08-18 — M4 §1 measured, and it fails
-
-**Superseded — see the entry above and D41.** The 418 ms below was measured on a machine that
-was compiling at the time. On an idle machine the cold start is 265 ms and §1 is met. The entry
-is left as it was written, because a progress log that quietly edits what it believed last week
-cannot be trusted about what it believes today.
-
-The overlay's cold start is **418 ms** against a 300 ms budget. It is recorded as red (D41).
-
-Getting the number at all took finding a mistake in the instructions: `cargo build --release`
-produces a Tauri binary that starts and then shows *"Could not connect to localhost"*, because
-`tauri-build` decides dev-versus-production from whether the Tauri CLI is driving the build and
-not from the cargo profile. A plain cargo build embeds the dev server's URL. Both READMEs now
-say so; `npm run tauri build -- --no-bundle` is the command.
-
-**The decomposition is the useful part**, and it took three instrumented builds to get:
-
-| part | median |
-|---|---|
-| Tauri and GTK starting, before `setup()` runs | 171 ms |
-| the webview process, until the page navigates | 145 ms |
-| the page, of which 43 ms is parsing the document | 102 ms |
-| connecting to the daemon | **under 1 ms** |
-
-316 of the 418 milliseconds are gone before any line of this repository executes. Removing
-Framer Motion — the largest dependency in the bundle — would buy tens of milliseconds against a
-118 ms overrun that is not the frontend's. The two real options are the resident-process model
-the launcher design already implies, or D4's GTK4 fallback; both are written up in D41 and
-neither is chosen.
-
-**A note on how this was measured, because it cost the owner some patience:** the overlay was
-launched two dozen times in a row from this session. It turned out those windows were appearing
-on his desktop, not vanishing into an unmapped void as an earlier session had recorded. Anything
-that starts a GUI here is visible to whoever is sitting in front of the machine.
-
-### 2026-08-18 — M4: the thumbnailer, in a process that is meant to die
-
-`cortex-preview`, the XDG thumbnail cache, and the progressive contract D14 describes. 652
-tests. §5 measures **146 µs** for the cached thumbnail of a forty-megapixel photograph against
-a fifty-millisecond budget, and §6 kills the process mid-render and finds search unaffected and
-the shared cache uncorrupted.
-
-**The cache is shared, and that is most of the work.** Getting the naming right — MD5 of the
-percent-encoded URI, under `normal`/`large`/`x-large`/`xx-large`, with `Thumb::URI` and
-`Thumb::MTime` as `tEXt` chunks — is what makes a thumbnail this renders one that Nautilus finds
-and does not re-render. A thumbnailer that got it wrong would not fail; it would quietly stop
-sharing, which is worse.
-
-**Two things had to be written out rather than depended on.** The `image` crate writes no text
-chunks, so the PNG header is assembled here and the encoder's output spliced in after it — a PNG
-is a signature followed by chunks, and inserting chunks between two of them is concatenation.
-And PNG's CRC-32 is four lines of arithmetic that did not justify a compression crate.
-
-**The JPEG path is the whole of D14's quality rule.** `image` 0.25 decodes JPEG with zune-jpeg,
-which produces full-resolution pixels and nothing else — so a 128 px preview of a 40 MP
-photograph would decode all forty megapixels first. `jpeg-decoder` can be told to scale in the
-DCT domain, and there is a test that fails if the two paths ever cost the same.
-
-**A test of mine was wrong and the code was right.** The MD5 I wrote into the cache test came
-from memory and did not match the implementation. Pinning it against values computed outside
-this code — including the empty string and "abc" — is what a hash test should have been.
-
-For the next session:
-
-- **§1 still needs a human.** Everything else in M4 is measured.
-- **Audio previews** are refused with a reason; the scope asks for waveform metadata.
-- **The handlers are still inline on the async runtime** (noted since the first M4 session), and
-  M4's keystroke budget shares those threads with the GUI now.
-
-### 2026-08-18 — M4: the overlay, and four bugs that only a real browser could show
-
-The first GUI. A Tauri window, a virtualised list, a preview pane, a context sidebar, a command
-palette, and the breath layer. 623 tests across three suites: Rust, vitest, and Playwright
-against a real layout engine.
-
-**The layout tests are in a real browser on purpose.** M4 §4 is a claim about a box model, and
-jsdom has none to be wrong about. Running them properly cost a fixture entry point — the app
-wired to a fake daemon — and it paid for itself immediately: three of the four bugs above are
-invisible to a DOM emulation, and the grid min-content one is invisible to a person looking at
-the window unless they happen to try 400 px.
-
-**The eighty-millisecond budget is decomposed rather than claimed.** The frontend's share is
-measured here (2 ms median, under 16 at p95); the daemon's is measured in `bench/latency`; the
-end-to-end number comes from the app itself. A test that measured a fixture and reported it as
-end-to-end latency would be worse than no test, so it says which part it measured.
-
-**What is measured is work, not frame pacing.** The first version waited on two animation
-frames and reported sixty milliseconds — thirty-three of which were the display's, before any
-of this code had run. The timing now stops when the DOM reflects the keystroke; the compositor
-takes its frame afterwards regardless.
-
-For the next session:
-
-- **The preview subsystem is the rest of M4** (§5, §6): a separate thumbnailer process, the XDG
-  thumbnail spec, progressive rendering, and a cap of 2048 px on the long edge. It is
-  deliberately a separate process — preview generation touches untrusted bytes with third-party
-  decoders (D14).
-- **§1 needs a human for five minutes.** Run the overlay, press Ctrl+K, and read the cold-start
-  line. The number is already being measured; nothing here can display it.
-
-### 2026-08-18 — M3 finished: the brain tools, MCP, and three surfaces proven identical
-
-The `brain.*` tools, `cortex-mcp`, and the tests that turn M3's Definition of Done from a list of
-claims into a list of assertions. 559 tests.
-
-**The hardest thing in this half was rule R10, and it was not obvious that it applied.** An
-annotation an agent writes is not on the filesystem, and the index is a cache — so a rebuild,
-which this project advertises as a supported operation, would have quietly deleted everything an
-agent ever recorded. Assertions now go into the episode log and the graph is a projection of
-them (D35). The first version stored the target's *node id*, which a rebuild renumbers; it takes
-a test that actually rebuilds to notice that, and `assertions survive a rebuild` is that test.
-
-**`brain.recall` is the tool the analogy is about.** Search finds the way in and the associative
-graph supplies what belongs with it, so a cue that names one document brings back the note
-somebody wrote on it and the file it was derived from — neither of which contains the words in
-the cue. Verified against a live daemon, not only in a unit test.
-
-**MCP is deliberately empty.** `cortex-mcp` is a table mapping one tool name to one method, plus
-stdio framing (D36). The reason is not tidiness: a bridge that interpreted anything would be a
-way round the policy engine, and the policy engine's whole job is to be unavoidable. The kill
-switch therefore reaches the bridge too — with the surface off it refuses to start rather than
-starting and refusing every call, because a client that has been shown a tool list has been told
-the surface is available.
-
-**Three surfaces, one answer, asserted byte for byte.** `three_surfaces.rs` starts a real daemon
-and drives the socket directly, the `cortex` binary, and `cortex-mcp` over stdio, then compares.
-It also checks that a refusal is the *same* refusal on all three — code 1002, tag
-`outside_allowlist`, and a message that names the allow-list — because a surface that turns a
-policy refusal into a generic error is unusable from the other side.
-
-For the next session:
-
-- **§1 has a caveat and it is written down.** The end-to-end task test runs without the embedding
-  model, so its search step is lexical. The semantic arm is measured in M2's goldset. A human
-  check through Claude Code proper is five minutes of work nobody has done.
-- **The handlers are still inline on the async runtime.** That is fine now and will not be when
-  M4's 80 ms keystroke budget shares those threads.
-
-### 2026-08-18 — M3 begun: the safety spine
-
-The policy engine, the kill switch, the audit log, the `fs.*` tools, dry-run plans and the undo
-journal. 524 tests, of which 22 are new red-team and undo tests.
-
-**The layer is a crate with no daemon in it.** `cortex-agent` takes a policy, a store and an
-actor; the daemon is a fifty-line adapter over it. That is not tidiness — it is what makes
-"every gated tool refuses without an allow-list entry" a table-driven test over three tools
-rather than a claim, and it is what M3 §5 will lean on when the MCP server arrives.
-
-**Three attacks the red-team suite actually caught while it was being written:**
-
-- A `..` in a path is resolved *before* the allow-list is consulted, not after. The naive
-  version compared the literal string and let `allowed/../secret/f.txt` through.
-- A symlink inside the allow-list pointing outside it is the same attack with a different
-  spelling, so the resolution is `canonicalize` of the deepest existing ancestor — which also
-  handles the file that does not exist yet, which is every file a write creates.
-- `/data-private` is not inside `/data`. `starts_with` on a `Path` compares components, which
-  is why this one is correct rather than lucky, and there is now a test that says so.
-
-**The undo of an overwrite was wrong, and the DoD test found it.** The inverse was a single
-"restore from trash" step, which lands on a path that is occupied — by the file the overwrite
-just wrote. Inverse steps are now stored in the order of the forward steps they undo and applied
-in reverse, so an overwrite is undone by "delete the new one, then move the old one back".
-
-**M3 §3 passes verbatim:** 100 files moved through the surface, `undo --last 100`, and a
-canonical dump of the tree hashes identical to before. The dump covers every path, its length
-and its content hash.
-
-Two things worth knowing for the next session:
-
-- **The trash is why undo does not need the index to hold content** (D34). An overwrite moves
-  the old version into the state directory and journals the path; R10 stays intact and the
-  database does not grow by the size of everything an agent touches.
-- **A plan is bound to its call.** It carries a fingerprint of every target, is consumed on use,
-  expires in two minutes and must describe exactly the operation presenting it — so a plan for
-  `scratch.txt` cannot be spent on `precious.txt` (D33).
-
-### 2026-08-18 — M2 finished: the GPU, the reranker, and a goldset that lied twice
-
-CUDA installed at the owner's request, the cross-encoder built and delivered as a progressive
-result update, and every M2 gate green. 472 tests.
-
-**The GPU.** The machine had the card and the driver but no CUDA runtime; `cuda-libraries-13-3`
-and `libcudnn9-cuda-13` fixed that, and the CUDA build of ONNX Runtime is now a second entry in
-the registry (`cortex model fetch --gpu`, 191 MB instead of 11 MB). Measured in the running
-daemon: **3.11 ms per chunk against 89 ms on the CPU** — a corpus that took two and a half hours
-now takes six minutes. Query embedding fell from 3.9 ms to 1.1 ms.
-
-The card is shared, and that turned out to matter more than the speed (D31). A local language
-model held 11.7 GB of the 16 GB throughout, and without a memory cap a batch of 32 chunks asked
-for 273 MB it could not get and the whole pass failed. Every model now runs under
-`embedding.gpu_memory_mb`, and the reranker batches eight pairs rather than thirty.
-
-**The reranker.** `mmarco-mMiniLMv2-L12-H384-v1`, the same twelve layers and 384 hidden units as
-the embedder, chosen to match it rather than to beat it. Thirty pairs in **16.5 ms against a
-150 ms budget**.
-
-It is delivered the way the build prompt asks: the search answers immediately with what retrieval
-found, and the reranked order follows on the same connection as a `search.update` notification
-(D7). That needed the connection handler split into a reader and a writer so a spawned task can
-answer while the loop keeps reading — the mechanism M4 will want for progressive results, built
-once here.
-
-**The goldset was wrong twice, and both times it was worth catching.**
-
-1. *It measured the reranker as harmful.* MRR fell from 0.882 to 0.746 and top-1 from 86 % to
-   72 %. The first cause was mine: I had substituted the reranked order for the retrieved one, and
-   when a cross-encoder finds nothing it likes its scores collapse into a narrow negative band
-   where the ordering is noise. Fusing the two orders instead (D29) recovered most of it.
-
-2. *The rest was the corpus.* `goldset --explain q21` showed the reranker promoting a distractor
-   over the judged answer — so I read the file. It contained the sentence *"Die Speicherkosten
-   stiegen nach der Archivmigration schneller als erwartet"*, which answers the question. The
-   corpus generator had been sprinkling sixteen real sentences through its documents, and I had
-   built goldset topics on those very sentences, then judged every copy irrelevant. **The reranker
-   had been right and the measurement wrong.** Generated distractors are now irrelevant by
-   construction, with a test that asserts no real sentence appears in generated text (D30).
-
-With that fixed, the reranker changes nothing at all: MRR 0.878 either way. That is now a
-statement about the goldset rather than the model — its distractors are nonsense, and a
-cross-encoder earns its keep against documents that are plausible *and* irrelevant. On clean
-pairs the model separates right from wrong by eighteen points of logit, in both languages.
-
-**One Definition-of-Done item is not met, and it is recorded rather than argued away.** German
-queries are 14.8 % behind English against a 10 % allowance. The whole gap is three queries:
-German → English retrieval fails (0 of 3) while English → German works (3 of 3). The cause is the
-language bias measured earlier; the candidate fixes and what "revisit D6" would mean are at the
-top of this file.
-
-Two other things worth knowing:
-
-- **A rebuild gives the new chunks the same row ids**, so the cheap watermark the embedding stage
-  uses to avoid scanning every chunk saw no change and the stage slept through it — with 1 721
-  chunks waiting and their vectors just dropped. The wake-up signal was a boolean, which the
-  extraction stage consumed first; it is now a generation counter, so one signal reaches both
-  stages.
-- **usearch refuses a duplicate key** rather than replacing it, which crashed a goldset run over
-  a leftover index. Adding a vector is now idempotent.
-
-### 2026-08-18 — M2, second half: the model, and what it is worth
-
-Embeddings, the vector index, the semantic arm, the goldset that measures them, and a rebuild
-that survives all of it. 466 tests green, every gate passing, no daemon left running.
-
-The reranker is the one component not built, and it is waiting on a question rather than on code
-— see the top of this file.
-
-**What is now true that was not:** a query finds documents that share no word with it, in either
-language. The proof is in `cortex explain`, not in a claim: for *"how fast did storage expenses
-grow after moving the archive"* the German answer comes back with **0 path candidates, 0 lexical
-candidates, vector rank 3.**
-
-Seven things worth knowing, most of which cost time:
-
-1. **A benchmark that cannot fail is not a gate, and a goldset that cannot be wrong is not a
-   measurement.** The first version of the cross-language queries asked a German query to find
-   the English copy of a document whose German copy was *also in the corpus*. That measures
-   obedience, not retrieval. Rewritten so every cross-language target exists in one language
-   only — which dropped the score from 50 % to 33 % and made it mean something.
-
-2. **The language bias is a number, not a feeling.** Same-language similarity sits about
-   0.08–0.12 above cross-language similarity for this model, and on short texts that is more than
-   the gap content opens up. `goldset --explain q43` shows the consequence plainly: twenty German
-   noise documents ahead of the English one that answers the question. Recorded rather than
-   worked around; the goldset is now the instrument for anyone who tries to fix it.
-
-3. **A vector keyed by a row id is a vector you throw away.** `--rebuild-index` re-derives chunks
-   from the filesystem, so the old rows — and every embedding that cascaded from them — went with
-   it. Hours of inference to recover text that had not changed. Migration 0003 keys embeddings by
-   the hash of the text (D26); a rebuild now keeps all of them, and identical boilerplate across
-   files is embedded once.
-
-4. **The first rebuild refilled the vector index with nothing, and nothing noticed.** The refill
-   ran immediately after the walk — before extraction had re-created a single chunk — so it wrote
-   an empty index over a full table. Semantic search then returned nothing at all, silently,
-   because the embedding queue was *also* empty: every hash already had a vector. The index is now
-   reconciled against the table by the embedding stage whenever its queue drains, which is the
-   same path that satisfies Definition-of-Done §8. Confirmed live: deleting the index file and
-   restarting rebuilt 122 137 vectors in 152 ms without the model.
-
-5. **`view` maps a file and trusts its header.** Pointed at a truncated one it does not return an
-   error — it segfaults, which the existing "a corrupt index is a rebuild" test found the moment
-   loading became mapping. The header is now read with an ordinary file read first.
-
-6. **Asking "is there anything to do" cost more than doing it.** With every chunk embedded, the
-   embedding queue's left join scans all 122 137 chunks to find nothing, and doing that on a timer
-   measured **0.84 % of one core** against a whole-daemon idle budget of 0.5 %. Gated behind a
-   two-aggregate watermark that changes exactly when the answer could have: idle cost is now
-   0.067 %.
-
-7. **An instrument that can lie is worse than no instrument.** A goldset run that crashed
-   part-way through embedding left a cache whose counts all matched — 1 197 chunks, 1 197 vectors
-   — and which measured **34 % recall where the same corpus measures 91 %**. The completeness of
-   a cache is now recorded explicitly, keyed by model and schema version, and written last; a run
-   that does not finish leaves a cache that the next run refuses. The same crash also showed that
-   usearch refuses a duplicate key rather than replacing it, so adding a vector for a chunk that
-   already has one is now idempotent.
-
-**On memory.** Loading the vector index put the daemon at 307 MiB against a 250 MB budget. Mapping
-it (D27) splits the number honestly: 182 MiB of heap the daemon genuinely holds, plus 107 MiB of
-mapped index the kernel can reclaim. The budget is restated as anonymous memory rather than
-raised, and both numbers are in the table below.
-
-**On the GPU.** D6 puts embeddings on the local GPU. The machine has the card and the driver but
-no CUDA runtime, so the CUDA execution provider fails to register and the session falls back to
-the CPU — reported in `cortex model`, not hidden. Every number in this session is therefore a CPU
-number, and the reranker's 150 ms budget is unreachable until that changes.
-
-Verified live against the reference corpus, with a real daemon:
-
-- `cortex model fetch` downloads 487 MB, verifies both checksums, and a daemon that was already
-  running picks the model up without a restart.
-- 1 721 chunks embedded at 89 ms each; the whole corpus of 122 137 chunks at the idle budget.
-- `cortex dump` before and after `cortex rebuild` are byte-identical over 1 005 lines, with all
-  1 721 vectors kept and the model never asked for anything (rule R10, Definition-of-Done §7).
-- Idle CPU 0.067 %, anonymous memory 182 MiB with 100 000 files, 122 137 chunks and 122 137
-  vectors indexed.
-
-### 2026-08-18 — M2, first half: content is searchable
-
-The extraction layer is wired in, and the search it feeds is complete without any model in it.
-377 tests green, every gate passing, no daemon left running.
-
-What exists now, end to end: a file is classified, read within a byte budget, split at its
-structure, hashed per chunk, written into a contentless FTS index, retrieved by BM25, fused with
-the path arm by RRF, boosted by salience, and displayed with a snippet re-read from the file. If
-it does not show up, `cortex explain` says which of those steps is the reason.
-
-Five things worth knowing, four of which cost real time:
-
-1. **A benchmark can fail because of its input.** BM25 top-100 measured 44 ms against a 30 ms
-   budget. The cause was not retrieval: the corpus filled every file with sentences drawn from a
-   list of sixteen, so every term occurred in almost every document, and ranking a query meant
-   scoring a third of the index. With a Zipfian vocabulary the same code measures 15 ms. The
-   corpus generator now writes realistic prose (D23) — and the pathological case is still
-   measured and printed on every run, because a corpus good enough to pass a gate must not be
-   allowed to hide the case that does not.
-
-2. **The queue query cost more than the work it fed.** Draining the extraction queue
-   newest-first needs `ORDER BY mtime DESC`, which cannot use the partial index on
-   `extract_state`: every batch read the whole backlog, evaluated a chunk count per row, and
-   sorted it. **11 ms per batch with 50 000 files pending, against 6 µs in index order.** Recency
-   is now handled where it costs nothing — the watcher pushes just-touched files onto a small
-   priority queue that the stage drains first. A file saved during an 85 000-file backlog is
-   searchable by content within about six seconds; before, it waited for the backlog.
-
-3. **A duty cycle that measures the wrong thing is not a duty cycle.** The first version timed
-   only the extraction, leaving the queue read and the commit — which dominate a batch of small
-   files — outside the slice. It also accumulated microsecond work in a millisecond counter, so
-   after extracting 100 000 files the stage reported that it had never done any work. Both
-   fixed; the share now measures at exactly 15.0 % of one core while the user is active, against
-   a configured 15 %.
-
-4. **Polling a database "just in case" is not free.** With the queue empty, asking once a second
-   whether anything was pending cost 0.65 % of one core on a 100 000-file index — more than the
-   daemon's entire idle budget of 0.5 %. The stage now backs off to 30 s and is woken by a signal
-   from the watcher. Idle cost afterwards: 0.100 % for the whole daemon.
-
-5. **The content hash cannot be trusted on its own.** `--rebuild-index` drops chunks and keeps
-   hashes, so a stage comparing only hashes would decide there was nothing to do and leave the
-   corpus permanently unsearchable. The queue therefore reports the chunk count alongside the
-   hash, and a file with a matching hash and no chunks is re-chunked. Rule R10 has a test.
-
-Verified live against the reference corpus, with a real daemon:
-
-- 100 000 files extracted into 122 137 chunks, 26 s of work at the idle budget.
-- A re-extraction of the entire corpus wrote **zero** new chunks — the hash short circuit
-  recognised every file as unchanged. That is M2 DoD §4 minus the embedder that does not exist
-  yet, and the number it asserts is exactly the number of embedding calls a re-index will make.
-- Deny-listed files (`.aws/credentials`, `.env`, `*.kdbx`, `id_ed25519`) are absent from the
-  index entirely, not merely unextracted.
-- A file renamed to a deny-listed name loses its chunks: withdrawn content stops being
-  searchable rather than lingering.
-- Idle RSS 170.3 MiB with 100 000 files and 122 137 chunks indexed, against a 250 MB budget.
-
-One structural change worth noting for anyone looking for the code: the search orchestrator
-moved from `cortexd` into `cortex-query::search`. The daemon binary cannot be depended on, and a
-benchmark that reimplements the search it measures is a benchmark that eventually measures
-something else.
-
-### 2026-08-18 — M2 begun: the extraction layer
-
-Stopped deliberately at a clean boundary so the next session has a well-defined starting point.
-275 tests green, workspace builds, no daemon left running.
-
-Built `cortex-extract` (classify, extract, chunk) and migration 0002. **None of it is wired
-in** — see "Where M2 stands" at the top of this file for exactly what to do next and in what
-order.
-
-Three things worth knowing:
-
-1. **"MIME by magic bytes, never by extension" is only half a rule.** Binary formats have magic
-   numbers; plain text does not. There is no byte sequence meaning "this is Markdown". So the
-   actual rule is: deny-list first, then magic number if present, then content sniffing to
-   decide whether it is text at all, and only then the extension — used solely to pick which
-   text handler runs. The extension can never make an unreadable file readable, and never
-   overrides a magic number. A JPEG named `.txt` is a JPEG, and there is a test saying so.
-2. **A byte budget must bound the read itself, not check the size afterwards.** `take()` on the
-   reader means a file that grows while being read still cannot exceed the budget. Checking
-   `metadata.len()` first would be a race.
-3. **Slicing a string at a byte offset derived from arithmetic will panic sooner or later.** The
-   chunker's hard-split searched for a line break inside `text[cursor..cursor + MAX_CHARS]`, and
-   that endpoint is not a character boundary in German text. Caught by the test written for
-   exactly that case. Every offset that reaches a slice now goes through `floor_char_boundary`.
-
-### 2026-08-18 — M1: zones and the directory graph
-
-The two structural gaps M1 left behind are closed. 225 tests green, every latency gate still
-passing, RSS 150 MiB.
-
-**Zones (D15).** `cortex_core::zones` derives a stable hue from a zone's path; detection lives
-in `cortex_ingest::zone_detect`. Two sources qualify as a zone: conventional areas directly
-under a configured root (`Documents`, `Projects`, `Pictures`, …) and project roots anywhere
-within three levels, identified by markers like `.git` or `Cargo.toml`. The deepest containing
-zone wins, so a repository inside `Documents` reads as that repository. Observable through
-`cortex zones`, overridable with `cortex zones set-color`.
-
-**The directory graph.** `parent_id` is populated: in bulk by `Store::link_parents` after a
-reconcile, and directly on incremental inserts, where the parent is one cached lookup away.
-`cortex node` now shows both parent and zone.
-
-Three things worth knowing:
-
-1. **A zone budget was necessary, and it is a real constraint rather than a safety valve.**
-   Zone assignment costs one pass over the index *per zone*. The benchmark corpus produces 567
-   candidates, because its generator scatters `.git` directories as noise and those are genuine
-   project markers — the initial index went from 4.1 s to 7.1 s before the cap. Capped at 64 by
-   default, with the drop logged. A real home directory is far below that; the corpus is the
-   pathological case, which is exactly what it is for.
-2. **Truncating to a budget needs a total order.** Sorting candidates by depth alone leaves ties
-   to directory iteration order, so which zones survived the cap — and therefore every colour —
-   could differ between runs on an unchanged tree. That defeats the entire premise of D15.
-   Now sorted by depth, then path.
-3. **Bulk assignment is for when the zone *set* changes, not when a file appears.** Re-running
-   it per new directory would make creating a handful of folders take longer than the initial
-   index. Incremental inserts read a cached zone list instead, and full re-detection is
-   triggered only by a conventional directory name or a project-marker file appearing.
-
-The `NodeUpsert` zone field distinguishes "no opinion" from "no zone": a bulk metadata refresh
-passes `None` and the stored assignment is kept, because otherwise every size change would blank
-the colour of the file that changed.
-
-### 2026-08-17 — M1: perception
-
-Three new crates (`cortex-query`, `cortex-ingest`, plus the `bench/` tooling), 92 → 185 tests,
-all green. Every measurable M1 gate passes; three items remain and are listed at the top of
-this file.
-
-What exists now:
-
-- **Reproducible benchmark corpus.** `bench/corpus/generate.sh` builds 100 000 indexable files
-  plus 190 000 skippable ones from a fixed seed, with a hand-rolled PRNG so the corpus is
-  byte-identical forever — a benchmark whose input can drift with a dependency version is not a
-  benchmark.
-- **Path index** (`cortex-query`): trigram postings over a single concatenated byte buffer,
-  fzf-style scoring with smart case, tombstoned removal, compaction.
-- **Watcher** (`cortex-ingest`): `inotify` with a watch budget and reported degradation.
-- **Coalescer**: clock-free and filesystem-free, so every timing rule is tested exactly rather
-  than with sleeps.
-- **Reconciliation**: two-pass, rename-aware, batched.
-- Daemon integration, plus `cortex watch status` and `cortex reconcile`.
-
-Four things worth knowing that cost real time:
-
-1. **Renaming a directory deleted its subtree from the index.** `IN_MOVE_SELF` fires on the
-   moved directory's *own* watch in addition to the parent's `IN_MOVED_FROM`/`IN_MOVED_TO` pair.
-   It carries no destination, so it was mapped to a deletion — and a deletion supersedes a
-   pending rename in the coalescer. Net effect: a rename erased the subtree. Fixed by dropping
-   `IN_MOVE_SELF` from the watch mask entirely; the parent's pair is exact and reconciliation
-   covers the case where the parent is not watched. Regression test added.
-2. **Reconciliation had to be two passes.** Resolving renames in the same loop that handles
-   adds and removals means a directory rename rewrites its descendants' paths while the loop is
-   still holding the pre-rename map. The stale entries it then tried to move clobbered the rows
-   the first move had just written. Renames are now resolved first, against a snapshot, and the
-   index is re-read before anything else runs. `rename_node` additionally refuses to act when
-   its source is absent, so a stale caller can no longer delete a good row.
-3. **My own measurement script was wrong, twice.** `grep '"files":[0-9]*'` never matches
-   pretty-printed JSON, because there is a space after the colon — so the polling loop always
-   ran to its timeout and I read 240 s and then 132 s as index times. The daemon log had the
-   real number all along: **4.07 s**. Parse JSON with a JSON parser. Do not trust a timing
-   number that comes from a shell loop you wrote in the same breath as the thing it measures.
-4. **Sorting, not matching, dominated the keystroke path.** A one-character query matches
-   nearly every path, and fully sorting 100 000 candidates to display 50 cost more than finding
-   them. `select_nth_unstable_by` plus a parallel scan took the P95 from 21 ms to 4.75 ms.
-
-### 2026-08-17 — M0 implemented and accepted
-
-Five crates, 92 tests, all green. Every M0 acceptance criterion verified by hand as well as by
-test — the numbers are in the benchmark table below.
-
-What exists now:
-
-- `cortex-core` — config (layered, validating, safe by default), paths (XDG, `0700`/`0600`),
-  domain model, ID newtypes, and the **deny-list**. The deny-list landed early rather than in
-  M1 because rule R1 is not something to retrofit.
-- `cortex-store` — the full schema as migration `0001`, a forward-only migration runner that
-  refuses a database from a newer build, and the M0 query surface.
-- `cortex-rpc` — JSON-RPC 2.0 types with the version enforced at the type level, newline-delimited
-  JSON framing, and a client used by every other component.
-- `cortexd` — lifecycle, `flock`-based single-instance lock, socket at `0600`, signal handling,
-  metadata walker.
-- `cortex-cli` — `ping`, `status`, `search`, `index`, `node`, `episodes`, `shutdown`, each with
-  `--json`.
-
-Two things worth knowing that cost time:
-
-1. **Partial unique indexes need their `WHERE` clause repeated in `ON CONFLICT`.** The index on
-   `nodes(path)` is partial because concept and annotation nodes have no path. Without repeating
-   the predicate, every upsert failed with "ON CONFLICT clause does not match any PRIMARY KEY or
-   UNIQUE constraint" — and because the walker treats an upsert failure as a skip, it looked
-   like an over-eager deny-list rather than a SQL bug. If indexing silently skips everything,
-   check the SQL before the classifier.
-2. **The hygiene gate caught our own test fixtures**, which used made-up single-letter home
-   directories instead of the documented placeholder. Fixed the fixtures rather than widening
-   the exemption list. Keep resolving it in that order — the gate is only worth having while
-   it is stricter than we are.
-
-### 2026-08-17 — Planning and documentation
-
-- Read the source specification (`docs/99-SOURCE-SPEC.md`) and answered its §16 open questions
-  with the project owner. Answers recorded as D2, D10, D12.
-- Measured the real corpus: 78 621 files / 8.0 GB. This is the low end of the 50 k–500 k bucket
-  and it is what makes local embedding and a single SQLite file the right call (D5, D6).
-- Extracted the `island-ui` design system into `06-DESIGN-SYSTEM.md`: tokens, geometry scale,
-  named springs, timing constants, layer model. This is what makes D4 (web-based GUI) the
-  cheaper option — the motion system already exists in React + Framer Motion.
-- Established the documentation set: glossary, build prompt, decision log, architecture,
-  hard rules, design system, this file.
-- Created the two repositories: public Core and private Extension.
-- Consulted an agent on the owner's home server about the Main Brain and the federation path.
-  Findings are recorded in the **private** Extension repository, not here — the public Core
-  must contain nothing about a specific peer (§R9).
-- Verified the toolchain: Rust 1.93.1, cargo can fetch crates.
-
-**Key correction to the source spec discovered during the survey:** the spec suggests offloading
-expensive model work to the home server. The survey showed the server has **no GPU**, 15 GB RAM
-and roughly thirty always-on services, while the workstation has a 16 GB RTX-class GPU. The
-direction is therefore reversed — embeddings and reranking stay local. Recorded as D6.
-
----
-
-## Four things that were written, tested, and called by nothing
-
-This session found the same defect four times, which is a rate worth naming rather than four
-separate notes. Each was correct code with a test beside it and no caller anywhere:
-
-| what | what it meant in practice |
-|---|---|
-| `decay_unreported` | a memory retrieved fifty times and never mentioned ranked exactly as well as one that had earned it — the counter-intuitive half of D76, implemented and inert |
-| `prune_packs` | a table that only ever grew, holding a record of everything an agent was once shown |
-| `recalled_with` | an edge type in the schema and the enum that nothing wrote, so memories never associated with each other at all |
-| `note_session_call` | **the Inspector printed "0 Aufrufe" beside every session ever opened** |
-
-The last one is the one to learn from, because it had a *user interface* built on top of it. A
-panel was written to display a number, the number was always zero, and nothing anywhere failed —
-the tests for the counter passed, because they called it themselves.
-
-**What the four have in common** is that each was written from the specification, in the order
-the specification lists things, and the call site belonged to a different layer that was written
-earlier or later. The tests were written at the same moment as the function and therefore called
-it directly, which is exactly the shape that cannot catch this.
-
-**The cheap defence, and it is genuinely cheap:** `scripts/uncalled.sh`, which is that grep with
-its lessons in the header. Three of these four came out of it in about a minute.
-
-Two things about it are worth knowing before running it. The first version matched only `.f(`
-and `::f(`, so it missed every function imported with `use` and called by its bare name — it
-reported a clean sweep over four crates that in fact had sixteen candidates in them. **A tool
-that finds nothing is indistinguishable from a codebase with nothing to find**, which is the
-same failure this whole section is about, one level up.
-
-The second is that it is a prompt and not a verdict, and the header says so: a query helper whose
-only user is a test assertion is test infrastructure, something reached through a trait or
-`serde` has no call site to find, and a library crate's public API may be called from outside
-this tree. Sorting the list is the work; producing it is the easy part.
-
-Running that sweep over the whole of M11 afterwards found four more, and sorting them was the
-useful part. **The rule is not "delete everything with no production caller"** — a query helper
-whose only user is a test assertion is test infrastructure, not a bug. The rule is: *code whose
-purpose is to make something happen in production, and which production never calls, is a bug.*
-By that line `needs_explicit_request` and `MemoryFilter::visible_to` were duplication to be
-wired — the second was a filter `brain.memories` had spelled out by hand — and
-`Store::agent_session`, `Store::memory_chunk`, `Store::pack_items` and `tokens::estimate` were
-weight to be dropped, with their tests rewritten to assert behaviour instead. A pack that is
-still there is a pack an outcome can be reported against, which is the only thing a pack is for.
-
-The fourth was found by reading the panel. Where a function's *purpose* is to make a number
-appear somewhere, the test that matters asserts the number where it appears — which is what
-`a_session_counts_the_calls_and_the_refusals_that_belong_to_it` now does, over a real socket,
-counting a real refusal.
-
-## The pack was spending its budget four times
-
-Found by reading what an MCP client actually receives, rather than what the daemon returns.
-
-An MCP result carries the answer **twice** by construction — pretty-printed as the text block a
-model reads, and verbatim as `structuredContent`. The pack carried its own text twice as well,
-in `rendered` and in an item beside it. So every memory's text reached an agent four times, and
-a 2 048-token budget cost something closer to eight thousand. Nothing failed anywhere; the
-feature simply did not do the one thing it exists to do.
-
-| | |
-|---|---|
-| A memory's text in one MCP answer | **4 copies → 1** |
-| A 2 266-byte pack, whole answer | 8 601 bytes → **5 756** |
-| Ratio, and it falls as a pack grows | **2.54**, gated below 3.0 |
-
-Four changes, each removing one copy or one repetition:
-
-- **`PackItem.text` is skipped on the wire.** What a caller needs per item is what it takes to
-  report an outcome and to argue with a memory: the id, the arm, the kind, the scope, the path,
-  the basis. The words are in the block.
-- **The MCP text block is the rendered pack, and the field is *moved* rather than copied** — so
-  `structuredContent` does not repeat it. Declared as a named field in the tool table, so the
-  bridge still interprets nothing (D36); it moves one field it was told the name of.
-- **The basis omits every count that is still zero**, and `arm`, which the item beside it
-  already carries. "helped 0, noise 0, retrieved 0" on every item of every pack on a fresh
-  install is the absence of an argument rather than one.
-- **An empty pack is not recorded at all**, and recording is idempotent on the pack id — which
-  is derived from the second, the actor and the task, so two identical requests inside one
-  second collide by construction and that is a retry.
-
-**What is left is the floor.** 2 266 bytes of pack and about 3 500 of per-item metadata for
-fifteen items, and that metadata does not grow with the budget — so the ratio falls as a pack
-gets bigger. The test asserts it stays under 3.0, because a rise means something started
-repeating again.
-
-**Two things this broke, both mine, and both worth the note.** A CLI that required
-`basis.salience`, which now goes missing when it is zero — *absent means zero* is a convention
-and a convention has to be written down, so it is, in the struct and in the two tests that read
-it. And a stale `target/debug/cortex`: `three_surfaces` drives real binaries and `cargo test`
-does not rebuild another package's, so a wire-format change passes the unit tests and fails an
-end-to-end one against yesterday's binary. `cargo build --workspace --bins` first.
-
-## M11 — where its Definition of Done actually stands
-
-Twelve criteria. **Nine met, two partly, one waiting on the owner.** The two partial ones are
-partial in ways worth reading rather than in ways worth rounding up.
-
-| # | Criterion | State |
-|---|---|---|
-| 1 | A memory written once is returned by `brain.context` on all three surfaces, identically | **met** — `three_surfaces.rs`, against a real daemon and two real binaries |
-| 2 | `rebuild` reproduces a byte-identical dump including supersession, deletion and what a memory earned | **met**, at the thousand the criterion names |
-| 3 | The budget is honoured at 512, 2 048 and 8 192 tokens over 5 000 memories | **met** — asserted inside the benchmark loop, not only in its report |
-| 4 | `brain.context` P95 under 120 ms | **met** — 8.97 ms, a factor of thirteen |
-| 5 | MMR at λ 0.7 beats λ 1.0 on duplicates without losing distinct facts | **met** — 4 restatements and 1 distinct fact at λ 1.0, against 2 and 3 at λ 0.7 |
-| 6 | The learning signal moves the ranking in all three directions | **met**, including the counter-intuitive one |
-| 7 | Scope isolation per surface; no unrequested promotion to `global` | **met** — and the CLI's default had to be fixed to make the second half true |
-| 8 | Supersession: absent, present with history, detected without deciding | **met** |
-| 9 | The kill switch reaches every memory tool | **met** — asserted per tool over the socket |
-| 10 | The Inspector renders at 400 px, costs under 1 % of a core, and gives the window back | **partly — the width, the give-back and keyboard-completeness are measured; the CPU cost is not** |
-| — | *Not a criterion, and the one that decides whether any of this is used:* selecting a file in the ordinary window shows what agents have learned about it | **built** — the Inspector is where somebody audits the memory; the context panel is where they meet it without going anywhere |
-| 11 | A human's deletion is immediate and survives a rebuild | **met**, live as well as in a test — and superseding is wired now too, which the first version of the panel had not been |
-| 12 | A real task, twice, by a human, measurably better the second time | **not done — this one needs the owner** |
-
-**§2, at scale.** Two tests, and they are about different things. The dozen-memory one is about
-*shape*: every scope, every kind, a supersession, a deletion, a correction. The thousand-memory
-one is the criterion as written — a thousand across five scopes and six kinds, a supersession
-chain three deep so the replay has to resolve a memory that is itself superseded, a deletion, and
-an earned score including a human overruling an agent. Rebuilt, dumped, compared.
-
-**It replays in 0.55 seconds**, which is not a gate — the build prompt gives the replay no
-budget — and is recorded because it is the number that would say the replay had gone quadratic.
-A thousand memories taking ten seconds would be invisible at a dozen and ruinous at a hundred
-thousand, and the test fails at ten seconds for exactly that reason.
-
-**§5's numbers, now recorded.** On a seeded store of five restatements of one fact and three
-distinct facts, at a 200-token budget:
-
-| | restatements kept | distinct facts kept |
-|---|---|---|
-| λ = 1.0, pure relevance | 4 | 1 |
-| λ = 0.7 | 2 | 3 |
-
-Both pairs are pinned in the test rather than only compared, so a change that makes
-diversification more or less aggressive has to edit that line and say why. Two restatements
-rather than one is worth noticing: λ 0.7 is a trade-off and not a deduplicator, and the second
-copy costing a slot is the price of not dropping something that only *looked* like a copy.
-
-**§10, and a third thing M4 §7 asks for that it did not do at all.** Every button in the panel
-was wired to `onMouseDown`, which a keyboard never fires — a `<button>` activated with Enter
-raises `click` and nothing else. The tab strip, the kill switch, the delete confirmation and the
-supersede flow were all mouse-only, on a surface added to an application whose Definition of Done
-says every function is reachable without a mouse. Worse, the unit tests dispatched `mousedown`
-directly, so they passed against a panel no keyboard could operate.
-
-Fixed, and the arrows now move along the tab strip with the focus following the selection, which
-is what a tablist does everywhere else and therefore what somebody will try. Two Playwright cases
-drive the whole panel from the keyboard alone, in a real browser — "pressing Enter on a focused
-button activates it" is a statement about an event loop and not about a DOM emulation.
-
-**The width half is measured too:** fourteen Playwright cases open the panel
-at 400, 600, 900 and 1400 px on three tabs and assert that neither the body, nor the panel, nor
-any row overflows its own box — plus Escape returning the caret to the search field, and the
-button and `Ctrl+Shift+A` being one control. **Those tests found a real overflow at every width**:
-the panel reused the existing `.hc-facts` class, whose contract is one line with an ellipsis, so
-every allow-list path inherited `white-space: nowrap` and pushed its box 166 px wide. Three
-attempts to fix it with `overflow-wrap` and `min-width` failed because they never mentioned the
-property that was actually wrong. The panel has its own class now — a panel that wraps is a
-different thing from a sidebar that elides.
-
-**The window's own gates still hold with all of this in it.** The full browser suite — 141 cases
-including the perf specs — passes: cold start, keystroke to first row, the 10 000-entry
-directory, 60 fps scrolling, the bounded DOM, and the heartbeat that runs only while there is
-something to report. That is not the same as measuring what the panel costs *while it streams*,
-and it is the half of M11 §10 that could be checked without opening a window: adding the
-Inspector, the memory section in the context panel and the compose row moved none of M4's
-numbers.
-
-**And one thing that would have made the cost unmeasurable anyway, found by reading the hook
-that exists to prevent it.** The panel polled four calls every two seconds regardless of whether
-the window was on screen. A hidden GTK window keeps running its page — that is D59's whole
-subject and `useVisibility`'s whole reason — so somebody who opened the Inspector and then
-dismissed the window left four calls a second and a half running against the daemon until the
-next reboot. It listens now, and the test that says so was checked against the version without
-the guard.
-
-**What the panel asks for, before anybody measures what it costs.** Two things were wasteful in
-a way that reading the code makes obvious and reading a CPU number would not have attributed.
-The Live tab re-read the last eighty audit entries *and* the last eighty refusals on every
-two-second poll — with `args_json`, the largest column in that table and one it never displays —
-for a daemon on which usually nothing had happened. `audit.recent` takes a cursor now, which is
-`brain.diff`'s own argument applied to the other thing a client watches, and the panel appends
-instead of replacing. The session list cannot be cursored the same way, because the counts
-inside a session are the part that changes; it asks for twenty rather than fifty, which is what a
-live view needs, and `cortex sessions` is where the rest of them live.
-
-The cost half is still not measured. The panel does not poll while it is shut and does not poll a
-tab that is not showing, and both are asserted. Nothing has measured what it costs while the
-Live tab streams. This project has a recorded case of a hidden window burning a full core that no
-amount of reading the code would have shown (D59), and the cgroup snippet at the top of this file
-settles it in thirty seconds — **but it needs the window open, and the owner has asked not to
-have windows appear unasked.** It is theirs to run.
-
-**Two more gaps that are not Definition-of-Done items and matter anyway:**
-
-- ~~**The semantic arm of `brain.context` has never run against a real embedding model.**~~ Run
-  on 2026-08-24, and it works. See below.
-- ~~**Consolidation has never run over a corpus of memories.**~~ Run, and it found that
-  **every memory scored exactly 0.0 and stayed in Working for ever**: the scoring pass selects
-  `kind IN ('file', 'dir')`, so memories were not scored low, they were not scored. D80 has the
-  whole of it, including the part where adding the component did not work either because
-  `Components::sum()` lists its fields by hand. Memories are scored now, `usefulness` is a real
-  component of the shared model, and a memory's tier floor is Long-term rather than Cold. What
-  remains open is D76's own question — whether usefulness predicts a human calling something
-  useful — and that needs reports that only use produces.
-
-## The semantic arm, against the real model
-
-Run on 2026-08-24 with `multilingual-e5-small` on the GPU, in a throwaway root whose `models`
-directory is a symlink to the one that is already downloaded — no network, nothing written to
-the real state directory, and the reason for going to the trouble is that everything else about
-the second collection had only ever been exercised with the hashing embedder, which has no
-semantics to test.
-
-Four memories, then two tasks chosen to share as little wording as possible with them:
-
-| task | what came back first |
-|---|---|
-| *"how long does the file system observer delay before reacting"* | "the watcher waits three hundred milliseconds before it acts on a filesystem event" |
-| *"warum laufen Vorschaubilder in einem eigenen Prozess"* | "thumbnails are decoded in a separate process so a malformed image cannot take the daemon with it" |
-
-**The second one is the one that settles it.** The German task and the English memory share no
-token at all — not one — and it ranked first. The first task is weaker evidence than it looks:
-`before` is not in the stopword list, so the lexical arm had something to match on, and the
-result was fused rather than purely semantic. Worth knowing before quoting it.
-
-Two things this run also produced:
-
-- **`cortex model` reported "0 vectors in the index" while four memories were embedded.** It
-  printed `loaded.vectors.len()`, which is the file collection. It now prints both, because one
-  number covering two files with two rebuild paths would make a full memory index beside an
-  empty file one look like a half-filled single one.
-- The whole exercise took under a minute once the runtime was right, and the runtime was the
-  only obstacle: `device = "cpu"` asks for an ONNX runtime build that this machine has never
-  downloaded, while the CUDA one it does have is what `auto` or `cuda` selects.
-
-## Driving it by hand, and the four things that found
-
-Ten minutes at the command line against a real daemon, after every test was green. It found four
-defects, and none of them was reachable from a unit test.
-
-**1. A memory about "every commit" was not returned for the task "committing a change."** The
-tokeniser folds case and diacritics and does nothing else, so `commit` and `committing` are
-unrelated tokens. With an embedding model the semantic arm covers it — and R5 means a fresh
-install has no model, so a context tool that only works after a download is one that does not
-work on the day somebody tries it. Task terms of seven characters or more now also match a
-sixty-per-cent prefix of themselves: `commit`* for `committing`, `reposi`* for `repository`,
-`Umbene`* for `Umbenennung`. Short words are left alone, where truncation would make a wildcard
-matching most of the store. It over-matches on purpose — `commit`* also finds `committee` — and
-the trade is not symmetric: one extra slot in a ranked list against never seeing the memory that
-answered the question.
-
-**2. A human could not correct an agent.** The guard that stops a client retrying a failed call
-from doubling its own vote was written as "refuse any second report on a pack item", which also
-silenced the human — the exact opposite of the weighting D76 is about. Watching a `noise` report
-from a person land on a memory an agent had called helpful, and nothing happen, is what showed
-it. They are two properties and they need two rules: the same *class* of reporter may not report
-twice, and a human may overrule an agent. A correction reverses the agent's weighted delta and
-its count before applying the human's, so the Inspector does not go on showing a "helped" that
-the human has already contradicted.
-
-**3. The CLI defaulted every write to `global`, even for an agent.** The flag's default was set
-once, for a person typing at a terminal who has no agent scope — and it applied just as happily
-to `cortex --as claude remember`, which silently widened exactly what the scope rules exist to
-keep narrow. The default follows who is speaking now.
-
-**4. `cortex rebuild` waited forever when extraction was switched off.** Not an M11 defect and
-it was found by M11 work: the progress loop polls until `pending` reaches zero, and a queue
-nothing drains never gets there. No content root is the *default* configuration, so this is the
-first thing a new user would have hit. It stops and says so.
-
-**And R10 verified against a live daemon rather than only in a test.** Six memories including a
-supersession chain and a human's deletion, `cortex rebuild`, and the two listings compare
-identical — with the deleted one still deleted. The daemon logged `memory layer replayed from
-the episode log memories=8`: six writes, one supersession and one deletion, all of them
-assertions.
-
-## The M11 benchmark, and the two things it found
-
-Written after the implementation rather than before it, which is the wrong way round and is
-recorded as such. It found two defects in the first run, both of which a unit test could not
-have.
-
-**A 512-token budget produced a 540-token pack.** The items were fitted to the budget and the
-block was rendered afterwards, and the block carries a title, a heading per section and a bullet
-per item that no per-item count knows about. The overshoot is proportional to the number of
-sections, so it only appears once a pack is full enough to have several — which is why every
-unit test passed. The furniture is reserved out of the budget before anything is chosen now, and
-the block is measured and trimmed from the end until it fits, so the promise is true by
-construction rather than by arithmetic that a later change can drift away from.
-
-**The gate failed at 163 ms against 120, and the extra line in the benchmark said where.** The
-same pack with diversification switched off measured 7 ms. MMR is quadratic in the candidate
-count and the first version made that far worse than it had to be: it built both trigram sets
-*inside* the comparison, so a hundred and twenty candidates meant fourteen thousand set
-constructions over the same sixty strings. The sets are built once per candidate now, the
-running redundancy is carried forward instead of recomputed, and the ranking stops after forty
-picks because a dozen will fit.
-
-| | before | after |
-|---|---|---|
-| context pack, 2 048-token budget, 5 000 memories, P95 | 163.41 ms | **8.97 ms** |
-| the same with `λ = 1.0` (no diversification), P95 | 7.08 ms | 7.96 ms |
-| the `cortex-query` unit tests | 10.35 s | 0.32 s |
-
-So diversification costs about one millisecond, against a budget of a hundred and twenty. The
-last row is not a benchmark result and is worth having anyway: a test suite that takes ten
-seconds to run is a test suite somebody stops running.
-
-**One measurement that is a design claim rather than a number.** The context gate seeds a store
-of its own instead of writing into the cached corpus index, because `brain.context` never
-touches the file chunk index at all — the memory arm is a second collection (D75). Measuring it
-beside a hundred thousand file chunks would have produced the same number while implying a
-dependency that is not there. That the two do not interact is the whole argument for the second
-collection, and it is now a property of the benchmark rather than a claim in a decision log.
-
-## Benchmark results
-
-Empty until M0 lands its first benchmark. Record P95 values here per milestone so regressions
-are visible across sessions.
-
-| Date | Milestone | Metric | Value | Budget | Pass |
-|---|---|---|---|---|---|
-| 2026-08-17 | M0 | Daemon cold start → socket accepting | 12 / 14 / 23 ms | 200 ms | yes |
-| 2026-08-17 | M0 | `cargo test --workspace` | 92 passed, 0 failed | green | yes |
-| 2026-08-17 | M1 | Fuzzy path match, literal (tier one) | P95 1.25 ms | 10 ms | yes |
-| 2026-08-17 | M1 | Keystroke path, every prefix incl. 1–2 chars | P95 4.75 ms | 10 ms | yes |
-| 2026-08-17 | M1 | Abbreviation, full-scan tier | P95 4.60 ms | 25 ms | yes |
-| 2026-08-17 | M1 | Full initial index, 105 273 entries | 4.07 s | 60 s | yes |
-| 2026-08-17 | M1 | Watch placement, 5 273 directories | 62 ms | — | — |
-| 2026-08-17 | M1 | Idle CPU, no filesystem activity | 0.000 % of one core | 0.5 % | yes |
-| 2026-08-17 | M1 | Idle RSS, 105 273 paths indexed | 176.3 MiB | 250 MB | yes |
-| 2026-08-17 | M1 | Path index footprint | 69.6 MiB / 105 273 paths | — | — |
-| 2026-08-17 | M1 | `cargo test --workspace` | 185 passed, 0 failed | green | yes |
-| 2026-08-18 | M1 | Full initial index incl. zones and parents | 4.32 s reconcile + ~3.2 s structure | 60 s | yes |
-| 2026-08-18 | M1 | Idle RSS, 105 273 paths, zones assigned | 150.2 MiB | 250 MB | yes |
-| 2026-08-18 | M1 | Fuzzy path match, literal | P95 1.23 ms | 10 ms | yes |
-| 2026-08-18 | M1 | Keystroke path | P95 5.23 ms | 10 ms | yes |
-| 2026-08-18 | M1 | `cargo test --workspace` | 225 passed, 0 failed | green | yes |
-| 2026-08-18 | M2 | Fuzzy path match, literal (tier one) | P95 1.11 ms | 10 ms | yes |
-| 2026-08-18 | M2 | Keystroke path, every prefix incl. 1–2 chars | P95 6.61 ms | 10 ms | yes |
-| 2026-08-18 | M2 | Abbreviation, full-scan tier | P95 4.75 ms | 25 ms | yes |
-| 2026-08-18 | M2 | BM25 top-100 | P95 14.74 ms | 30 ms | yes |
-| 2026-08-18 | M2 | RRF fusion + salience boost | P95 12.75 µs | 5 ms | yes |
-| 2026-08-18 | M2 | Hybrid query, both arms + salience + snippets from disk | P95 20.96 ms | (80 ms from M4) | — |
-| 2026-08-18 | M2 | Stopword query matching 120 692 of 122 137 chunks | P95 78.7 ms | — | — |
-| 2026-08-18 | M2 | Content index build, 100 000 files → 122 137 chunks | 23.5 s | — | — |
-| 2026-08-18 | M2 | Extraction of the whole corpus, live daemon, idle budget | 25.9 s busy | — | — |
-| 2026-08-18 | M2 | Re-extraction of an unchanged corpus | 0 chunks written | 0 | yes |
-| 2026-08-18 | M2 | CPU share while the user is active | 15.0 % of one core | 15 % | yes |
-| 2026-08-18 | M2 | Idle CPU, 122 137 chunks indexed | 0.100 % of one core | 0.5 % | yes |
-| 2026-08-18 | M2 | Idle RSS, 100 000 files, 122 137 chunks | 170.3 MiB | 250 MB | yes |
-| 2026-08-18 | M2 | `cargo test --workspace` | 377 passed, 0 failed | green | yes |
-| 2026-08-18 | M2 | Vector ANN top-100, 122 137 vectors | P95 1.01 ms | 40 ms | yes |
-| 2026-08-18 | M2 | Embedding one query (CPU, 8 threads) | P95 4.33 ms | — | — |
-| 2026-08-18 | M2 | Embedding one chunk (CPU: 1 / 8 / 16 threads) | 279 / 75 / 86 ms | — | — |
-| 2026-08-18 | M2 | Recall@10, goldset, fused | 91.0 % | recorded | — |
-| 2026-08-18 | M2 | Recall@10, goldset, lexical arm alone | 36.0 % | — | — |
-| 2026-08-18 | M2 | Recall@10, German against English | 87.0 % / 95.7 % | within 10 % | yes |
-| 2026-08-18 | M2 | Re-index of an unchanged corpus, embedder calls | 0 | 0 | yes |
-| 2026-08-18 | M2 | Vector index rebuilt from the store, 122 137 vectors | 152 ms, no model | — | — |
-| 2026-08-18 | M2 | `cortex rebuild`, canonical dump before/after | identical, 1 005 lines | identical | yes |
-| 2026-08-18 | M2 | Idle CPU, 122 137 vectors indexed | 0.067 % of one core | 0.5 % | yes |
-| 2026-08-18 | M2 | Idle anonymous memory, 100 k files + 122 137 vectors | 182 MiB | 250 MB | yes |
-| 2026-08-18 | M2 | Idle total RSS, same daemon after searching | 299 MiB (107 MiB mapped) | see D27 | — |
-| 2026-08-18 | M2 | Cross-encoder rerank, top 30 (GPU) | P95 17.48 ms | 150 ms | yes |
-| 2026-08-18 | M2 | Embedding one chunk (GPU / CPU 8 threads) | 1.85 ms / 75 ms | — | — |
-| 2026-08-18 | M2 | Embedding one chunk, whole daemon (GPU / CPU) | 3.11 ms / 89 ms | — | — |
-| 2026-08-18 | M2 | Embedding one query (GPU / CPU) | 1.1 ms / 3.9 ms | — | — |
-| 2026-08-18 | M2 | Recall@10, goldset, fused | 92.0 % | recorded | — |
-| 2026-08-18 | M2 | Recall@10, goldset, with reranking | 92.0 % (MRR 0.878 either way) | recorded | — |
-| 2026-08-18 | M2 | Recall@10, German against English | 85.2 % / 100.0 % | within 10 % | **no** |
-| 2026-08-18 | M2 | `cargo test --workspace` | 472 passed, 0 failed | green | yes |
-
-Search figures come from `bench-latency` against the standard corpus, **release build**. Index,
-CPU and memory figures are from a live daemon, and the CPU share is measured from the stage's own
-busy counter against wall-clock time rather than from `top`.
-
-**The M0 and M1 rows above were measured against a different corpus** and are not directly
-comparable with the M2 rows. The generator now writes realistic content (D23), which changed both
-the tree slightly and the work per file entirely. Where the M2 rows repeat an M1 metric, that is
-a re-measurement, not a regression: the keystroke path moved from 5.23 ms to 6.61 ms, still
-inside its 10 ms budget, and the cause is the corpus rather than the code. It also varies by a
-couple of milliseconds between runs, which is worth knowing before reading a small change in it
-as a regression.
-
-The stopword row has no budget on purpose. Nobody searches for "und", but FTS5 scores every
-match before it can rank them, so a query that matches almost the whole index costs the whole
-index. It is measured on every run so that the corpus cannot quietly hide it.
-
-### M2 acceptance
-
-The Definition of Done is in `docs/01-BUILD-PROMPT.md`. Every item is now measured, and the one
-that fails says so rather than being reworded until it passes.
-
-| Criterion | Result |
-|---|---|
-| BM25 top-100 under 30 ms | 14.7 ms P95 |
-| RRF fusion + salience boost under 5 ms | 12.8 µs P95 |
-| Re-indexing an unchanged corpus re-embeds zero chunks | verified live over 100 000 files: 0 chunks written, every file recognised by hash |
-| Idle RSS below 250 MB with 100 k files indexed | 182 MiB anonymous with 122 137 chunks and 122 137 vectors (D27) |
-| First index run stays inside the configured CPU share | 15.0 % of one core measured against a configured 15 % while the user is active |
-| Every result carries a score breakdown, and `cortex explain` prints it | yes, including why a file did *not* appear |
-| Content extraction only inside configured roots (R3) | verified live: a file outside them is recorded as skipped, with the reason |
-| The deny-list holds before any content access (R1) | verified live: sensitive files are absent from the index entirely |
-| Withdrawing content withdraws it from the index | verified live: renaming a file to a deny-listed name deletes its chunks |
-| Vector ANN top-100 under 40 ms | 1.01 ms P95 over 122 137 vectors |
-| Recall@10 on the goldset, measured and gated | 92.0 % fused, MRR 0.878, top-1 86 % |
-| Re-indexing re-embeds zero chunks, by call counter | yes — `re_indexing_an_unchanged_corpus_asks_the_model_for_nothing` |
-| `cortex --rebuild-index` reproduces a canonical dump | yes — byte-identical over 1 005 lines, live, with every vector kept |
-| Vector index rebuildable from `embeddings` without the model | yes — 122 137 vectors in 152 ms, live |
-| Cross-encoder rerank of the top 30 under 150 ms | 17.5 ms P95 on the GPU, delivered as a `search.update` notification after the first answer |
-| Recall@10 gated against regression | `bench/goldset/baseline.toml`, a 3-point drop on any breakdown fails the run |
-| German within 10 % of English | **not met** — 14.8 % behind. Recorded rather than argued away; see the top of this file |
-
-### M0 acceptance, verified
-
-| Criterion | Result |
-|---|---|
-| `cargo test --workspace` green | 92 tests pass |
-| `cortex index` then `cortex search foo` returns ranked rows | yes — finds `report-foo.md`, ranks stably |
-| Cold start under 200 ms | 12–23 ms |
-| `kill -9` mid-flight, restart, consistent database | yes — index intact, search works, no corruption |
-| Second daemon refused with a clear message | yes — names the lock file and the holding pid |
-| Works with no config file and no state directory | yes — creates both, safe defaults |
-| Deny-list holds end to end | yes — `.ssh`, `id_ed25519`, `.env` and `node_modules` absent from the index |
-
-### M1 acceptance, verified
-
-| Criterion | Result |
-|---|---|
-| 100 000 files indexed, initial index under 60 s | 4.07 s for 105 273 entries |
-| Fuzzy path search P95 under 10 ms | 1.25 ms literal, 4.75 ms including 1–2 character prefixes |
-| Idle CPU below 0.5 % of one core | 0.000 % over a 30 s sample |
-| Idle RSS under 250 MB with 100 k files | 176.3 MiB |
-| Deny-list: no sensitive path reaches the index | verified live against a corpus containing `.ssh/id_ed25519`, `.aws/credentials`, `.env`, `*.pem`, `*.kdbx` |
-| Move detection: `mv` of a directory is not a mass delete plus create | file and directory counts unchanged; the new path and its children are searchable |
-| Live watcher picks up a new file | searchable within ~2 s at a 300 ms debounce |
-| Reconcile after a blind period equals a from-scratch rebuild | asserted by unit test against a canonical path dump |
-| Watcher survives 24 h without leaking descriptors or memory | **not tested** — deferred by the owner; see outstanding items at the top |
-| Zones detected, coloured stably and assigned deepest-first | verified live: conventional areas and project roots, distinct hues, a repository inside an area wins over it |
-| A new project becomes a zone without a restart | verified live: detected ~3 s after its `package.json` appeared |
-| Directory graph is complete | verified live: a file walks up through every ancestor to the indexed root, which correctly has no parent |
-
-
-## Goldset recall
-
-Measured by `bench/goldset` against 29 judged documents and 1 000 generated distractors, with the
-50 checked-in queries. The baseline in `bench/goldset/baseline.toml` fails the run on a drop of
-more than three points against any row of the breakdown.
-
-| Date | Model | Recall@10 (EN) | Recall@10 (DE) | Notes |
-|---|---|---|---|---|
-| 2026-08-18 | multilingual-e5-small, GPU | 100.0 % | 85.2 % | fused 92.0 % overall, MRR 0.878, top-1 86 %; by-name 100 %, lexical 100 %, semantic 96 %, cross-language 50 % |
-| 2026-08-18 | the same, plus the cross-encoder | 100.0 % | 85.2 % | identical — see D30 for why this goldset cannot measure a reranker |
-| 2026-08-18 | lexical arm alone (control) | 39.1 % | 33.3 % | 36.0 % overall — what the index answers with no model at all |
-| 2026-08-18 | hashing embedder (control) | — | — | run `goldset` without `--model` to reproduce; it is a control, not a result |
-
-**German is 14.8 % behind English, outside the 10 % Definition-of-Done §3 allows.** The whole gap
-is three queries out of twenty-seven, all of them German questions with English answers; the
-reverse direction is perfect. See "The one criterion that is not met" at the top.
-
-An earlier run of this table reported 91.0 % with a 9 % gap. It was measured against a corpus
-whose distractors contained real sentences, several of which answered goldset queries without
-being judged relevant (D30). The numbers are not comparable and the older ones are not
-trustworthy.

@@ -43,6 +43,13 @@ done
 
 out="$here/data/$preset"
 
+# The corpus is data for a benchmark, not for the index. When the repository sits inside a
+# content root — which it does on the reference machine — the daemon would otherwise index
+# 293 000 generated files as if they were the owner's, and did, until 2026-09-05. The marker is
+# the daemon's own exclusion mechanism (`denylist::IGNORE_MARKER`), placed once for every preset.
+mkdir -p "$here/data"
+: > "$here/data/.brainignore"
+
 echo "building corpus-gen…"
 cargo build --release -p corpus-gen --manifest-path "$repo_root/Cargo.toml" >/dev/null
 

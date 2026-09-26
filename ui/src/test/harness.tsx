@@ -12,9 +12,13 @@
 
 import { createRoot } from "react-dom/client";
 import { App } from "../App";
+import type { Section } from "../components/NavRail";
 import { setTransport, type Source, type ViewRow } from "../ipc";
 import "../tokens.css";
+import "../glass.css";
+import "../kit.css";
 import "../app.css";
+import "../shell.css";
 
 const params = new URLSearchParams(location.search);
 const HIT_COUNT = Number(params.get("hits") ?? "10000");
@@ -40,6 +44,51 @@ function hits(count: number): ViewRow[] {
 }
 
 const ALL = hits(HIT_COUNT);
+
+/**
+ * `content.png` twice: same name, different directory, size and age. The pair the owner named
+ * when asked what the explorer must make easy — "ist jetzt content.png oder content(1).png das
+ * richtige?" — and, until 2026-09-06, the one thing three reviews agreed had no test.
+ */
+// Relative to now, unlike the rest of the fixture: the row shows an *age*, and two files from
+// 2023 both read "3 y" today whatever their dates. (The first version of this fixture used
+// 1.20 MB against 1.18 MB, and the row showed "1.2 MB" for both — which is exactly why the
+// compare view prints the byte count, and why the row alone was never going to be enough.)
+const NOW = Math.floor(Date.now() / 1000);
+const SAME_NAME: ViewRow[] = [
+  {
+    node_id: 9001,
+    indexed: true,
+    path: "/home/user/Downloads/content.png",
+    kind: "file",
+    size: 1_204_000,
+    mtime: NOW - 2 * 3600,
+    zone_id: null,
+    tier: "working",
+    salience: 0.8,
+    degree: 1,
+    last_episode: 1_700_000_000 - 2 * 3600,
+    pinned: false,
+    score: { path_rank: 1, lexical_rank: null, vector_rank: null, fused: 0.5, salience_boost: 1.2, rerank: null, final_score: 0.6 },
+    snippet: null,
+  },
+  {
+    node_id: 9002,
+    indexed: true,
+    path: "/home/user/Projects/site/assets/content(1).png",
+    kind: "file",
+    size: 348_000,
+    mtime: NOW - 40 * 86_400,
+    zone_id: 1,
+    tier: "stm",
+    salience: 0.3,
+    degree: 4,
+    last_episode: NOW - 40 * 86_400,
+    pinned: false,
+    score: { path_rank: 2, lexical_rank: null, vector_rank: null, fused: 0.4, salience_boost: 1.0, rerank: null, final_score: 0.4 },
+    snippet: null,
+  },
+];
 
 /**
  * The directory the browsing tests navigate: two folders, three files, and names long enough to
@@ -139,8 +188,10 @@ setTransport({
         const source = (args?.source ?? {}) as Source;
         if (source.kind === "query") {
           // The fixture is a daemon: it answers with everything, because deciding which rows
-          // match is not the frontend's job (D4).
-          const rows = source.text ? ALL : [];
+          // match is not the frontend's job (D4). One query is special: "content" answers with
+          // the owner's own example — two files of the same name in different places — so that
+          // the disambiguation test has something to disambiguate.
+          const rows = source.text === "content" ? SAME_NAME : source.text ? ALL : [];
           return {
             rows,
             origin: source,
@@ -361,12 +412,14 @@ setTransport({
         } as T;
       case "preview": {
         // A 1×1 PNG as a data URL: the harness has no thumbnail cache and the layout tests care
-        // about the box the image sits in, not about what is inside it.
+        // about the box the image sits in, not about what is inside it. The two same-named
+        // files answer with different dimensions, so a test can see which one it is looking at.
+        const previewed = String(args?.path ?? "");
         return {
-          path: String(args?.path ?? ""),
-          png: "/fixture/thumbnail.png",
-          width: 320,
-          height: 240,
+          path: previewed,
+          png: `/fixture/thumbnail.png?for=${encodeURIComponent(previewed)}`,
+          width: previewed.includes("content(1)") ? 800 : 320,
+          height: previewed.includes("content(1)") ? 600 : 240,
           kind: "image",
           size: "x-large",
           cached: true,
@@ -655,6 +708,158 @@ setTransport({
           write_allowlist: ["/home/user/Projects/a-directory-with-a-long-name/scratch"],
           require_dry_run: true,
         } as T;
+      // The start screen. Shaped like the daemon's answer and deliberately not small: the layout
+      // tests measure this screen at 400 px, and a summary whose sentences were all short would
+      // measure nothing about a summary.
+      case "stats_overview":
+        if (params.get("nostats") === "1") throw new Error("der Daemon antwortet nicht");
+        return {
+          generated_at: 1_700_000_000,
+          window_secs: Number(args?.windowSecs ?? 86_400),
+          window_label: "letzte 24 Stunden",
+          headline:
+            "38 Aufrufe in den letzten 24 Stunden, drei davon abgelehnt — die Allow-Liste greift.",
+          basis:
+            "Gezählt über die ganze Datenbank, zu einem Zeitpunkt, in einem Verbindungsaufbau. Das Fenster betrifft nur die Agentenzahlen.",
+          index: {
+            files: 12_480,
+            dirs: 1_204,
+            chunks: 88_312,
+            embeddings: 86_004,
+            vector_coverage: 0.974,
+            episodes: 3_120,
+            episodes_window: 88,
+            concepts: 412,
+            annotations: 37,
+            edges: 9_804,
+            zones: 4,
+            pinned: 12,
+            duplicates: 61,
+            vectors_to_drop: 3,
+            tiers: [
+              { name: "working", count: 1_240, share: 0.1 },
+              { name: "stm", count: 3_700, share: 0.3 },
+              { name: "ltm", count: 6_100, share: 0.49 },
+              { name: "cold", count: 1_372, share: 0.11 },
+            ],
+            extract: [
+              { name: "done", count: 11_900, share: 0.95 },
+              { name: "pending", count: 320, share: 0.03 },
+              { name: "skipped", count: 200, share: 0.016 },
+              { name: "failed", count: 60, share: 0.004 },
+            ],
+            edge_types: [
+              { name: "mentions", count: 5_400, share: 0.55 },
+              { name: "same_dir", count: 3_100, share: 0.32 },
+              { name: "co_edited", count: 1_304, share: 0.13 },
+            ],
+            actors_window: [
+              { name: "agent:claude", count: 30, share: 0.79 },
+              { name: "human", count: 8, share: 0.21 },
+            ],
+          },
+          memory: {
+            total: 214,
+            human_confirmed: 96,
+            superseded: 11,
+            pinned: 7,
+            expiring: 2,
+            helped: 61,
+            noise: 9,
+            retrieved: 180,
+            never_retrieved: 34,
+            kinds: [
+              { name: "observation", count: 90, share: 0.42 },
+              { name: "preference", count: 62, share: 0.29 },
+              { name: "fact", count: 41, share: 0.19 },
+              { name: "procedure", count: 21, share: 0.1 },
+            ],
+            scopes: [
+              { name: "global", count: 150, share: 0.7 },
+              { name: "project", count: 64, share: 0.3 },
+            ],
+          },
+          agents: {
+            sessions_total: 34,
+            sessions_open: 1,
+            sessions_window: 5,
+            sessions: [
+              {
+                id: "s-1",
+                name: "claude",
+                task: "tidy a directory whose name is long enough to threaten a narrow column",
+                started_at: 1_700_000_000,
+                calls: 42,
+                refusals: 3,
+                memories: 7,
+                refusal_share: 0.07,
+              },
+              {
+                id: "s-2",
+                name: "codex",
+                task: "read the changelog",
+                started_at: 1_699_990_000,
+                ended_at: 1_699_993_600,
+                calls: 9,
+                refusals: 0,
+                memories: 1,
+                refusal_share: 0,
+              },
+            ],
+            calls_window: 38,
+            refusals_window: 3,
+            refusal_share: 0.08,
+            calls_total: 1_842,
+            refusals_total: 121,
+            tools: [
+              { tool: "fs.list", calls: 20, refusals: 0, share: 0.53 },
+              { tool: "brain.context", calls: 12, refusals: 1, share: 0.32 },
+              { tool: "fs.write", calls: 6, refusals: 2, share: 0.15 },
+            ],
+            packs_window: 11,
+            packs_total: 260,
+            pack_items: 2_104,
+            pack_helped: 38,
+            pack_noise: 12,
+          },
+          consolidation: {
+            ran_at: 1_699_998_000,
+            ago_secs: 2_000,
+            dry_run: false,
+            episodes_replayed: 3_120,
+            bursts: 210,
+            bursts_discarded: 14,
+            edges_written: 480,
+            movements: 26,
+            pinned_held: 7,
+            concepts_total: 412,
+            concepts_pruned: 5,
+            orphans: 3,
+            duplicates: 61,
+            memories_expired: 4,
+            memories_total: 214,
+            duration_ms: 940,
+            tier_totals: [
+              { name: "working", count: 1_240, share: 0.1 },
+              { name: "stm", count: 3_700, share: 0.3 },
+              { name: "ltm", count: 6_100, share: 0.49 },
+              { name: "cold", count: 1_372, share: 0.11 },
+            ],
+          },
+          daemon: {
+            version: "0.4.1",
+            schema_version: 7,
+            uptime_secs: 8_040,
+            database: "/home/user/.local/share/hippocampus/cortex.db",
+            indexing_paused: false,
+            agent_surface_enabled: true,
+            require_dry_run: true,
+            write_allowlist: ["/home/user/Projects/a-directory-with-a-long-name/scratch"],
+            indexed_paths: 12,
+            index_memory_bytes: 41_000_000,
+            watcher_active: true,
+          },
+        } as T;
       case "memories":
         // The context panel asks for what is known about one path; the Inspector asks for
         // everything. The fixture answers the narrow question narrowly, so a layout test of the
@@ -761,4 +966,8 @@ if (!root) throw new Error("the harness document has no #root");
 // browsing a directory, and starting each of them at the places screen would mean every one
 // began by navigating out of it.
 const at = params.get("at");
-createRoot(root).render(<App startPath={at ?? undefined} />);
+// `?section=overview` starts on the start screen. The harness opens on the browser by default for
+// the same reason: it is what nearly every test here drives, and a summary in front of it would
+// be a summary every one of them began by leaving.
+const section: Section = params.get("section") === "overview" ? "overview" : "files";
+createRoot(root).render(<App startPath={at ?? undefined} startSection={section} />);

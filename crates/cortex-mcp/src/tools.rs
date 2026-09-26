@@ -154,7 +154,7 @@ pub const TOOLS: &[Tool] = &[
         gated: false,
         text_field: None,
         description: "Episodic memory: what happened, when, and who caused it. Filter by time \
-                      range, by actor (`human`, `system`, `agent:<name>`) or by action.",
+                      range, by actor (`human`, `system`, `agent:<name>`, or `unknown` for a connection that never said who it is) or by action.",
         schema: || {
             object(
                 json!({
@@ -689,6 +689,90 @@ mod tests {
                 tool.name,
                 tool.method
             );
+        }
+    }
+
+    /// Every method the daemon serves that is deliberately *not* an MCP tool, with the reason.
+    ///
+    /// The test above guards one direction — a tool naming a method that does not exist fails
+    /// loudly at the first call anyway. This guards the other, which fails silently: a method
+    /// added to the daemon with no row in `TOOLS` simply does not exist for an agent using MCP,
+    /// while working from the CLI and the socket (second review of 2026-09-05, §3.2). So every
+    /// method is either a tool or on this list, and a new one is neither until somebody decides.
+    const NOT_A_TOOL: &[(&str, &str)] = &[
+        (method::PING, "transport plumbing; a client checks liveness through its own connection"),
+        (method::STATUS, "the daemon's own dashboard; `brain_report` is what an agent should read"),
+        (method::NODE_GET, "raw node record; `fs_stat` and `brain_explain` answer the agent's questions"),
+        (method::EPISODE_APPEND, "writes the episode log directly, bypassing the audit and the plan gate"),
+        (method::EPISODES_RECENT, "raw log; `brain_timeline` and `brain_diff` are the agent's views of it"),
+        (method::INDEX_PATH, "operator control over what is indexed (R3); not an agent's decision"),
+        (method::EXTRACT_STATUS, "indexer internals for `cortex status`"),
+        (method::EXTRACT_REQUEUE, "operator repair command"),
+        (method::REBUILD_INDEX, "operator repair command (R2); destroys and rebuilds the cache"),
+        (method::CANONICAL_DUMP, "test and repair tool: the whole index as text"),
+        (method::MODEL_STATUS, "the window's model panel"),
+        (method::MODEL_RELOAD, "follows `cortex model fetch`; operator only"),
+        (method::ACTIVITY_PING, "the window says a person is present; an agent must not fake it"),
+        (method::WATCH_STATUS, "indexer internals for `cortex status`"),
+        (method::ZONES_LIST, "colour for the window; rows carry zone ids already"),
+        (method::ZONE_SET_COLOR, "a person's choice of colour"),
+        (method::RECONCILE, "operator repair command"),
+        (method::SHUTDOWN, "stops the daemon; an agent stopping its own brain is not a tool"),
+        (method::AGENT_STATUS, "how a human governs the agent surface (R7); not the agent's to read"),
+        (method::AGENT_SET_ENABLED, "the kill switch (R7); an agent must never reach it"),
+        (method::INDEX_SET_PAUSED, "operator control"),
+        (method::AUDIT_RECENT, "the audit log is for the human (R8); an agent reading its own audit is not a tool"),
+        (method::IDENTIFY, "done by the bridge on connect from `--as`; not a tool an agent chooses"),
+        (method::APPS_FOR_PATH, "which desktop application opens a file — a surface with a session decides (D49)"),
+        (method::APPS_SET_DEFAULT, "refused for agents whatever the allow-list says"),
+        (method::FS_TRANSFER, "copy/move with progress is the window's operation; `fs_move` is the agent's"),
+        (method::FS_EXTRACT, "unpacking archives is the window's operation"),
+        (method::VIEW_OPEN, "the window's row stream (M10); `fs_list` and `brain_search` are the agent's"),
+        (method::NODE_WHY, "the sidebar's question; `brain_explain` is the agent's"),
+        (method::FS_MKDIR, "not offered yet: a directory is created by the first `fs_write` into it"),
+        (method::FS_RENAME, "not offered yet: `fs_move` within one directory is a rename"),
+        (method::FS_MOUNT, "hardware on somebody's desk; refused for agents"),
+        (method::FS_UNMOUNT, "hardware on somebody's desk; refused for agents"),
+        (method::OPERATION_CANCEL, "cancels the window's transfers"),
+        (method::BRAIN_SEARCH, "`brain_search` forwards to `search`, the same engine; this scoped variant is the CLI's spelling"),
+        (method::BRAIN_EXPLAIN, "`brain_explain` forwards to `search.explain`; this is the CLI's spelling of the same call"),
+        (method::BRAIN_CONSOLIDATE, "the consolidation pass is the daemon's schedule, not an agent's request"),
+        (method::AGENT_SESSIONS, "the Inspector's list of sessions; an agent has its own"),
+        (method::SYNC_STATUS, "federation is a daemon concern with no agent surface (M7)"),
+        (method::SYNC_NOW, "federation is a daemon concern with no agent surface (M7)"),
+        (method::SYNC_REPLAY, "federation is a daemon concern with no agent surface (M7)"),
+        (
+            method::STATS_OVERVIEW,
+            "the start screen's summary for the person in front of the window: it carries the \
+             daemon's own paths and uptime, its two sentences are written for a reader rather than \
+             for a caller, and the counts an agent can act on are already in `brain_report`",
+        ),
+    ];
+
+    #[test]
+    fn every_method_is_a_tool_or_deliberately_not_one() {
+        let offered: Vec<&str> = TOOLS.iter().map(|t| t.method).collect();
+        let excluded: Vec<&str> = NOT_A_TOOL.iter().map(|(m, _)| *m).collect();
+
+        for method in method::ALL {
+            let is_tool = offered.contains(method);
+            let is_excluded = excluded.contains(method);
+            assert!(
+                is_tool || is_excluded,
+                "`{method}` is served by the daemon but is neither an MCP tool nor on NOT_A_TOOL: \
+                 decide, and write the reason down"
+            );
+            assert!(
+                !(is_tool && is_excluded),
+                "`{method}` is both a tool and excluded — one of the two is a lie"
+            );
+        }
+        for (method, reason) in NOT_A_TOOL {
+            assert!(
+                method::ALL.contains(method),
+                "NOT_A_TOOL names `{method}`, which the daemon no longer serves"
+            );
+            assert!(reason.len() > 12, "`{method}` is excluded without a reason worth reading");
         }
     }
 

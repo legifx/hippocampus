@@ -640,11 +640,170 @@ export type StartupReport = {
 // Calls.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// The start screen. One call, one point in time.
+//
+// Nothing here is derived in the window: every share, every percentage and the sentence at the
+// top arrive computed, because the reader of a statistic has to be able to ask the daemon where
+// the number came from (D4). `window_label` says which window the activity numbers cover — the
+// daemon may serve a different one than the one that was asked for, and a screen that printed
+// its own label would be lying about the number beside it.
+// ---------------------------------------------------------------------------
+
+/** One row of a breakdown: what it is called, how many, and its share of the whole as `0..1`. */
+export type Slice = { name: string; count: number; share: number };
+
+export type OverviewIndex = {
+  files: number;
+  dirs: number;
+  chunks: number;
+  embeddings: number;
+  /** Vectors per chunk, `0..1`. Below one is work in progress, not a fault. */
+  vector_coverage: number;
+  episodes: number;
+  episodes_window: number;
+  concepts: number;
+  annotations: number;
+  edges: number;
+  zones: number;
+  pinned: number;
+  duplicates: number;
+  /** Vectors of deleted chunks still in the ANN index (D107). */
+  vectors_to_drop: number;
+  /** `working` | `stm` | `ltm` | `cold`, over files and directories. */
+  tiers: Slice[];
+  /** `pending` | `done` | `skipped` | `failed`, over files. */
+  extract: Slice[];
+  edge_types: Slice[];
+  /** Who acted in the window: a person, or `agent:<name>`. */
+  actors_window: Slice[];
+};
+
+export type OverviewMemory = {
+  total: number;
+  human_confirmed: number;
+  superseded: number;
+  pinned: number;
+  expiring: number;
+  /** Summed, never netted (D76). */
+  helped: number;
+  noise: number;
+  retrieved: number;
+  never_retrieved: number;
+  kinds: Slice[];
+  scopes: Slice[];
+};
+
+export type OverviewSession = {
+  id: string;
+  name: string;
+  task?: string;
+  started_at: number;
+  /** Absent while the session is open. */
+  ended_at?: number;
+  calls: number;
+  refusals: number;
+  memories: number;
+  refusal_share: number;
+};
+
+export type OverviewTool = {
+  tool: string;
+  calls: number;
+  refusals: number;
+  /** Of the calls in the window, not of all time. */
+  share: number;
+};
+
+export type OverviewAgents = {
+  sessions_total: number;
+  sessions_open: number;
+  sessions_window: number;
+  sessions: OverviewSession[];
+  calls_window: number;
+  refusals_window: number;
+  /** The number that says whether the policy is binding or merely decorative. */
+  refusal_share: number;
+  calls_total: number;
+  refusals_total: number;
+  tools: OverviewTool[];
+  packs_window: number;
+  packs_total: number;
+  pack_items: number;
+  pack_helped: number;
+  pack_noise: number;
+};
+
+export type OverviewConsolidation = {
+  ran_at: number;
+  ago_secs: number;
+  dry_run: boolean;
+  episodes_replayed: number;
+  bursts: number;
+  bursts_discarded: number;
+  edges_written: number;
+  movements: number;
+  pinned_held: number;
+  concepts_total: number;
+  concepts_pruned: number;
+  orphans: number;
+  duplicates: number;
+  memories_expired: number;
+  memories_total: number;
+  duration_ms: number;
+  tier_totals: Slice[];
+};
+
+export type OverviewDaemon = {
+  version: string;
+  schema_version: number;
+  uptime_secs: number;
+  database: string;
+  indexing_paused: boolean;
+  agent_surface_enabled: boolean;
+  require_dry_run: boolean;
+  write_allowlist: string[];
+  indexed_paths: number;
+  index_memory_bytes: number;
+  /** `null` when no watcher is configured at all — which is not the same as one that is down. */
+  watcher_active: boolean | null;
+};
+
+export type StatsOverview = {
+  generated_at: number;
+  window_secs: number;
+  /** Already a phrase: „letzte 24 Stunden". */
+  window_label: string;
+  /** The daemon's own one-sentence summary of what the agents did. */
+  headline: string;
+  /** What the numbers are, and what they are not. */
+  basis: string;
+  index: OverviewIndex;
+  memory: OverviewMemory;
+  agents: OverviewAgents;
+  consolidation: OverviewConsolidation | null;
+  daemon: OverviewDaemon;
+};
+
+/** The windows the start screen offers. The daemon clamps anything else (B1). */
+export const OVERVIEW_WINDOWS: { secs: number; label: string }[] = [
+  { secs: 86_400, label: "24 Stunden" },
+  { secs: 7 * 86_400, label: "7 Tage" },
+  { secs: 30 * 86_400, label: "30 Tage" },
+];
+
 export const ipc = {
   search: (query: string, limit?: number) =>
     transport.invoke<SearchResult>("search", { query, limit }),
 
   status: () => transport.invoke<Status>("status"),
+
+  /** The start screen's numbers. `windowSecs` is a preference: the daemon may clamp it. */
+  statsOverview: (windowSecs?: number) =>
+    transport.invoke<StatsOverview>(
+      "stats_overview",
+      windowSecs === undefined ? {} : { windowSecs },
+    ),
 
   extractStatus: () => transport.invoke<ExtractStatus>("extract_status"),
 

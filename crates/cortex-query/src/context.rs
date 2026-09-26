@@ -31,7 +31,7 @@
 
 use cortex_core::ids::{ChunkId, NodeId};
 use cortex_core::memory::{
-    Basis, ContextPack, Memory, MemoryKind, PackArm, PackItem, ReaderScope,
+    Authority, Basis, ContextPack, Memory, MemoryKind, Origin, PackArm, PackItem, ReaderScope,
 };
 use cortex_core::tokens;
 use cortex_embed::{Embedder, Input};
@@ -314,6 +314,11 @@ fn working_set_items(params: &ContextParams<'_>) -> Vec<PackItem> {
                     confidence: 1.0,
                     actor: "human".into(),
                     written_at: t.last_touched,
+                    // A file the human touched: the bytes are the file's, so it is an
+                    // observation and never the human's instruction — touching a file is not
+                    // writing a rule.
+                    origin: Origin::File,
+                    authority: Authority::Observation,
                     helped: 0,
                     noise: 0,
                     retrieved: 0,
@@ -647,6 +652,10 @@ fn subject_items(
                 confidence: 1.0,
                 actor: "system".into(),
                 written_at: node.last_seen,
+                // The subject reached from a memory: the index's own answer about a path, so it
+                // is the file's bytes and an observation, in the same shape as above.
+                origin: Origin::File,
+                authority: Authority::Observation,
                 helped: 0,
                 noise: 0,
                 retrieved: 0,
@@ -685,6 +694,11 @@ fn memory_item(
             confidence: memory.confidence,
             actor: memory.actor.clone(),
             written_at: memory.ts,
+            // The one place in a pack where these two are read off a memory rather than decided
+            // here: what the store wrote down is what the pack says, so a line cannot be
+            // promoted on its way into a pack.
+            origin: memory.origin,
+            authority: memory.authority,
             helped: memory.helped_count,
             noise: memory.noise_count,
             retrieved: memory.retrieved_count,

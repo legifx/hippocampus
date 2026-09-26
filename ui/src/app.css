@@ -40,7 +40,7 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: radial-gradient(90% 150% at 50% -35%, rgba(255, 255, 255, 0.06), transparent 70%);
+  background: radial-gradient(90% 150% at 50% -35%, var(--hc-selection), transparent 70%);
   z-index: 0;
   opacity: 0.4;
 }
@@ -84,7 +84,10 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 14px 18px 12px;
+  /* The strip's own height comes from its type too, so dragging the window narrows the header and
+     the field inside it by the same amount. */
+  font-size: var(--hc-text-md);
+  padding: 0.95em 1.25em 0.85em;
   border-bottom: 1px solid var(--hc-stroke);
 }
 
@@ -115,7 +118,7 @@
   z-index: 1;
   margin: 0;
   padding: 6px 18px;
-  font-size: 12px;
+  font-size: var(--hc-text-xs);
   color: var(--hc-text-dim);
   border-bottom: 1px solid var(--hc-stroke);
 }
@@ -154,14 +157,27 @@
 .hc-name-input {
   flex: 1;
   min-width: 0;
-  background: var(--hc-surface);
-  border: 1px solid var(--hc-stroke-lift);
+  /* `.well` — the class is on the element in `ResultList.tsx` — is the kit's input recipe: a
+     recessed fill, an inner shadow along the top and a hairline along the bottom, and no border.
+     This was the second hand-written input box in the window (the note field beside the files was
+     the first), and the kit has exactly one. */
+  border: 0;
+  outline: none;
   border-radius: 8px;
   padding: 3px 8px;
   color: var(--hc-text);
   font: inherit;
-  font-size: 13.5px;
+  font-size: var(--hc-text-md);
   user-select: text;
+  transition: box-shadow var(--hc-dur-base) var(--hc-ease-out);
+}
+
+/* The kit's focus ring, from `GlassInput`'s `:focus-within`. A field you have just opened by
+   choosing „Umbenennen" is focused, and a field that is focused has to look it. */
+.hc-name-input:focus-visible {
+  box-shadow:
+    var(--hc-well-shadow),
+    0 0 0 3px var(--hc-focus-ring);
 }
 
 .hc-progress {
@@ -202,7 +218,7 @@
   background: none;
   color: inherit;
   font: inherit;
-  font-size: 12.5px;
+  font-size: var(--hc-text-sm);
   cursor: default;
 }
 
@@ -222,7 +238,7 @@
   gap: 2px;
   padding: 6px 10px 4px;
   overflow: hidden;
-  font-size: 12.5px;
+  font-size: var(--hc-text-sm);
   color: var(--hc-text-dim);
 }
 
@@ -247,14 +263,24 @@
   max-width: 22ch;
 }
 
+/*
+ * The kit's breadcrumb buttons (`Toolbar.tsx`): `hover:bg-accent-soft hover:text-fg-primary`, and
+ * the segment in charge is `font-semibold text-fg-primary`.
+ *
+ * The hover is the kit's `accent-soft`, and not the row's `selection`, which is what this rule used
+ * to say — „a breadcrumb is a line of the list you are in, so it takes the row's fill". That was an
+ * argument about which part of the kit a breadcrumb resembles; the kit answers it directly, because
+ * it has a breadcrumb and it is a button in the toolbar next to the search field, not a row.
+ */
 .hc-crumb:hover {
-  background: var(--hc-surface-hi);
+  background-color: var(--hc-accent-soft);
   color: var(--hc-text);
 }
 
 .hc-crumb[aria-current="page"] {
   color: var(--hc-text);
-  font-weight: 550;
+  /* `font-semibold`, the kit's weight for the segment somebody is standing in. */
+  font-weight: 600;
 }
 
 .hc-crumb-sep {
@@ -297,7 +323,7 @@
   padding: 12px 12px 5px;
   color: var(--hc-text-faint);
   /* Small and quiet: a heading here is a divider, not a thing to read. */
-  font-size: 11px;
+  font-size: var(--hc-text-2xs);
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
@@ -310,14 +336,56 @@
   grid-template-columns: 16px minmax(6ch, 1fr) minmax(0, auto);
   align-items: center;
   gap: 10px;
-  padding: 0 12px;
-  height: 34px;
+  /* The same rhythm as a result row, in the same type: the sidebar and the list are two columns of
+     the same screen and the eye compares their pitch whether or not the code does. */
+  padding: 0 0.8em;
+  height: 2.35em;
+  font-size: var(--hc-text-sm);
+  /* The same bar a selected row wears, and for the same reason: the fill alone does not carry
+     „this one" at this scale. The raise *is* measurable — 18.5 of luminance from the top of the
+     pill to its bottom — but its own average (56) sits below a hovered place's flat tint (57), so
+     in the picture the two states were one flat fill twice. The bar is the mark that survives that.
+     It is a border on every place, transparent on the ones you are not on, so the name does not
+     shift two pixels sideways when you move. */
+  border-left: 2px solid transparent;
   border-radius: var(--hc-radius-row);
   cursor: default;
+  /* The same transition the kit gives its own rows and nav items, from the same token. */
+  transition: background-color var(--hc-dur-fast) var(--hc-ease-out);
 }
 
+/*
+ * The place you are *on*: the kit's raise plus a bar.
+ *
+ * The raise is `.raised-flat` and the class is on the element in `PlacesView.tsx`. What stood here
+ * was a flat `--hc-surface-hi`, which is what this window paints on a hovered row — a place you are
+ * *on* and a place you are merely pointing at came out as one statement, in a column whose whole job
+ * is to say where you are. The kit's answer is its active nav item, which is `raised`; §8.2 takes
+ * the drop out of that recipe for a row, and `.raised-flat` is what is left. The rail's current
+ * destination wears the same class, so the two columns agree by construction rather than by two
+ * gradients kept in step by hand.
+ *
+ * The raise alone then did not hold up in the picture: it is measurable — 18.5 of luminance from the
+ * top of the pill to its bottom — but its own average (56) sits *below* a hovered place's flat tint
+ * (57), so both rows read as one flat fill. The bar below is the second mark, the same one a
+ * selected row wears.
+ */
 .hc-place-current {
-  background: var(--hc-surface-hi);
+  border-left-color: var(--hc-info);
+}
+
+/* A pointer gets the kit's row hover — `hover:bg-selection` — and not the `accent-soft` the kit
+   gives its own nav item, which is the one place this port does not follow it. Reason: in the kit a
+   nav item is *either* hovered *or* active, and `accent-soft` (0.08) is above the raised active
+   pill's own average (0.07). In this column both can be true at once, and with the kit's number the
+   place merely pointed at came out brighter than the place you are in — the 57 against 56 above.
+   One step below the current place is where a pointer belongs.
+   `background-color` rather than the `background` shorthand on purpose — the shorthand would reset
+   `background-image` and erase the raise on the row the pointer is already on. */
+@media (hover: hover) {
+  .hc-place:hover {
+    background-color: var(--hc-selection);
+  }
 }
 
 .hc-place-name {
@@ -351,11 +419,23 @@
   flex: 1 1 auto;
   min-width: 0;
   padding: 6px 8px;
-  border: 1px solid var(--hc-stroke);
+  /* `.well` — the class is on the element — is the kit's input recipe: a recessed fill, an inner
+     shadow along the top edge and a hairline along the bottom, and no border at all. What stood
+     here was a hand-written box: `--hc-surface` fill and a `--hc-stroke` border, which is the
+     third way this window had of saying "you can type here". The focus ring is the kit's, from
+     `GlassInput`'s `:focus-within`: the well's own recess, plus the ring in `--hc-focus-ring`. */
+  border: 0;
+  outline: none;
   border-radius: var(--hc-radius-row);
-  background: var(--hc-surface);
   color: var(--hc-text);
   font: inherit;
+  transition: box-shadow var(--hc-dur-base) var(--hc-ease-out);
+}
+
+.hc-annotate-input:focus-visible {
+  box-shadow:
+    var(--hc-well-shadow),
+    0 0 0 3px var(--hc-focus-ring);
 }
 
 .hc-annotate-input::placeholder {
@@ -367,18 +447,12 @@
 }
 
 /* A way to go somewhere, not a list: the neighbours of a file are a view of their own. */
+/* The button is the kit's `GlassButton` (variant glass, shape rounded) with `.gb-block` for the
+   full-width row; its box is in `src/kit.css`. Left here: the air around it, and the fact that it
+   is the last thing in the panel. */
 .hc-context-open {
-  display: block;
-  width: 100%;
   margin: 4px 0 8px;
-  padding: 6px 8px;
-  border: 1px solid var(--hc-stroke);
-  border-radius: var(--hc-radius-row);
-  background: none;
   color: var(--hc-text-dim);
-  font: inherit;
-  text-align: left;
-  cursor: default;
 }
 
 .hc-context-open:hover,
@@ -504,6 +578,22 @@
   color: var(--hc-text-dim);
 }
 
+/*
+ * A row: the kit's row skin, on this project's geometry.
+ *
+ * The kit's row is transparent, `rounded-2xl`, `hover:bg-selection`, `bg-accent-soft` when
+ * selected, with a hairline under it, on a 66 px row. Three of those four transfer, and they are
+ * below: the hover fill, the selection fill and the `transition-colors duration-150` are now the
+ * kit's own tokens, so a hovered row, a hovered place and a ghost button are one colour decision
+ * instead of three that happened to agree.
+ *
+ * The hairline transfers as well, and it took the kit's own numbers to see why it had been left
+ * out: the kit's separator is not a rule across the row, it is inset past the row's icon column on
+ * the left and stops 12 px short of the right edge (`after:left-[76px] after:right-3`). That inset
+ * is the whole trick — a 13 px radius eats the last 13 px of every edge, so a line that ends inside
+ * them is still a line, while a rule drawn edge to edge comes out as a dash floating in the middle
+ * of a pill, which is what this window had seen and rejected. The line is below, in `.hc-row::after`.
+ */
 .hc-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -512,16 +602,81 @@
     "dir  meta";
   align-items: center;
   column-gap: 12px;
-  padding: 0 10px 0 8px;
-  border-left: 2px solid transparent;
+  /* The row's own height, in its own type: a list that is measured in `em` keeps its proportions
+     when the window changes, and the file list is the surface where „small but not cramped" has to
+     hold at 400 px as well as at 1440. */
+  padding: 0.34em 0.7em 0.34em 0.55em;
+  font-size: var(--hc-text-sm);
+  /* D15: a zone is this row's 2 px left border, and nothing else — `zoneVars` hands the hue over
+     as `--hc-zone-border`, and a row without a zone leaves the fallback, which is no border at all.
+     The colour used to be an inline declaration, which beat this rule and also beat the selection
+     bar below. */
+  border-left: 2px solid var(--hc-zone-border, transparent);
   border-radius: var(--hc-radius-row);
   cursor: default;
   overflow: hidden;
+  /* The hairline below is this row's own, so the row is the containing block for it. */
+  position: relative;
   /* §8.2: selection is a background change and a border, never a shadow. */
+  /* The kit's row is `transition-colors duration-150`; the duration is a token here, so a row that
+     fades and a control that fades do it at the same speed. */
+  transition: background-color var(--hc-dur-fast) var(--hc-ease-out);
+}
+
+/* A pointer gets a hover state and a keyboard does not: the cursor row is already marked, and two
+   fills for one row is the confusion the owner could see in the pictures — „you cannot tell a
+   hovered row from a selected one". Hover is the whisper, selection is the accent bar. */
+@media (hover: hover) {
+  .hc-row:hover {
+    /* The kit's `hover:bg-selection`. It used to be `--hc-glass-fill`, which is the *material*
+       fill — the wrong token for a hover, and a third of the strength, so a row that was hovered
+       in this window and a row that was hovered in the kit did not look like the same event. */
+    background-color: var(--hc-selection);
+  }
 }
 
 .hc-row-selected {
-  background: var(--hc-surface-hi);
+  /* The kit's `bg-accent-soft`, which is the fill its selected row wears. */
+  background-color: var(--hc-accent-soft);
+  /* D15's tint, and only here: „never a background fill on unselected rows". It is painted as an
+     image rather than as the fill so that the two can be layered — a zone row is the kit's selected
+     fill *and* its zone, and neither the kit nor D15 had to give way for the other. A row without a
+     zone passes `transparent`, which is a gradient that paints nothing. */
+  background-image: linear-gradient(var(--hc-zone-soft, transparent), var(--hc-zone-soft, transparent));
+  /* The bar is what says *selected* rather than *here*; the fill alone was two percent of luminance
+     and read as nothing at all. In a zone the bar keeps the zone's colour — a zone is a place, and
+     its colour has to keep meaning that — so the fallback is doing real work: a row outside every
+     zone is the case where the bar is free to say „selected" and takes the accent. */
+  border-left-color: var(--hc-zone, var(--hc-info));
+}
+
+/*
+ * The row's separator: the kit's `after:absolute after:bottom-0 after:left-[76px] after:right-3
+ * after:h-px after:bg-hairline`, on this row's geometry.
+ *
+ * The kit starts the line past its icon column; this row's content starts at its padding (plus the
+ * D15 border every row carries, transparent or not), so the line starts there and — like the kit's
+ * — stops 12 px short of the right edge. Those two ends are what keep it out of the corner curve.
+ *
+ * The kit hides it under the row that is selected (`selected && "after:opacity-0"`): the fill and
+ * the border have taken over saying „this one", and a line through them is a seam. That part is
+ * ported. The kit also hides it on the last row, and that part is not: a virtualised list has no
+ * last row, it has a last *rendered* row, so the rule would eat the separator at the bottom edge of
+ * the window and put it back on the next scroll — a line flicking in and out is worse than a line
+ * under the final entry.
+ */
+.hc-row::after {
+  content: "";
+  position: absolute;
+  left: calc(0.55em + 2px);
+  right: 12px;
+  bottom: 0;
+  height: 1px;
+  background-color: var(--hc-hairline);
+}
+
+.hc-row-selected::after {
+  opacity: 0;
 }
 
 /* The cursor is where the keyboard is, which is not the same as what is selected: a
@@ -558,6 +713,71 @@
   gap: 10px;
   align-items: center;
   white-space: nowrap;
+  /* The meta sits in the row's `auto` track: without this the track is sized to the metadata's
+     max-content and the row pushes its columns out over the panel beside it instead of letting them
+     give way. */
+  min-width: 0;
+  overflow: hidden;
+  /* One step below the names, and the *same* step as the heading above them, because the columns are
+     widths in `em` and an `em` is only the same length in both if the size is. */
+  font-size: var(--hc-text-xs);
+}
+
+/*
+ * The metadata columns.
+ *
+ * A column heading is a statement about what is underneath it, and until now it was a guess: the
+ * heading and the values sat in two different elements (one line of buttons, and every row's own
+ * metadata) with nothing tying their widths together, so `Salienz` stood over `drwxr-xr-x` and the
+ * permissions had a heading that named a ranking. These are the tracks, in one place, in `em`; the
+ * permission string has none of its own because it has no order to be in — it is a fact about the
+ * row, not a column of the table. `tests/memory-columns.spec.ts` measures the right edges.
+ */
+.hc-row-mode {
+  width: 5.9em;
+  /* The permission string is the one cell with no heading and the least to say, so it is the one
+     that gives way when the column is narrow — it clips with its full text in the title, while the
+     three headed columns hold their tracks so their headings stay over them. */
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The headed columns hold their width — a heading over a squeezed number is not a column — but they
+   can still give way when the column itself is too narrow for the table (the harness draws all three
+   panels at once, which leaves the list 200 px wide): then every number clips rather than the row
+   pushing its metadata out over the panel beside it. */
+.hc-row-meta > .hc-num {
+  flex-shrink: 1;
+  min-width: 2.4em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The heading cells are buttons with 4 px of hit area on each side (`:focus-visible` and the click
+   target); the values carry the same padding so the two boxes are the same box, which is what
+   „right-aligned" needs to mean the same thing on both sides. */
+.hc-row-meta > .hc-num {
+  padding: 0 4px;
+}
+
+.hc-row-salience,
+.hc-list-header-salience {
+  width: 3.2em;
+  text-align: right;
+}
+
+.hc-row-size,
+.hc-list-header-size {
+  width: 4.5em;
+  text-align: right;
+}
+
+.hc-row-age,
+.hc-list-header-modified {
+  width: 4em;
+  text-align: right;
 }
 
 /* A narrow column cannot afford two metadata columns; the name is what identifies the row. */
@@ -684,7 +904,53 @@
   border-bottom: 4px solid transparent;
 }
 
-.hc-empty,
+/*
+ * Nothing here: the kit's empty state (`FileViews.tsx`, `EmptyState`).
+ *
+ * A 72 px glass circle with one glyph in it, the sentence under it, and the whole thing centred in
+ * the space the rows would have used — the kit's generous `py-20` is the padding. The circle carries
+ * the kit's own classes (`glass glass-sheen`, in the markup), so the material is not written twice.
+ *
+ * The sentence is at the kit's *description* step and not its title: this window has one string per
+ * state rather than a title plus a description, and the sentences here are the daemon's own — „the
+ * share did not answer within 2000 ms" is a diagnosis, and setting a diagnosis as a 15 px semibold
+ * headline is shouting it. `.hc-faint` keeps the old shared rule's colour and padding, which is what
+ * it always was; the two were only ever spelled `,.hc-empty,` together.
+ */
+.hc-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 80px 12px;
+  margin: 0;
+  text-align: center;
+  color: var(--hc-text-faint);
+  font-size: var(--hc-text-md);
+}
+
+/* The kit's `size-[72px] ... rounded-full` in `text-fg-secondary`, with the glyph at `size-7`. */
+.hc-empty-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  border-radius: var(--hc-radius-pill);
+  color: var(--hc-text-dim);
+}
+
+.hc-empty-mark svg {
+  width: 28px;
+  height: 28px;
+}
+
+.hc-empty p {
+  margin: 0;
+  max-width: 320px;
+}
+
 .hc-faint {
   color: var(--hc-text-faint);
   padding: 12px;
@@ -762,7 +1028,7 @@
 .hc-preview-text {
   margin: 0;
   font-family: var(--hc-mono);
-  font-size: 12px;
+  font-size: var(--hc-text-xs);
   line-height: 1.5;
   color: var(--hc-text-dim);
   white-space: pre-wrap;
@@ -783,9 +1049,26 @@
   margin: 0;
 }
 
+/*
+ * A section of a panel.
+ *
+ * The kit's panel is a flow of rows with a `Hairline` between the groups of them and no headings
+ * at all. The groups here do need their names — „Notizen", „Warum", „Verlauf" are what the owner
+ * asks for by name — so they keep an `h3` (a heading, for a screen reader) and take the kit's rule
+ * instead: one hairline between blocks, and the label set at the panel's label weight rather than
+ * at the size of a sentence, so it reads as the name of the block and not as a sentence in it.
+ */
+.hc-section + .hc-section {
+  border-top: 1px solid var(--hc-hairline);
+  padding-top: 10px;
+}
+
 .hc-section h3 {
   margin: 0 0 6px;
   color: var(--hc-text-dim);
+  font-size: var(--hc-text-xs);
+  font-weight: 500;
+  letter-spacing: 0.02em;
 }
 
 .hc-section .hc-faint {
@@ -793,10 +1076,11 @@
 }
 
 .hc-note {
-  background: var(--hc-surface);
-  border: 1px solid var(--hc-stroke);
+  /* `.glass-flat` (the class is on the element) is the card's material: a fill, a rim along the
+     top and a hairline where it meets the dark. A note is one of many, so no blur and no drop. */
   border-radius: var(--hc-radius-panel);
-  padding: 8px 10px;
+  /* A card is padding around its own prose, so it is measured in that prose's size (§3). */
+  padding: 0.55em 0.7em;
   margin-bottom: 6px;
 }
 
@@ -844,6 +1128,11 @@
 
 .hc-facts dd {
   margin: 0;
+  /* The kit's `Row`: the label is `text-fg-tertiary`, the value is `font-medium text-fg-primary`.
+     The whole `dl` carries `.hc-meta`, so without this a value sat in exactly the grey of the
+     caption above it — the same complaint the inspector's facts had, in the other panel. */
+  color: var(--hc-text);
+  font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -858,10 +1147,8 @@
   top: 50%;
   transform: translate(-50%, -50%);
   width: min(460px, calc(100% - 32px));
-  background: var(--hc-surface);
-  border: 1px solid var(--hc-stroke-lift);
+  /* The kit's glass, on the element. */
   border-radius: var(--hc-radius-panel);
-  box-shadow: var(--hc-shadow-lift);
   padding: 14px 16px;
   outline: none;
   display: flex;
@@ -880,15 +1167,15 @@
   gap: 8px;
 }
 
+/* The two sides are fields, so they wear the kit's `well` (the class is on the element) rather
+   than a fill, a border and a radius written out here. What stays is what a well cannot say:
+   the layout, and the fact that a side is a row of three numbers read across. */
 .hc-conflict-sides > div {
   display: flex;
   gap: 8px;
   align-items: baseline;
   min-width: 0;
   padding: 6px 8px;
-  background: var(--hc-bg);
-  border: 1px solid var(--hc-stroke);
-  border-radius: 10px;
 }
 
 .hc-conflict-rest {
@@ -919,7 +1206,9 @@
 }
 
 .hc-conflict-chosen {
-  background: var(--hc-surface-hi);
+  /* The option you picked is the kit's selected row: `bg-accent-soft`. The lift on the edge stays,
+     because inside a dialog the option has an edge of its own to lift. */
+  background-color: var(--hc-accent-soft);
   border-color: var(--hc-stroke-lift);
 }
 
@@ -946,10 +1235,9 @@
   bottom: 24px;
   transform: translateX(-50%);
   width: min(520px, calc(100% - 32px));
-  background: var(--hc-surface);
-  border: 1px solid var(--hc-stroke-lift);
+  /* The fill, the rim and the drop are the kit's `.glass` now (the class is on the element): a
+     popover is not a row, so §8.2 has nothing against it carrying the kit's shadow. */
   border-radius: var(--hc-radius-panel);
-  box-shadow: var(--hc-shadow-lift);
   padding: 6px;
   outline: none;
 }
@@ -964,8 +1252,10 @@
   cursor: default;
 }
 
+/* The palette is a menu, so its current row is the kit's menu selection: the accent's soft fill,
+   which is the same thing the kit's own `GlassMenuList` puts under a hovered item (§kit.css). */
 .hc-command-selected {
-  background: var(--hc-surface-hi);
+  background: var(--hc-accent-soft);
 }
 
 .hc-command-detail {
@@ -989,10 +1279,8 @@
   top: 50%;
   transform: translate(-50%, -50%);
   width: min(460px, calc(100% - 32px));
-  background: var(--hc-surface);
-  border: 1px solid var(--hc-stroke-lift);
+  /* The kit's glass, on the element: a dialog is the third place a drop shadow is honest. */
   border-radius: var(--hc-radius-panel);
-  box-shadow: var(--hc-shadow-lift);
   padding: 14px 16px;
   outline: none;
   display: flex;
@@ -1036,7 +1324,8 @@
 }
 
 .hc-openwith-chosen {
-  background: var(--hc-surface-hi);
+  /* Same as the conflict dialog's chosen row: the kit's selected fill, and the edge stays. */
+  background-color: var(--hc-accent-soft);
   border-color: var(--hc-stroke-lift);
 }
 
@@ -1070,7 +1359,7 @@
   z-index: 40;
   display: flex;
   flex-direction: column;
-  background: var(--hc-bg);
+  /* `.glass` on the element: the inspector is a surface over the window, not the window. */
   border-radius: var(--hc-radius-overlay);
   overflow: hidden;
 }
@@ -1086,40 +1375,15 @@
   flex: none;
 }
 
+/*
+ * The inspector's tab strip is the kit's `GlassSegmented` (the class is on it): the track, the
+ * segments and the raised thumb are `.seg`/`.seg-item` in `src/kit.css`. What is left here is the
+ * one thing the kit cannot know — that this strip lives in the inspector's header, so it wraps
+ * rather than pushing the header's other controls out of the window.
+ */
 .hc-tabs {
-  display: flex;
-  gap: 2px;
-  flex-wrap: wrap;
   min-width: 0;
-}
-
-.hc-tab {
-  font-size: 12.5px;
-  font-weight: 500;
-  padding: 3px 9px;
-  border-radius: var(--hc-radius-pill);
-  border: 1px solid transparent;
-  background: none;
-  color: var(--hc-text-dim);
-  white-space: nowrap;
-}
-
-/* A tab that is not selected still has to look like something you can press. */
-.hc-tab:hover,
-.hc-tab:focus-visible {
-  color: var(--hc-text);
-  border-color: var(--hc-stroke);
-}
-
-.hc-tab:focus-visible {
-  outline: 1px solid var(--hc-stroke-lift);
-  outline-offset: 1px;
-}
-
-.hc-tab-on {
-  color: var(--hc-text);
-  border-color: var(--hc-stroke-lift);
-  background: var(--hc-surface-hi);
+  flex-wrap: wrap;
 }
 
 .hc-inspector-head .hc-meta {
@@ -1201,12 +1465,12 @@ button.hc-pill:focus-visible {
   margin: 0 0 8px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  font-size: 11px;
+  font-size: var(--hc-text-2xs);
 }
 
 .hc-basis {
   margin: -4px 0 10px;
-  font-size: 11.5px;
+  font-size: var(--hc-text-xs);
   line-height: 1.4;
 }
 
@@ -1216,16 +1480,33 @@ button.hc-pill:focus-visible {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  /* No gap between rows any more: the hairline in `.hc-row-item + .hc-row-item` is the separation,
+     which is the kit's own list (its rows touch, and a hairline sits between them). A gap *and* a
+     line would be two separators for one boundary. */
+  gap: 0;
   /* A flex container's own automatic minimum is min-content too, so a list of paths refuses to
      shrink even when every path inside it can break. Nested containers each need saying. */
   min-width: 0;
 }
 
-.hc-rows-dense {
-  gap: 2px;
+/* Density lives in the padding now that the gap is gone — and only the dense list gets it, so the
+   two lists still differ in rhythm the way they always did. */
+.hc-rows-dense .hc-row-item {
+  padding-top: 3px;
+  padding-bottom: 3px;
 }
 
+/*
+ * A row inside a panel.
+ *
+ * It used to be a box of its own — a surface fill and a stroke all the way round, one per row —
+ * which is what the kit's lists do *not* do: the kit separates rows with a hairline and nothing
+ * else (`Hairline`, which is `.hairline-b` here). In a panel that reads better than it did in the
+ * list, because these rows are prose rather than a table, and a second box drawn inside the
+ * panel's own box was a frame around a frame. What stays is the padding, the flex line these rows
+ * share, and the radius a focus ring or a hover would land on. The panel keeps its hairline
+ * separators — see `+ .hc-row-item` below.
+ */
 .hc-row-item {
   display: flex;
   flex-wrap: wrap;
@@ -1233,11 +1514,15 @@ button.hc-pill:focus-visible {
   gap: 4px 8px;
   padding: 5px 8px;
   border-radius: var(--hc-radius-row);
-  background: var(--hc-surface);
-  border: 1px solid var(--hc-stroke);
-  font-size: 12.5px;
+  font-size: var(--hc-text-sm);
   line-height: 1.4;
   min-width: 0;
+}
+
+/* The kit's hairline between rows, and never above the first: a list that opens with a line under
+   its own heading reads as a table that is missing its top rule. */
+.hc-row-item + .hc-row-item {
+  border-top: 1px solid var(--hc-hairline);
 }
 
 .hc-row-main {
@@ -1259,9 +1544,14 @@ button.hc-pill:focus-visible {
   overflow-wrap: anywhere;
 }
 
-/* A refused call is the one a person opens this panel to find. */
+/*
+ * A refused call is the one thing a person opens this panel to find. It wore a red edge back when
+ * a row was a box and had an edge to wear it; with the box gone, the kit's own mark for „this was
+ * not allowed" is the danger wash, which is a fill rather than a border and so still reads on a row
+ * that is only text on the ground.
+ */
 .hc-row-refused {
-  border-color: color-mix(in srgb, var(--hc-error) 40%, var(--hc-stroke));
+  background-color: var(--hc-danger-soft);
 }
 
 /* Superseded: still there, no longer believed. Dimmed rather than hidden — the history is the
@@ -1284,7 +1574,7 @@ button.hc-pill:focus-visible {
 }
 
 .hc-kind {
-  font-size: 11px;
+  font-size: var(--hc-text-2xs);
   margin-right: 6px;
 }
 
@@ -1302,7 +1592,7 @@ button.hc-pill:focus-visible {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
   gap: 4px 12px;
-  font-size: 12.5px;
+  font-size: var(--hc-text-sm);
 }
 
 .hc-inspector-facts dt {
@@ -1312,6 +1602,10 @@ button.hc-pill:focus-visible {
 .hc-inspector-facts dd {
   margin: 0;
   min-width: 0;
+  /* The value is the content, not the caption: dim on both sides left the numbers that carry the
+     meaning as the quietest thing in the panel. */
+  color: var(--hc-text);
+  font-variant-numeric: tabular-nums;
   white-space: normal;
   overflow-wrap: anywhere;
 }
@@ -1345,7 +1639,7 @@ button.hc-pill:focus-visible {
   min-height: 240px;
   border-radius: var(--hc-radius-panel);
   border: 1px solid var(--hc-stroke);
-  background: #000;
+  background: var(--hc-scene-void);
   overflow: hidden;
 }
 
@@ -1367,4 +1661,238 @@ button.hc-pill:focus-visible {
 .hc-memory {
   border-left: 2px solid color-mix(in srgb, var(--hc-success) 55%, transparent);
   padding-left: 8px;
+}
+
+
+/* ---- Column headers over a listing (2026-09-06) ------------------------------------------ */
+
+/*
+ * The column header: the kit's own strip.
+ *
+ * The kit's list header is not a row of headings with a rule under it, it is a floating glass strip
+ * — `glass-flat ... rounded-2xl bg-glass-weak px-3` — and the strip is the point: the headings are
+ * a *thing* that sits above the list rather than a line the list starts from. The material is the
+ * kit's, and it is the kit's classes on the element (`glass-flat glass-weak`, in `ListHeader.tsx`),
+ * not a box-shadow written out here: a header that hand-rolled the glass would be the first surface
+ * to drift when the material changes. The radius *is* this window's (`--hc-radius-row`): the kit
+ * gives its header the same radius class as its rows (`rounded-2xl` there, §4 here). The bottom
+ * rule is gone: the strip's own edge is its edge, and a rule under a glass edge is two edges one
+ * pixel apart.
+ *
+ * The colour step is the kit's HeaderCell: `text-fg-secondary` for a heading that is not in charge,
+ * `text-fg-primary` for the one that is (and for a hover). This sat at `--hc-text-faint`, which is
+ * one step darker than the kit's — so the headings were dimmer than the values they name, which is
+ * the one relationship this line exists to state.
+ */
+.hc-list-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  /* One line, one area map: `.hc-list-header-meta` asked for `grid-area: meta` with nothing
+     declaring that area, and an undefined *named line* in `grid-area` makes the grid invent tracks —
+     here two 0 px columns and a second 22 px row, so „Name" stood on its own line with the three
+     headings under it, off the columns they name. */
+  grid-template-areas: "name meta";
+  align-items: center;
+  column-gap: 12px;
+  padding: 3px 16px 3px 14px;
+  min-height: 26px;
+  border-radius: var(--hc-radius-row);
+  color: var(--hc-text-dim);
+  font-size: 0.82em;
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+
+.hc-list-header-name {
+  grid-area: name;
+  justify-self: start;
+}
+
+/* The metadata headers sit together on the right, like the row's `.hc-row-meta`. */
+.hc-list-header-meta {
+  grid-area: meta;
+  display: flex;
+  gap: 10px;
+  /* The heading sits over its values only if it is measured like them: same step, same widths, same
+     right edge (`--hc-col-*`, app.css). */
+  font-size: var(--hc-text-xs);
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.hc-list-header-cell {
+  background: none;
+  border: 0;
+  padding: 2px 4px;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+/*
+ * The kit's HeaderCell, which this now is: a heading is text, it changes *colour* on hover and
+ * nothing else (kit: `text-fg-secondary hover:text-fg-primary`), and the column the list is ordered
+ * by is the bright one rather than the dim one. The fill that used to appear here was a second
+ * hover vocabulary in a window that had just been given one.
+ */
+.hc-list-header-cell:hover,
+.hc-list-header-cell:focus-visible {
+  color: var(--hc-text);
+}
+
+/* The column in charge — the kit's `text-fg-primary`, against the faint colour the other headings
+   sit at, so „which one is sorting this" is answered by brightness and not by an arrow alone. */
+.hc-list-header-active {
+  color: var(--hc-text);
+}
+
+.hc-list-header-arrow {
+  margin-left: 4px;
+  font-size: 0.75em;
+}
+
+/* ---- Two files side by side (2026-09-06) -------------------------------------------------- */
+
+.hc-compare-names {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 0 2px 6px;
+}
+
+.hc-compare-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hc-compare-facts {
+  margin: 0 0 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.hc-compare-fact {
+  display: grid;
+  grid-template-columns: 64px repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 3px 6px;
+  border-radius: 8px;
+  font-size: 0.9em;
+}
+
+.hc-compare-fact dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--hc-text-dim);
+}
+
+/* The facts that differ are the whole point: brighter, and a tint that is not a zone colour. */
+.hc-compare-differs {
+  background: var(--hc-warning-soft);
+}
+
+.hc-compare-differs dd {
+  color: var(--hc-text);
+}
+
+.hc-compare-bodies {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  min-height: 0;
+  flex: 1;
+}
+
+.hc-compare-bodies .hc-preview-body {
+  min-width: 0;
+}
+
+/* ---- Quick Look (2026-09-06) --------------------------------------------------------------- */
+
+.hc-quicklook {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  background: var(--hc-overlay-fill);
+  border-radius: var(--hc-radius-overlay);
+  outline: none;
+}
+
+.hc-quicklook-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 14px 20px 8px;
+  min-width: 0;
+}
+
+.hc-quicklook-head .hc-title {
+  white-space: nowrap;
+}
+
+.hc-quicklook-dir {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.hc-quicklook-head .hc-meta {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  white-space: nowrap;
+}
+
+
+.hc-quicklook-body {
+  flex: 1;
+  min-height: 0;
+  margin: 0 20px 20px;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-in;
+}
+
+.hc-quicklook[data-zoom="actual"] .hc-quicklook-body {
+  cursor: zoom-out;
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+
+/* Fit: the whole picture inside the body. 1:1: the render's own pixels, one per device pixel. */
+.hc-quicklook .hc-preview-image {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+
+/* The `<img>` carries the render's width and height as attributes once it is sharp, so lifting
+   the caps is all it takes to show it pixel for pixel. */
+.hc-quicklook[data-zoom="actual"] .hc-preview-image {
+  max-width: none;
+  max-height: none;
+}
+
+.hc-quicklook .hc-preview-text {
+  align-self: flex-start;
+  width: 100%;
+  cursor: text;
 }

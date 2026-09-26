@@ -18,6 +18,13 @@ const withHarness = process.env.HC_HARNESS !== "0";
 // the first paint does not need is the same argument as not splitting what it does.
 const here = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 
+// Under vitest the environment is `test`, whatever the calling shell exported. Vite resolves
+// React by NODE_ENV, and React's production build has no `act()` — so a shell with
+// `NODE_ENV=production` in it (common where release bundles are built) turned 28 of 56 unit tests
+// red with an error that pointed at the code under test. The second review of 2026-09-05 found
+// it; nothing in the code was wrong, the dependency on ambient state was merely unstated.
+if (process.env.VITEST) process.env.NODE_ENV = "test";
+
 export default defineConfig({
   plugins: [react()],
   resolve: {

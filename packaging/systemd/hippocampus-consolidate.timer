@@ -1,0 +1,24 @@
+[Unit]
+Description=Hippocampus: consolidate nightly, and once after the machine comes up
+Documentation=https://github.com/hippocampus-fm/hippocampus
+
+# The plan's own words for this step are "sleep consolidation": hippocampus → neocortex, a nightly
+# job (01-BUILD-PROMPT §Milestones). Until this file existed the pass had exactly one trigger — a
+# person typing `cortex consolidate` — and this index went 23 days without one (measured
+# 2026-09-15, `cortex overview`: "last pass 23d 0h 54m ago"). An index that is never consolidated
+# has no tier movement and nothing decays, which makes salience, pinning and the whole memory layer
+# look like decoration rather than a mechanism.
+#
+# A pass is cheap because D65 made it idempotent by replaying the whole log: 1.2 s over 19 186
+# episodes on this index. Running it twice costs the second pass and changes nothing.
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+
+# `Persistent=true` is the point of the exercise: this machine is not awake at 03:00 every night,
+# and a job that silently did not happen is indistinguishable from the twenty-three days above.
+Persistent=true
+AccuracySec=5min
+
+[Install]
+WantedBy=timers.target

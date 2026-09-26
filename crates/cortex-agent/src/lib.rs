@@ -40,9 +40,14 @@ pub use surface::KillSwitch;
 /// access control — a local Unix socket with `0600` on it is the access control.
 pub fn actor_from_client(name: Option<&str>) -> cortex_core::model::Actor {
     match name {
-        None => cortex_core::model::Actor::Human,
+        // A connection that says nothing is *not* the human (D117). It used to default to
+        // `Human` on the argument that it granted nothing — true until M12 gave `human` the only
+        // authority that may create an instruction. Which actor ran a command is now visible in
+        // the log, and that is worth more than the convenience of a shorter handshake.
+        None => cortex_core::model::Actor::Unknown,
         Some(n) if n == "human" => cortex_core::model::Actor::Human,
         Some(n) if n == "system" => cortex_core::model::Actor::System,
+        Some(n) if n == "unknown" => cortex_core::model::Actor::Unknown,
         Some(n) => cortex_core::model::Actor::Agent(
             n.strip_prefix("agent:").unwrap_or(n).to_string(),
         ),
@@ -56,7 +61,7 @@ mod tests {
 
     #[test]
     fn client_names_map_to_actors() {
-        assert_eq!(actor_from_client(None), Actor::Human);
+        assert_eq!(actor_from_client(None), Actor::Unknown);
         assert_eq!(actor_from_client(Some("human")), Actor::Human);
         assert_eq!(actor_from_client(Some("system")), Actor::System);
         assert_eq!(

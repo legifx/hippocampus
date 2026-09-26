@@ -116,17 +116,65 @@ impl Daemon {
         last.get("result").cloned().unwrap_or(last)
     }
 
+    /// Surface one, as somebody else. The window speaks here: `ui/src-tauri`'s bridge
+    /// identifies as `human` on connect, so a write that came from the desktop and a write that
+    /// came from a script that named the human are the same thing on the wire.
+    fn rpc_as(&self, actor: &str, method: &str, params: Value) -> Value {
+        use std::os::unix::net::UnixStream;
+        let stream = UnixStream::connect(self.root.path().join("run/cortex.sock")).unwrap();
+        let mut writer = stream.try_clone().unwrap();
+        let mut reader = BufReader::new(stream);
+
+        for (id, method, params) in [
+            (1, "identify", json!({ "actor": actor })),
+            (2, method, params),
+        ] {
+            let request = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+            writeln!(writer, "{request}").unwrap();
+        }
+        writer.flush().unwrap();
+
+        let mut last = Value::Null;
+        for _ in 0..2 {
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            last = serde_json::from_str(&line).unwrap();
+        }
+        last.get("result").cloned().unwrap_or(last)
+    }
+
+    /// A connection that never says who it is, answering with whatever came back — `result` or
+    /// `error`, because which one it is is sometimes the assertion. Since D117 this is what a
+    /// caller without an introduction looks like, and the answer it must get is the least.
+    fn rpc_unidentified(&self, method: &str, params: Value) -> Value {
+        use std::os::unix::net::UnixStream;
+        let stream = UnixStream::connect(self.root.path().join("run/cortex.sock")).unwrap();
+        let mut writer = stream.try_clone().unwrap();
+        let mut reader = BufReader::new(stream);
+
+        let request = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
+        writeln!(writer, "{request}").unwrap();
+        writer.flush().unwrap();
+
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        serde_json::from_str(&line).unwrap()
+    }
+
     /// Surface two: the CLI, in the shape a script or an agent would use it.
     fn cli(&self, args: &[&str]) -> Value {
-        let output = Command::new(bin("cortex"))
-            .arg("--root")
-            .arg(self.root())
-            .arg("--json")
-            .arg("--as")
-            .arg("surfaces")
-            .args(args)
-            .output()
-            .expect("cortex runs");
+        self.cli_as(Some("surfaces"), args)
+    }
+
+    /// The CLI as somebody — or as nobody, because `--as` is how a surface that speaks for a
+    /// person says so and leaving it out is a connection that never named itself (D117).
+    fn cli_as(&self, actor: Option<&str>, args: &[&str]) -> Value {
+        let mut command = Command::new(bin("cortex"));
+        command.arg("--root").arg(self.root()).arg("--json");
+        if let Some(actor) = actor {
+            command.arg("--as").arg(actor);
+        }
+        let output = command.args(args).output().expect("cortex runs");
         assert!(
             output.status.success(),
             "cortex {args:?} failed: {}",
@@ -530,7 +578,14 @@ fn a_memory_written_once_is_returned_by_every_surface() {
         }
         items
     };
-    assert_eq!(items(&over_socket), items(&over_cli), "the CLI differed");
+    // `daemon.cli` runs `target/debug/cortex`, which cargo may still be rebuilding while this
+    // test runs — a stale binary serialises the pack without whatever was added last and looks
+    // exactly like a surface that disagrees. `cargo build --workspace --bins` first, then judge.
+    assert_eq!(
+        items(&over_socket),
+        items(&over_cli),
+        "the CLI differed (a stale target/debug/cortex looks like this — build the bins)"
+    );
     assert_eq!(items(&over_socket), items(&over_mcp), "MCP differed");
 
     // Absent means zero: the basis omits the counts nobody has moved yet, because "helped 0,
@@ -903,5 +958,151 @@ fn the_kill_switch_reaches_the_memory_tools() {
     assert!(
         !texts.contains("written while off"),
         "a memory was written through a switched-off surface: {texts}"
+    );
+}
+
+/// M12 criterion 1: the origin is what the *connection* implies.
+///
+/// Five writes on one daemon, from the four surfaces the criterion names plus the one it does
+/// not: an agent over MCP, the CLI as the human, a window (the socket identified as a person,
+/// which is what `ui/src-tauri` does on connect), and a connection that never named itself —
+/// twice, once over the socket and once through the CLI without `--as`.
+///
+/// Each lands with the origin its own connection implies and the authority that origin's
+/// ceiling allows. The interesting half is the negative: the field is not in any request type,
+/// so a body that sends one is not obeyed, and the stranger cannot end up as the human.
+#[test]
+fn every_surface_writes_the_origin_its_connection_implies() {
+    let daemon = Daemon::start();
+
+    daemon.mcp(
+        "brain_remember",
+        json!({
+            "text": "the shape of a tool answer is fixed by its schema",
+            "kind": "fact",
+            "scope": "global",
+        }),
+    );
+    daemon.cli_as(
+        Some("human"),
+        &[
+            "remember",
+            "never commit with --no-verify",
+            "--kind",
+            "preference",
+            "--scope",
+            "global",
+        ],
+    );
+    daemon.rpc_as(
+        "human",
+        "brain.remember",
+        json!({
+            "text": "the person decided this from the window",
+            "kind": "decision",
+            "scope": "global",
+        }),
+    );
+    let stranger = daemon.rpc_unidentified(
+        "brain.remember",
+        json!({
+            "text": "a stranger wrote this and nothing vouches for it",
+            "kind": "fact",
+            "scope": "global",
+        }),
+    );
+    daemon.cli_as(
+        None,
+        &[
+            "remember",
+            "a script that never named itself",
+            "--kind",
+            "observation",
+            "--scope",
+            "global",
+        ],
+    );
+
+    // A stranger may be turned away outright — which is the better answer — or served with the
+    // least there is. What it may not do is arrive as something a pack may act on.
+    let refused = stranger.get("error").is_some() || stranger["code"].is_i64();
+
+    // Read back as the human: `--all` spans every scope in the index, which is a thing a person
+    // may do and an agent may not — the listing refuses rather than filters, which is how that
+    // rule is enforced everywhere else in this project.
+    let listed = daemon.cli_as(Some("human"), &["memories", "--all", "--limit", "50"]);
+    let standing = |listed: &Value, text: &str| -> Option<(String, String)> {
+        listed["memories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|memory| memory["text"].as_str() == Some(text))
+            .map(|memory| {
+                (
+                    memory["origin"].as_str().unwrap_or("?").to_string(),
+                    memory["authority"].as_str().unwrap_or("?").to_string(),
+                )
+            })
+    };
+
+    assert_eq!(
+        standing(&listed, "the shape of a tool answer is fixed by its schema"),
+        Some(("agent".into(), "fact".into())),
+        "an agent's own conclusion is a fact it established: {listed}"
+    );
+    assert_eq!(
+        standing(&listed, "never commit with --no-verify"),
+        Some(("human".into(), "instruction".into())),
+        "the CLI as the human must be able to create an instruction: {listed}"
+    );
+    assert_eq!(
+        standing(&listed, "the person decided this from the window"),
+        Some(("human".into(), "instruction".into())),
+        "the window is the socket identified as a person: {listed}"
+    );
+    if refused {
+        assert_eq!(
+            standing(&listed, "a stranger wrote this and nothing vouches for it"),
+            None,
+            "the write was refused but the memory exists anyway: {listed}"
+        );
+    } else {
+        assert_eq!(
+            standing(&listed, "a stranger wrote this and nothing vouches for it"),
+            Some(("peer".into(), "observation".into())),
+            "an unclaimed connection wrote something a pack could act on: {listed}"
+        );
+    }
+    assert_eq!(
+        standing(&listed, "a script that never named itself"),
+        Some(("peer".into(), "observation".into())),
+        "the CLI without --as is a connection that never named itself: {listed}"
+    );
+
+    // And the field the criterion is about is not a field of any request: a body that sends one
+    // is answered with the origin its connection implies, never with the one it asked for. This
+    // is the whole reason the derivation lives in the write path rather than in the tool
+    // surface's parameters (D98).
+    let asked = daemon.rpc_unidentified(
+        "brain.remember",
+        json!({
+            "text": "a stranger asking to be taken for the human",
+            "kind": "fact",
+            "scope": "global",
+            "origin": "human",
+            "authority": "instruction",
+        }),
+    );
+    let asked_refused = asked.get("error").is_some() || asked["code"].is_i64();
+    let listed = daemon.cli_as(Some("human"), &["memories", "--all", "--limit", "50"]);
+    let claimed = standing(&listed, "a stranger asking to be taken for the human");
+    assert!(
+        asked_refused || claimed == Some(("peer".into(), "observation".into())),
+        "a request body decided an origin: {asked} / {listed}"
+    );
+    assert_ne!(
+        claimed,
+        Some(("human".into(), "instruction".into())),
+        "a request that asks for `human` got it: {asked}"
     );
 }

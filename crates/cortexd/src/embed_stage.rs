@@ -58,6 +58,8 @@ const SAVE_EVERY: usize = 4096;
 const QUEUE_EMPTY_POLL: Duration = Duration::from_secs(2);
 const MAX_QUEUE_POLL: Duration = Duration::from_secs(60);
 const SLEEP_GRANULARITY: Duration = Duration::from_millis(250);
+/// Dead chunk ids taken per round when clearing orphan vectors.
+const DEAD_CLAIM: usize = 4096;
 
 #[derive(Debug, Default)]
 pub struct EmbedStats {
@@ -173,6 +175,11 @@ impl Embedding {
             }
             let watermark = self.store.chunk_watermark().ok();
             if settled_at.is_some() && watermark == settled_at {
+                // The settled path is the one every idle pass takes — the branch below runs
+                // once, when the queue first empties. So the release check belongs here or it
+                // runs once, ten seconds after start, and never again. (Found on the first
+                // deployment: no release after twenty idle minutes, and this was why.)
+                self.semantics.release_embedder_if_idle();
                 self.sleep(idle_wait);
                 idle_wait = (idle_wait * 2).min(MAX_QUEUE_POLL);
                 continue;
@@ -194,12 +201,19 @@ impl Embedding {
             let memories_embedded = self.embed_memories(&session);
 
             if batch.is_empty() {
+                // Nothing to embed and nothing asked for a query embedding for a while: put
+                // the runtime down (D103). The index is file-backed and stays where it is.
+                self.semantics.release_embedder_if_idle();
                 if memories_embedded > 0 {
                     // There was work after all, so this pass is not the settled one.
                     self.save_index(&session);
                     continue;
                 }
                 settled_at = watermark;
+                // Chunks that were deleted since the last pass still have vectors here; take
+                // them out before the count below is compared, or the comparison fails by
+                // exactly the number of files edited and the whole index is rebuilt for it.
+                self.drop_dead_vectors(&session);
                 // Nothing left to compute does not mean everything is findable. The ANN index
                 // keys by chunk id while the vectors key by content, so re-deriving chunks —
                 // which is what `--rebuild-index` does — leaves the table complete and the index
@@ -226,6 +240,13 @@ impl Embedding {
             idle_wait = QUEUE_EMPTY_POLL;
             settled_at = None;
 
+            // A batch in hand: bring the model back if it was put down, blocking this thread
+            // and nobody else. Inference on a released model would fail the whole claim.
+            if let Err(e) = self.semantics.ensure_embedder_resident() {
+                tracing::warn!(error = %e, "the embedding model is not available; retrying later");
+                self.sleep(QUEUE_EMPTY_POLL);
+                continue;
+            }
             let embedded = self.run_batch(&session, batch, started);
             if embedded == 0 {
                 // The claim was not empty but nothing came of it: every chunk in it was stale,
@@ -349,6 +370,45 @@ impl Embedding {
         embedded
     }
 
+    /// Remove the vectors of chunks the extraction stage has deleted (0009 migration).
+    ///
+    /// Before this existed, a re-extracted file left one orphan vector per deleted chunk, the
+    /// reconcile below saw `present > expected` and rebuilt the index from the table — twelve
+    /// seconds on the reference machine, on every idle pass after any edit, for ever.
+    fn drop_dead_vectors(&self, session: &Session) {
+        loop {
+            let dead = match self.store.dead_chunks(DEAD_CLAIM) {
+                Ok(dead) => dead,
+                Err(e) => {
+                    tracing::warn!(error = %e, "could not read the dead chunk list");
+                    return;
+                }
+            };
+            if dead.is_empty() {
+                return;
+            }
+            // An id a live chunk has taken over is left alone: its vector is the new chunk's,
+            // written by `run_batch` over the old one under the same key.
+            let gone = dead
+                .iter()
+                .filter(|(_, reused)| !reused)
+                .map(|(chunk, _)| *chunk);
+            let removed = session.loaded.vectors.remove_many(gone).unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "could not remove dead vectors");
+                0
+            });
+            let all: Vec<cortex_core::ids::ChunkId> = dead.iter().map(|(chunk, _)| *chunk).collect();
+            if let Err(e) = self.store.forget_dead_chunks(&all) {
+                tracing::warn!(error = %e, "could not clear the dead chunk list");
+                return;
+            }
+            tracing::debug!(dead = dead.len(), removed, "dead vectors dropped");
+            if dead.len() < DEAD_CLAIM {
+                return;
+            }
+        }
+    }
+
     /// Make the ANN index agree with the table, refilling it if it does not.
     ///
     /// Cheap in the normal case: one count against one number already in memory. Expensive
@@ -442,6 +502,10 @@ impl Embedding {
             }
         };
         if batch.is_empty() {
+            return 0;
+        }
+        if let Err(e) = self.semantics.ensure_embedder_resident() {
+            tracing::warn!(error = %e, "the embedding model is not available for memories; retrying later");
             return 0;
         }
 
@@ -802,6 +866,31 @@ mod tests {
         assert_eq!(harness.store.embedding_count(harness.model_ref()).unwrap(), 1);
         assert_eq!(harness.vectors().len(), 1);
         assert_eq!(harness.stats.chunks_embedded.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn a_re_extracted_file_leaves_no_orphan_vector_and_no_rebuild() {
+        // The live finding of 2026-09-06: expected 49257, present 49258, a full rebuild every
+        // idle pass. After a file's chunks are replaced, the index must agree with the table by
+        // removal, not by rebuilding.
+        let harness = Harness::new();
+        harness.add("a.txt", "Ein Absatz über Zwiebelkuchen, lang genug für einen Chunk.");
+        harness.add("b.txt", "Ein zweiter Absatz über Blickachsen, ebenfalls lang genug.");
+        harness.drain();
+        let stage = harness.stage();
+        let session = stage.session().unwrap();
+        let before = harness.vectors().len();
+        assert!(before >= 2);
+
+        // b.txt changes completely: its old chunk is deleted, a new one is written and embedded.
+        harness.add("b.txt", "Etwas völlig anderes steht jetzt in dieser Datei, ganz neu.");
+        harness.drain();
+        assert!(!harness.store.dead_chunks(10).unwrap().is_empty(), "the deletion was noted");
+
+        stage.drop_dead_vectors(&session);
+        let expected = harness.store.indexable_vector_count(session.reference()).unwrap();
+        assert_eq!(harness.vectors().len(), expected, "no orphan vector left behind");
+        assert!(harness.store.dead_chunks(10).unwrap().is_empty(), "and the note is cleared");
     }
 
     #[test]

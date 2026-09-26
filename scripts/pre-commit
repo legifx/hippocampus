@@ -87,11 +87,19 @@ for f in "${files[@]}"; do
   # An endpoint. A URL whose host is a real domain and not a public documentation, registry
   # or standards host is somebody's server, and the Core must not know one (M7 §4, D9).
   # A host without a dot (`nas`, `server`, `localhost`) is a placeholder, not an address.
+  #
+  # Deny-by-default over an allow-list, on purpose: the guarantee is "no unknown host", and a
+  # rule that only looked at `peer =` assignments would miss a hostname in a comment or a test
+  # string. The price is that every new documentation host has to be added here — which is what
+  # happened with `debian.org` on 2026-09-05: the copyright-format URL in `packaging/deb/build.sh`
+  # turned the gate red for a day, and the first review of that date recorded the suite as green
+  # without re-running it. Widen the list; do not weaken the rule. A finding on a documentation
+  # host is a finding about this list, and the fix is one entry below.
   while IFS=: read -r line content; do
     [[ -z "${line:-}" ]] && continue
     report "endpoint (a host the Core must not know)" "$f:$line" "$content"
   done < <(grep -noE '(https?|wss?|ssh|smb|sftp|nfs|ftp)://[A-Za-z0-9._-]+\.[A-Za-z0-9._-]+' "$f" \
-             | grep -vE '://([a-z0-9-]+\.)*(github\.com|githubusercontent\.com|github\.io|npmjs\.org|npmjs\.com|crates\.io|docs\.rs|rust-lang\.org|huggingface\.co|opencollective\.com|tidelift\.com|w3\.org|whatwg\.org|json-schema\.org|tauri\.app|mozilla\.org|freedesktop\.org|sqlite\.org|ietf\.org|rfc-editor\.org|apache\.org|example\.(com|org|net|invalid)|mydomain\.dev|asset\.localhost|127\.0\.0\.1)(:[0-9]+)?($|[^A-Za-z0-9._-])' \
+             | grep -vE '://([a-z0-9-]+\.)*(github\.com|githubusercontent\.com|github\.io|npmjs\.org|npmjs\.com|crates\.io|docs\.rs|rust-lang\.org|huggingface\.co|opencollective\.com|tidelift\.com|w3\.org|whatwg\.org|json-schema\.org|tauri\.app|mozilla\.org|freedesktop\.org|sqlite\.org|ietf\.org|rfc-editor\.org|apache\.org|debian\.org|gnu\.org|kernel\.org|python\.org|nodejs\.org|spdx\.org|opensource\.org|creativecommons\.org|gnome\.org|gtk\.org|wikipedia\.org|wikimedia\.org|nvidia\.com|onnxruntime\.ai|example\.(com|org|net|invalid)|mydomain\.dev|asset\.localhost|127\.0\.0\.1)(:[0-9]+)?($|[^A-Za-z0-9._-])' \
              | head -5)
 
   # A home directory path from a real machine. Tests must build paths at runtime.
@@ -106,10 +114,14 @@ if [[ $failed -ne 0 ]]; then
 
 Commit refused by the repository hygiene gate (hard rule R9).
 
-This repository is public. If the finding above is a false positive, use a placeholder
-(example.com, 198.51.100.1, /home/user/...) rather than bypassing the check.
+This repository is public. If the finding above is a false positive, fix the finding rather
+than the gate: use a placeholder (example.com, 198.51.100.1, /home/user/...) — or, when the
+match is a public documentation, registry or standards host, add that host to the allow-list
+in scripts/pre-commit and say so in the commit message.
 
-If you are certain, commit with --no-verify — but understand that history is forever.
+Do not bypass this check with --no-verify. History is forever, and cargo test runs the same
+scan over every tracked file and every patch in the history, so a bypass only moves the red
+from your terminal to the test suite.
 EOF
   exit 1
 fi

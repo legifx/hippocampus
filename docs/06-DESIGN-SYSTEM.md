@@ -68,22 +68,62 @@ A zone renders as a **2 px left border** on the row, plus the accent token for t
 ring. Never a background fill on unselected rows. Colour is never the only signal — every zone
 also carries a name and an icon.
 
+**The materials come from the showcase's design kit, and each one is written down once.**
+Since 2026-09-14 (D110, D111) the vocabulary above is carried by `ui/src/glass.css` — `glass`,
+`glass-flat`, `glass-strong`, `glass-sheen`, `glass-specular`, `raised`, `raised-bezel`, `well`,
+`solid` — ported once from `ui/inspo/minimalist-glassmorphism-file-explorer/src/styles/glass.css`
+onto these tokens, and `ui/src/kit.css` holds the class bodies of the kit's controls. The
+primitives live in `ui/src/components/glass/` and are used, not re-drawn: a panel that needs a
+fill takes a kit material, it does not mix its own. Where a rule in this document and the kit
+disagree, the kit wins for materials and this document wins for arrangement; and anything the kit
+was extended to do is written down in D111, not added silently.
+
 ## 3. Typography
 
-Stack: `Inter Variable`, then system sans. Variable weight axis is used for arrival animation.
+Stack: `SF Pro Display` first — the owner asked for it, so the window uses it wherever it exists on
+the machine — then `SF Pro Text`, `-apple-system`, `Inter Display`, `Inter`, then the system sans. SF
+cannot be *shipped*: it is Apple's and its licence does not allow redistribution. `Inter` is what the
+window falls back to on Linux, and what the pictures in this repository show; the fallback is stated
+here so nobody reads a screenshot as a Mac. The variable weight axis is used for arrival animation.
 
-| Role | Size | Weight | Tracking | Line height |
+**The steps are fluid.** Seven of them, each clamped to the window width — a floor, a ceiling and a
+shallow slope between. This replaced forty-odd fixed sizes chosen one at a time, any two of which
+could disagree; the disagreement the owner could see was the search field, whose text was 15.5 px in
+a field that grew with the window. The slope is shallow on purpose: type is not a layout that can be
+stretched, and a step that grows as fast as the window turns a wide window into a poster. The numbers
+are set so that at about 1024 px every step is what it used to be.
+
+| Token | 400 px | ~1024 px | 1440 px | What it is for |
 |---|---|---|---|---|
-| Title | 15.5px | 600 | −0.012em | 1.2 |
-| Subtitle | 13.5px | 450 | — | 1.3 |
-| Body | 14px | 520 | −0.006em | 1.38 |
-| Row (file name) | 13.5px | 500 | −0.004em | 1.35 |
-| Meta (size, date) | 12px | 500 | — | 1.3 |
-| Button | 13.5px | 550 | −0.005em | — |
-| Pill / badge | 12.5px | 500 | — | — |
+| `--hc-text-2xs` | 10 | 11 | 12.5 | the small tracked label over a number |
+| `--hc-text-xs` | 11 | 12 | 13.5 | metadata, status, a table's headings |
+| `--hc-text-sm` | 12 | 13 | 15 | controls, counts, a row of the list |
+| `--hc-text-md` | 13 | 14 | 16 | body: the prose in the panels |
+| `--hc-text-lg` | 14 | 15.5 | 19 | the title, and the search field's own text |
+| `--hc-text-xl` | 17 | 20 | 24 | a number on a card |
+| `--hc-text-2xl` | 21 | 25 | 32 | the daemon's sentence as a headline |
+
+**A box is measured in its own type.** Padding and height of a control are in `em` against the step
+the control is set in, so the search field's height *is* its text with room around it instead of a
+second, independent number. That is what made the field and its text agree only at one window width.
+
+Weights and tracking are unchanged, and belong to the role rather than to the step: Title 600 /
+−0.012em, Subtitle 450, Body 520 / −0.006em, Row 500 / −0.004em, Meta 500, Button 550 /
+−0.005em, Pill 500.
 
 Numbers always use `font-variant-numeric: tabular-nums` — file sizes and dates must not jitter
 while a list updates.
+
+### The columns
+
+A heading is a claim about what is under it, so a heading and its values are given the same track:
+the widths are `em` against the same step (the heading row and a row's metadata are both set in
+`--hc-text-xs`), and both groups are right-aligned against the same inset. When the list has no room
+for the table, the numbers give way rather than the metadata pushing out over the panel beside it
+(`min-width: 0` on the group, a floor and `flex-shrink` on the cells). The permission string is the
+only cell with no heading — there is no order called „rechte“ — and it gives way first, clipping
+with its full text in its `title`. A directory has no size in a listing, so the cell carries `—`,
+the same mark the inspector uses for a number it does not have; a blank cell reads as a zero.
 
 ## 4. Geometry
 
@@ -179,6 +219,17 @@ At most three, all `position: absolute; inset: 0; pointer-events: none`, animati
 2. **Glow** — accent hairline plus inner glow on the focused panel.
 3. **Rim** — specular highlight tracking the cursor, 150 × 80.
 
+**The canvas under all of it is flat, and that is a rule and not an omission.** A kit's backdrop
+belongs to the kit's showcase: the `minimalist-glassmorphism` kit paints three very large coloured
+glows behind its glass, and this window carried them for one session (D114 is about the drift that
+came with them). They went again because of the concept, not the cost — the owner's verdict was
+„Die glows nehmen irgendwie die Minimalistic raus aus dem GUI Konzept": colour in the background is
+the first thing a tool does not need, and the glass here is something the panels *are*, not something
+to be admired. Measured, the difference was small and all of it in the colour: the file list's median
+50.0 → 42.5 and its blue-over-red bias +8.4 → +2.4 when the glows left. **What lights this window is
+the breath and nothing else** (§6.1), and it lights it because there is work to report. D115 has the
+decision and the two calm levers that remain if a surface ever measures too flat again.
+
 The mic ring, sheen and sweep layers from island-ui are not used in the explorer except for the
 overlay's opening sheen.
 
@@ -207,3 +258,47 @@ This is a hard requirement, not a nicety.
    brings the same window to 0.3% — independently of the renderer, the size of the animated
    element, or what is being drawn (D59). A window that is open from login to logout pays that
    for as long as it is looked at.
+
+## 9. The shell: the rail and the start screen
+
+Added 2026-09-14, in `src/shell.css`, loaded after `app.css`. Nothing in `app.css` was rewritten:
+the overlay keeps its grid and gains one column for the rail.
+
+**The rail.** Two destinations and one panel — *Übersicht*, *Dateien*, *Inspector*. `--hc-rail`
+(200 px) beside a `minmax(0, 1fr)` stage, full window height. Under 720 px it collapses to
+`--hc-rail-narrow` (58 px): the glyphs stay, the words and the counts go, and the rail keeps its
+height — an icon column, not a squeezed sidebar. The footer's *values* go with its keys, and the
+agent chip keeps its dot and loses its word: at 58 px a value is not shortened by ellipsis, it
+becomes `/ho….`, and the word survives as the chip's `title` and accessible name rather than as a
+colour alone. In the header, the sort label goes the same way — the search field is what has to keep
+its width at 400 px.
+
+**The start screen.** One column, at most 1180 px wide: the daemon's own sentence, then tiles, then
+cards, then the daemon's state. Cards are a `minmax(min(320px, 100%), 1fr)` grid, so at 400 px
+there is one per row and the screen never scrolls sideways. Every number on it is printed as the
+daemon sent it, the two sentences included — the daemon counted, the window repeats (D4).
+
+**Material.** Three surfaces, all from `--hc-glass-*` — and every number in them is the kit's dark
+theme, not a value this window arrived at by looking (D113): the fill 0.06, the rim `inset 0 1px 0
+rgba(255, 255, 255, 0.16)`, the bottom shade `inset 0 -1px 0 rgba(0, 0, 0, 0.45)`, the sheen 0.24
+under `--hc-sheen-opacity: 0.4`, the drop shadow 0.45 black, and — because the kit separates a glass
+surface from its neighbours with a dark seam rather than a light outline — a `0 0 0 1px` ring of
+`--hc-glass-seam` (`rgba(0, 0, 0, 0.35)`). `--hc-glass-edge` keeps this window's light 0.055 white
+for the one job the kit does not give it: it is the colour of every panel divider in `shell.css`. A
+convex surface (`.raised`, `.raised-flat`, `.raised-bezel`) is the kit's pair of *solid* greys,
+`#3b3b44` over `#2a2a31`, under the kit's 1 px light top rim — a translucent white wash over
+`#101012` is 26 levels lighter at one end and 4 at the other, which is a tint and not an object. The
+overlay is the only place a blur is allowed (§8.1); the rail is a gradient fill with a 1 px rim on
+its right edge; the cards keep the outer drop shadow: a handful of surfaces painted once, not rows
+that repeat (§8.2).
+
+**A material is a list, and a token in it is listed rather than spelled out.** Each of these tokens
+carries its own geometry — `--hc-glass-rim` *is* `inset 0 1px 0 …` — so a recipe writes
+`var(--hc-glass-rim)` and never `inset 0 1px 0 0 var(--hc-glass-rim)`. The second form is invalid,
+and a declaration that is invalid at computed-value time is not partially applied: the browser drops
+the entire shadow. It had happened to every material class in `glass.css` (D112); what holds it now
+is `ui/tests/materials.spec.ts`.
+
+**Two shapes to keep.** A card is a panel with a header and a body — the header says what the card
+is about, the body holds at most one list or one bar. And a chip is a state, not a number: it is
+read at a glance and never the only thing that carries its meaning.

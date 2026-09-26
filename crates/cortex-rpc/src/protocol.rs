@@ -179,9 +179,16 @@ pub mod method {
     pub const AGENT_SET_ENABLED: &str = "agent.set_enabled";
     pub const INDEX_SET_PAUSED: &str = "index.set_paused";
     pub const AUDIT_RECENT: &str = "audit.recent";
+    /// Everything the start screen shows: the index at a glance, how the Agent Surface has been
+    /// used, and what the last consolidation pass did. One call rather than eight, because the
+    /// window must not add numbers up (D4) and a start screen that fires eight reads is a start
+    /// screen that flickers.
+    pub const STATS_OVERVIEW: &str = "stats.overview";
 
     /// Name yourself. Everything after it on this connection is attributed to that actor, in
-    /// episodes and in the audit log. Unclaimed connections are `human`.
+    /// episodes and in the audit log. A connection that never names itself is `unknown`, not
+    /// `human`: since D117 an unclaimed connection cannot create an instruction, and `identify`
+    /// is how a surface that speaks for a person says so.
     pub const IDENTIFY: &str = "identify";
 
     // The agent tools themselves. `fs.write`, `fs.move` and `fs.trash` are gated: called
@@ -330,6 +337,7 @@ pub mod method {
                 | BRAIN_GRAPH
                 | BRAIN_REPORT
                 | AUDIT_RECENT
+                | STATS_OVERVIEW
                 | FS_LIST
                 // `view.open` reads exactly what `search` and `fs.list` read, through the same
                 // code, and answers a question that does not depend on its neighbours.
@@ -377,6 +385,7 @@ pub mod method {
         AGENT_SET_ENABLED,
         INDEX_SET_PAUSED,
         AUDIT_RECENT,
+        STATS_OVERVIEW,
         IDENTIFY,
         FS_LIST,
         FS_PLACES,
@@ -526,6 +535,34 @@ pub struct StatusResult {
     pub watcher: Option<WatchStatusResult>,
     pub methods: Vec<String>,
 }
+
+/// What `stats.overview` takes.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StatsOverviewParams {
+    /// The window the activity numbers cover, in seconds. `None` is the daemon's own choice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_secs: Option<i64>,
+}
+
+impl StatsOverviewParams {
+    /// The window to use, clamped to what the daemon is willing to count.
+    ///
+    /// Clamped rather than refused: a window is a question about a time range, not a command,
+    /// and a start screen that asks for an odd one should get an answer it can print — with the
+    /// window it actually got, which travels back in `Overview::window_label`.
+    pub fn window_secs(&self) -> i64 {
+        const MIN: i64 = 3_600;
+        const MAX: i64 = 30 * 86_400;
+        self.window_secs.unwrap_or(86_400).clamp(MIN, MAX)
+    }
+}
+
+/// The answer to `stats.overview`.
+///
+/// The payload itself is [`cortex_core::overview::Overview`] rather than a second struct here:
+/// the daemon and every client share those types, and a copy declared for the wire is a copy
+/// that drifts from the one the store fills. The name is the wire name.
+pub type StatsOverviewResult = cortex_core::overview::Overview;
 
 /// What `view.open` takes.
 ///

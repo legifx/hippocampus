@@ -55,6 +55,57 @@ export function spring(name: SpringName): Transition {
 }
 
 /**
+ * The design kit's four spring names (`ui/inspo/.../src/lib/motion.ts`), mapped onto the six
+ * above.
+ *
+ * The kit's components are written against `springSnappy`, `springSoft`, `spring` and
+ * `springBouncy`. Keeping that vocabulary at the call sites is worth four aliases; keeping the
+ * physics in *one* table is worth more, so each kit name resolves to a named spring here instead
+ * of carrying its own numbers — otherwise the window would have two springs called "fast" that
+ * drift apart the first time one of them is tuned. The mapping is in
+ * `docs/06-DESIGN-SYSTEM.md` §5, next to the springs it points at.
+ */
+export type KitSpringName = "spring" | "springSoft" | "springSnappy" | "springBouncy";
+
+const KIT_SPRINGS: Record<KitSpringName, SpringName> = {
+  spring: "content",
+  springSoft: "collapse",
+  springSnappy: "pulse",
+  springBouncy: "dock",
+};
+
+/**
+ * A kit-named spring, reduced motion included.
+ */
+export function kitSpring(name: KitSpringName): Transition {
+  return spring(KIT_SPRINGS[name]);
+}
+
+/**
+ * The kit's `tweenFast` — `{ duration: 0.18, ease: easeOutQuint }` — which is what its header
+ * arrow, its row hover labels and its small icon swaps move on. They are *content*, not geometry,
+ * and §5 says so out loud: the named springs move a box, the easing curves move what is written in
+ * it. The curve is `--hc-ease-out` in `tokens.css`, which is the kit's `easeOutQuint` verbatim, so
+ * the one curve is still chosen in one place; only the duration is paired with it here.
+ *
+ * Reduced motion gets no duration at all rather than a short one: an arrow that slides in 0 ms is
+ * the arrow simply being there, which is what the person asked for.
+ */
+export function tweenFast(): Transition {
+  if (prefersReducedMotion()) return { duration: 0 };
+  return { duration: 0.18, ease: [0.22, 1, 0.36, 1] };
+}
+
+/**
+ * The kit's `pop` — what its menus and toasts enter on. `springBouncy` above, as a function
+ * rather than a constant so the reduced-motion check happens at render time and not at import
+ * time (a constant would freeze whichever preference was set when the module first loaded).
+ */
+export function pop(): Transition {
+  return kitSpring("springBouncy");
+}
+
+/**
  * The result list does **not** stagger (§5, "Result list rule"): staggering two hundred rows
  * costs the whole 80 ms keystroke budget. Stagger belongs to surfaces with fewer than about
  * twenty elements — the sidebar and the panels.

@@ -54,6 +54,17 @@ struct Args {
 }
 
 /// One measured path and the budget it must meet.
+/// The specified BM25 budget (`docs/01-BUILD-PROMPT.md` §Benchmarks). Named because a second
+/// gate is derived from it, and a derived budget must be derived from the specification rather
+/// than from a measurement.
+const BM25_BUDGET: Duration = Duration::from_millis(30);
+
+/// Embedding one query on the CPU. Half of the 80 ms keystroke budget: the semantic arm is one of
+/// three that run for a keystroke, and a query embedding slower than this would make the arm
+/// the whole budget on a machine without a GPU. Added to the specification on 2026-09-05 (D104),
+/// when it turned out the number had never been taken on the reference machine.
+const QUERY_EMBEDDING_BUDGET: Duration = Duration::from_millis(40);
+
 struct Gate {
     name: &'static str,
     budget: Duration,
@@ -194,7 +205,7 @@ fn main() {
         });
         gates.push(Gate {
             name: "BM25 top-100",
-            budget: Duration::from_millis(30),
+            budget: BM25_BUDGET,
             measured: b95,
             detail: format!("P50 {b50:?}, P95 {b95:?}, P99 {b99:?}"),
         });
@@ -279,15 +290,22 @@ fn main() {
 
                 gates.push(Gate {
                     name: "BM25 top-100, while the indexer writes",
-                    // Half again as long as the same query with nothing else running. A reader
-                    // that waits for a writer is not 50% slower, it is several times slower —
-                    // measured before the connection pool, the gap was +70% with a writer at a
-                    // 10% duty cycle, and in production it was searches of 932 ms against a
-                    // budget of 80.
-                    budget: b95 + b95 / 2,
+                    // Half again the *specified* BM25 budget, as a fixed number. It used to be
+                    // half again the P95 measured a moment earlier in this same run, which made
+                    // it a relative check dressed as an absolute one: a regression in baseline
+                    // BM25 raised the budget that was supposed to catch it, and the gate could
+                    // not fail on its own terms (second review of 2026-09-05, §4.2). The
+                    // reason for the 50 % remains: a reader that waits for a writer is not 50 %
+                    // slower, it is several times slower — before the connection pool the gap
+                    // was +70 % with a writer at a 10 % duty cycle, and in production it was
+                    // searches of 932 ms against a budget of 80. The ratio to this run's own
+                    // baseline is still printed, because it is the number that says whether
+                    // contention — rather than the corpus — is what moved.
+                    budget: BM25_BUDGET + BM25_BUDGET / 2,
                     measured: w95,
                     detail: format!(
-                        "P50 {w50:?}, P95 {w95:?}, P99 {w99:?}, {} write batches alongside",
+                        "P50 {w50:?}, P95 {w95:?}, P99 {w99:?}, {:.2}× this run's undisturbed P95, {} write batches alongside",
+                        w95.as_secs_f64() / b95.as_secs_f64().max(1e-9),
                         batches.load(Ordering::Relaxed)
                     ),
                 });
@@ -343,15 +361,26 @@ fn main() {
         // is the cost of getting to it.
         if let Some(embedder) = real_embedder() {
             let queries = ["kamerawinkel", "was war der stand beim budget", "aurora report"];
-            let (q50, q95, _) = measure(&queries, args.reps.min(20), |q| {
+            let (q50, q95, q99) = measure(&queries, args.reps.min(20), |q| {
                 let v = embedder.embed(&[Input::Query(q)]).unwrap();
                 std::hint::black_box(v.len());
             });
-            println!();
-            println!("embedding one query with {}: P50 {q50:?}, P95 {q95:?}", embedder.backend());
+            // Gated, not only reported. The semantic arm is live in production while this was
+            // "not measured" on the reference machine for months — the model was fetched by the
+            // daemon and the bench only looked at two environment variables. A budget with no
+            // number is invisible in any summary (second review of 2026-09-05, §4.2).
+            gates.push(Gate {
+                name: "query embedding, one query, CPU",
+                budget: QUERY_EMBEDDING_BUDGET,
+                measured: q95,
+                detail: format!("P50 {q50:?}, P95 {q95:?}, P99 {q99:?}, {}", embedder.backend()),
+            });
         } else {
             println!();
-            println!("query embedding not measured: set HIPPOCAMPUS_TEST_RUNTIME and HIPPOCAMPUS_TEST_MODEL");
+            println!(
+                "query embedding not measured: no model in the daemon's model store and \
+                 HIPPOCAMPUS_TEST_RUNTIME / HIPPOCAMPUS_TEST_MODEL are not set"
+            );
         }
 
         // ---- Cross-encoder rerank of the top 30 -------------------------------------------
@@ -381,7 +410,10 @@ fn main() {
                 detail: format!("P50 {r50:?}, P95 {r95:?}, P99 {r99:?}, {}", reranker.backend()),
             });
         } else {
-            println!("reranking not measured: set HIPPOCAMPUS_TEST_RERANKER");
+            println!(
+                "reranking not measured: no cross-encoder in the daemon's model store and \
+                 HIPPOCAMPUS_TEST_RERANKER is not set (`cortex model fetch-reranker` provides one)"
+            );
         }
 
         // ---- The case the budget does not cover -------------------------------------------
@@ -695,11 +727,45 @@ fn pseudo_unit_vector(seed: &mut u64) -> Vec<f32> {
     v
 }
 
+/// Where the model files are: the environment first, so a CI job can point at a fixture, and
+/// otherwise the daemon's own model store — the same directory `cortex model fetch` fills.
+///
+/// The fallback is what turns "not measured" into a number on any machine that runs the
+/// daemon with a model. Before it, the bench asked only the environment, and on the reference
+/// machine — 160 996 embeddings in the live index, the model resident on the GPU — the query
+/// embedding and the rerank budgets had never been measured once.
+fn model_files(env_model: &str, from_store: impl Fn(&cortex_embed::fetch::ModelStore) -> Option<PathBuf>)
+    -> Option<(PathBuf, PathBuf)>
+{
+    if let (Ok(runtime), Ok(model)) =
+        (std::env::var("HIPPOCAMPUS_TEST_RUNTIME"), std::env::var(env_model))
+    {
+        return Some((PathBuf::from(runtime), PathBuf::from(model)));
+    }
+    let paths = cortex_core::paths::Paths::from_env().ok()?;
+    let store = cortex_embed::fetch::ModelStore::new(paths.state_dir());
+    // Any runtime that is installed, the CPU build first. The GPU build also runs on the CPU
+    // (it is a superset, not an alternative), and on the reference machine it is the only one
+    // present — the first version of this fallback asked for the CPU build alone and reported
+    // "not measured" on the very machine the gate was added for. The *device* is the CPU
+    // either way: the gate is about the cost a machine without a GPU pays, and a CUDA number
+    // would flatter it.
+    let runtime = cortex_embed::registry::runtimes_for("cpu")
+        .iter()
+        .chain(cortex_embed::registry::runtimes_for("auto").iter())
+        .find(|r| store.runtime_present(r))
+        .map(|r| store.runtime_library(r))?;
+    let model = from_store(&store)?;
+    Some((runtime, model))
+}
+
 /// The real embedder, when the machine has one. Optional on purpose: the latency gates must run
 /// on a machine that has never downloaded half a gigabyte.
 fn real_embedder() -> Option<Box<dyn Embedder>> {
-    let runtime = PathBuf::from(std::env::var("HIPPOCAMPUS_TEST_RUNTIME").ok()?);
-    let model = PathBuf::from(std::env::var("HIPPOCAMPUS_TEST_MODEL").ok()?);
+    let (runtime, model) = model_files("HIPPOCAMPUS_TEST_MODEL", |store| {
+        let dir = store.model_dir(&cortex_embed::E5_SMALL);
+        dir.join("model.onnx").is_file().then_some(dir)
+    })?;
     cortex_embed::onnx::OnnxEmbedder::load(
         &runtime,
         &model,
@@ -714,8 +780,11 @@ fn real_embedder() -> Option<Box<dyn Embedder>> {
 
 /// The cross-encoder, when the machine has one.
 fn real_reranker() -> Option<Box<dyn cortex_embed::Reranker>> {
-    let runtime = PathBuf::from(std::env::var("HIPPOCAMPUS_TEST_RUNTIME").ok()?);
-    let model = PathBuf::from(std::env::var("HIPPOCAMPUS_TEST_RERANKER").ok()?);
+    let (runtime, model) = model_files("HIPPOCAMPUS_TEST_RERANKER", |store| {
+        store
+            .reranker_present(&cortex_embed::RERANKER)
+            .then(|| store.reranker_dir(&cortex_embed::RERANKER))
+    })?;
     cortex_embed::onnx::OnnxReranker::load(
         &runtime,
         &model,

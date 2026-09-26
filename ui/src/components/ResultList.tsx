@@ -10,12 +10,12 @@
  * The rows arrive in the order the daemon chose. This component never sorts.
  */
 
-import { memo, useLayoutEffect } from "react";
+import { memo, useLayoutEffect, type ReactNode } from "react";
 import { elideStart, fileUri, formatAge, formatSize } from "../format";
 import { useThumbnails } from "../hooks/useThumbnails";
 import { useVirtual } from "../hooks/useVirtual";
 import type { Row } from "../row";
-import { zoneBorder, zoneTint } from "../zone";
+import { zoneVars } from "../zone";
 
 export type ResultListProps = {
   rows: Row[];
@@ -41,6 +41,16 @@ export type ResultListProps = {
   zoneHues: Map<number, number>;
   emptyMessage: string;
   /**
+   * The glyph over the empty state, when there is an empty state to draw.
+   *
+   * The circle is the kit's (`EmptyState`, and `.hc-empty-mark` in app.css). Which glyph belongs in
+   * it depends on *why* the list is empty — a search that found nothing, a folder with nothing in
+   * it — and this component does not know that, so the caller passes it. Absent means no circle:
+   * a list that is loading and a share that did not answer are not empty states, and a glass circle
+   * over a diagnosis is decoration.
+   */
+  emptyIcon?: ReactNode;
+  /**
    * Every selected path, for dragging out of the window.
    *
    * Passed in rather than derived from `selected`, because deriving it would mean walking the
@@ -60,6 +70,7 @@ export function ResultList({
   visible: windowVisible,
   zoneHues,
   emptyMessage,
+  emptyIcon,
   selectedPaths,
 }: ResultListProps) {
   const virtual = useVirtual({ count: rows.length, rowHeight });
@@ -81,8 +92,14 @@ export function ResultList({
 
   if (rows.length === 0) {
     return (
+      // The kit's empty state: a glass circle with one glyph in it, and the sentence under it. The
+      // circle is `aria-hidden` in the icon itself — the state already says itself in words, and a
+      // screen reader announcing „open folder" before the sentence says nothing a person can act on.
       <div className="hc-empty" role="status">
-        {emptyMessage}
+        {emptyIcon !== undefined && (
+          <span className="hc-empty-mark glass glass-sheen">{emptyIcon}</span>
+        )}
+        <p>{emptyMessage}</p>
       </div>
     );
   }
@@ -164,8 +181,11 @@ const ListRow = memo(function ListRow({
       data-pinned={row.pinned ? "yes" : undefined}
       style={{
         height: rowHeight,
-        borderLeftColor: zoneBorder(hue),
-        background: selected ? zoneTint(hue) : undefined,
+        // The zone travels as data; every rule that paints it is in `app.css` (`zoneVars`). The
+        // three colours used to be written here as an inline `borderLeftColor` and `background`,
+        // which silently beat the row's own recipe: the selected row computed to
+        // `background: rgba(0, 0, 0, 0)` and the kit's fill never appeared.
+        ...zoneVars(hue),
       }}
       onMouseDown={(e) => {
         // `mousedown` rather than `click`: the input keeps focus, so typing continues to work
@@ -217,6 +237,10 @@ const ListRow = memo(function ListRow({
       {row.snippet && <span className="hc-row-snippet hc-meta">{row.snippet}</span>}
       <span className="hc-row-meta hc-meta">
         {!row.indexed && (
+          // „neu" says what the entry *is* rather than what it measures, but it stays here: the name
+          // element is what the window, the tests and a screen reader read as the name, and
+          // „neu content.png" is not one. It sits in front of the first fixed track, so it cannot
+          // move the columns behind it.
           <span className="hc-pill hc-unindexed" title="Der Index kennt diese Datei noch nicht">
             neu
           </span>
@@ -226,8 +250,20 @@ const ListRow = memo(function ListRow({
             {row.mode}
           </span>
         )}
-        <span className="hc-num">{row.isDir ? "" : formatSize(row.size)}</span>
-        <span className="hc-num">{formatAge(row.mtime)}</span>
+        {/* The three columns the header names, in the header's order and in the header's tracks
+            (`.hc-row-salience` / `-size` / `-age`, app.css). The salience cell used to be missing
+            entirely: the heading said „Salienz" while the first cell under it was the permission
+            string, so the column was a claim about a value that never arrived. */}
+        {typeof row.salience === "number" && (
+          <span className="hc-num hc-row-salience" title="Salienz">
+            {row.salience.toFixed(2)}
+          </span>
+        )}
+        {/* A directory has no size of its own in a listing; the dash is what this window puts where a
+            number cannot be had (`Rang —` in the inspector), so a blank cell is not mistaken for a
+            zero. */}
+        <span className="hc-num hc-row-size">{row.isDir ? "—" : formatSize(row.size)}</span>
+        <span className="hc-num hc-row-age">{formatAge(row.mtime)}</span>
       </span>
     </div>
   );

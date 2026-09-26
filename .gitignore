@@ -33,3 +33,7 @@ ui-agent/dist-demo/
 ui-agent/node_modules/
 ui-agent/dist/
 graph.json
+
+# Design inspiration: third-party pictures and a downloaded showcase whose licence is unknown.
+# The kit ported from it lives in ui/src; the originals stay on the machine they came to.
+ui/inspo/
