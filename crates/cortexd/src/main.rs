@@ -3,12 +3,15 @@
 //! Owns the index and serves every client over one Unix socket. See `docs/04-ARCHITECTURE.md`.
 
 mod activity;
+mod ask;
+mod curator;
 mod embed_stage;
 mod extract_stage;
 mod indexer;
 mod ingest;
 mod lock;
 mod operations;
+mod pulse;
 mod semantics;
 mod server;
 mod sync_stage;
@@ -132,6 +135,16 @@ fn main() -> Result<()> {
     // opposite requirements: perception must react within a debounce window, while extraction
     // is throttled to stay invisible. Sharing a thread would make the watcher wait behind a
     // deliberate pause.
+    // Content the current rules no longer allow is taken out on the next extraction pass — the
+    // deny-list may have grown since the last run, and nothing else would notice.
+    {
+        let extra = config.index.extra_deny.clone();
+        match store.requeue_unreadable(|p| cortex_core::denylist::classify(p, &extra).may_read_content()) {
+            Ok(0) => {}
+            Ok(n) => tracing::info!(files = n, "queued files whose content may no longer be read"),
+            Err(e) => tracing::warn!(error = %e, "could not check indexed content against the deny-list"),
+        }
+    }
     let extract_thread = {
         let stage = extract_stage::Extraction::new(
             store.clone(),

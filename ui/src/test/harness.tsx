@@ -19,6 +19,7 @@ import "../glass.css";
 import "../kit.css";
 import "../app.css";
 import "../shell.css";
+import "../brain.css";
 
 const params = new URLSearchParams(location.search);
 const HIT_COUNT = Number(params.get("hits") ?? "10000");
@@ -447,6 +448,9 @@ setTransport({
         return { outcome: "started", operation: 1, total_files: 2, total_bytes: 1000 } as T;
       }
       case "brain_graph": {
+        // A screenshot script may hand in a real snapshot; tests never do.
+        const handed = (window as unknown as { __hcGraph?: unknown }).__hcGraph;
+        if (handed) return handed as T;
         // A snapshot small enough to read and complete enough to draw: two files under a
         // directory, one concept, one memory, and the totals the view prints beside them.
         const node = (id: number, path: string | null, kind: string, salience: number) => ({
@@ -913,6 +917,73 @@ setTransport({
         } as T;
       case "brain_diff":
         return { changes: [], cursor: 1, more: false } as T;
+      case "brain_activity": {
+        // A pulse that moves: every call answers one more event than the last, so the live log,
+        // the heatmap and the sparks all have something to show and a test can wait for growth.
+        const w = window as unknown as HarnessWindow & { __hcPulse?: number };
+        const after = Number(args?.after ?? 0);
+        const seq = (w.__hcPulse = (w.__hcPulse ?? 3) + 1);
+        const now = Date.now();
+        const kinds = ["search", "read", "write", "search"];
+        const events = [];
+        for (let n = Math.max(after + 1, seq - 5); n <= seq; n++) {
+          events.push({
+            seq: n,
+            ts_ms: now - (seq - n) * 900,
+            actor: n % 3 === 0 ? "agent:hermes" : "agent:claude",
+            method: n % 4 === 2 ? "brain.remember" : "brain.ask",
+            kind: kinds[n % 4],
+            zone: n % 2 === 0 ? "Projects" : null,
+            hue: 210,
+            label: `Frage ${n}`,
+            paths: ["/home/user/Projects/parser.rs"],
+          });
+        }
+        return {
+          seq,
+          now_ms: now,
+          half_life_ms: 300000,
+          events,
+          zones: [{ zone: "Projects", hue: 210, reads: 6.2, writes: 1.4, heat: 9.0, last_ms: now }],
+          agents: [
+            { actor: "agent:claude", calls: 12, last_ms: now - 2000, last_method: "brain.ask" },
+            { actor: "agent:hermes", calls: 3, last_ms: now - 30000, last_method: "brain.context" },
+          ],
+          active_agents: 2,
+          calls: 15,
+        } as T;
+      }
+      case "brain_services":
+        return {
+          curator: { enabled: true, reachable: true, sleeping: true, model: "Qwen3-4B-Q4_K_M" },
+          backups: {
+            dir: "/home/user/.local/state/hippocampus/backups",
+            light: { count: 3, latest: null, latest_age_secs: 3600, latest_bytes: 3_200_000 },
+            full: { count: 1, latest: null, latest_age_secs: 86_000, latest_bytes: 2_100_000_000 },
+          },
+          federation: {
+            enabled: true,
+            transport: "plugin:main-brain",
+            pending: 0,
+            dead: 0,
+            last_sync_at: Math.floor(Date.now() / 1000) - 240,
+            last_error: null,
+            backoff_ms: 0,
+            basis: "syncing",
+          },
+        } as T;
+      case "store_backup":
+        return { skipped: false, kind: "light", path: "/tmp/x.db", bytes: 1, took_ms: 5, dir: "/tmp" } as T;
+      case "brain_ask":
+        return {
+          question: String(args?.question ?? ""),
+          answer: "Der Parser steht in [1].",
+          items: [
+            { kind: "file", path: "/home/user/Projects/parser.rs", memory_id: null, title: "parser.rs", why: "enthält den Parser", snippet: null, zone: "Projects" },
+          ],
+          curator: { mode: "model", model: "Qwen3-4B-Q4_K_M", note: null, candidates: 9, retrieval_ms: 80, model_ms: 900 },
+          text: "",
+        } as T;
       default:
         return null as T;
     }
@@ -969,5 +1040,6 @@ const at = params.get("at");
 // `?section=overview` starts on the start screen. The harness opens on the browser by default for
 // the same reason: it is what nearly every test here drives, and a summary in front of it would
 // be a summary every one of them began by leaving.
-const section: Section = params.get("section") === "overview" ? "overview" : "files";
+const section: Section =
+  params.get("section") === "overview" ? "overview" : params.get("section") === "brain" ? "brain" : "files";
 createRoot(root).render(<App startPath={at ?? undefined} startSection={section} />);

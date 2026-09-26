@@ -55,3 +55,16 @@ declare module "@agent-view/scene" {
     dispose(): void;
   }
 }
+
+declare module "@agent-view/brain3d" {
+  /** The live brain: renders on demand only — see `ui-agent/src/brain3d.ts`. */
+  export class Brain3D {
+    constructor(options: { container: HTMLElement; snapshot: unknown; onHover?: (zone: string | null) => void });
+    setHeat(zones: { zone: string; heat: number; reads: number; writes: number }[]): void;
+    pulse(event: { zone: string | null; kind: string; paths: string[] }): void;
+    setVisible(visible: boolean): void;
+    setAmbient(on: boolean): void;
+    readonly frames: number;
+    dispose(): void;
+  }
+}

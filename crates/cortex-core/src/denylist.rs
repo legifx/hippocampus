@@ -76,6 +76,12 @@ const BULKY_DIRS: &[&str] = &[
 /// Extensions that are compiled or otherwise opaque output.
 const BULKY_EXTENSIONS: &[&str] = &[
     "o", "a", "so", "dylib", "rlib", "pyc", "class", "wasm", "obj", "lib", "pdb",
+    // Data, not documents. A directory of benchmark results or training examples in JSON Lines
+    // is thousands of files of varied natural language, and a semantic index finds a little of
+    // every question in it: measured on a real workstation, such files took the first places
+    // for questions about projects they had nothing to do with. Their paths stay searchable.
+    "jsonl", "ndjson", "parquet", "arrow", "feather", "npy", "npz", "safetensors", "gguf", "onnx",
+    "pt", "ckpt",
 ];
 
 /// What the classifier is allowed to do with a path.

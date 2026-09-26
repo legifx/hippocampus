@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# hippocampus-curator — start the decision model behind `brain.ask`, sized to the machine.
+#
+# A llama.cpp `llama-server` on the loopback interface, OpenAI-compatible, that sleeps (unloads
+# the model) after a few idle minutes and wakes on the next request. So it costs memory only
+# while agents are asking, and nothing while they are not — the only way a resident language
+# model is acceptable on a desktop that also games and runs larger models.
+#
+# GPU or CPU is decided once, at start, from the free video memory: the whole model on the GPU
+# when it fits with headroom, otherwise the CPU. Never a partial offload — a model split between
+# the two is slower than either for prompt-heavy work like this one.
+#
+# Settings, all optional, from the environment or from $XDG_CONFIG_HOME/hippocampus/curator.conf
+# (shell syntax, KEY=value):
+#   HC_LLAMA_SERVER       path to llama-server            (default: the one on PATH)
+#   HC_CURATOR_MODEL      a .gguf file                    (default: $XDG_STATE_HOME/hippocampus/models/curator/model.gguf)
+#   HC_CURATOR_PORT       loopback port                   (default: 8091)
+#   HC_CURATOR_IDLE_SECS  unload after this idle time     (default: 300)
+#   HC_CURATOR_CTX        context size in tokens          (default: 6144)
+#   HC_CURATOR_THREADS    CPU threads                     (default: 6)
+#   HC_CURATOR_HEADROOM_MB  free VRAM required beyond the model's size for the GPU (default: 1500)
+#   HC_CURATOR_DEVICE     auto | gpu | cpu                (default: auto)
+set -euo pipefail
+
+conf="${XDG_CONFIG_HOME:-$HOME/.config}/hippocampus/curator.conf"
+# shellcheck disable=SC1090
+[[ -f "$conf" ]] && . "$conf"
+
+server="${HC_LLAMA_SERVER:-$(command -v llama-server || true)}"
+model="${HC_CURATOR_MODEL:-${XDG_STATE_HOME:-$HOME/.local/state}/hippocampus/models/curator/model.gguf}"
+port="${HC_CURATOR_PORT:-8091}"
+idle="${HC_CURATOR_IDLE_SECS:-300}"
+ctx="${HC_CURATOR_CTX:-6144}"
+threads="${HC_CURATOR_THREADS:-6}"
+headroom="${HC_CURATOR_HEADROOM_MB:-1500}"
+device="${HC_CURATOR_DEVICE:-auto}"
+
+[[ -x "$server" ]] || { echo "hippocampus-curator: no llama-server (set HC_LLAMA_SERVER)" >&2; exit 78; }
+[[ -r "$model" ]] || { echo "hippocampus-curator: no model at $model (set HC_CURATOR_MODEL)" >&2; exit 78; }
+
+size_mb=$(( $(stat -L -c %s "$model") / 1048576 ))
+free_mb=0
+if command -v nvidia-smi >/dev/null 2>&1; then
+  free_mb="$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -dc 0-9)"
+  free_mb="${free_mb:-0}"
+fi
+
+case "$device" in
+  gpu) ngl=99 ;;
+  cpu) ngl=0 ;;
+  *) if (( free_mb >= size_mb + headroom )); then ngl=99; else ngl=0; fi ;;
+esac
+echo "hippocampus-curator: model ${size_mb} MB, free VRAM ${free_mb} MB -> $([[ $ngl == 0 ]] && echo CPU || echo GPU)"
+
+exec "$server" \
+  -m "$model" \
+  --host 127.0.0.1 --port "$port" \
+  -c "$ctx" -ngl "$ngl" -t "$threads" \
+  --parallel 1 \
+  --sleep-idle-seconds "$idle" \
+  --reasoning-budget 0 \
+  --no-webui

@@ -73,6 +73,35 @@ enum Command {
         #[arg(long, default_value_t = 24)]
         hours: i64,
     },
+    /// Ask the curator where something is: the few paths and memories that answer a question,
+    /// each with a reason. What an agent gets from `brain_ask`.
+    Ask {
+        question: Vec<String>,
+        #[arg(short, long)]
+        limit: Option<usize>,
+        /// Retrieval and the cross-encoder only; do not ask the decision model.
+        #[arg(long)]
+        no_model: bool,
+    },
+    /// Back the store up while the daemon runs: `light` (the episode log and everything a
+    /// rebuild cannot reproduce, fast) or `--full` (the whole database, restorable by copying).
+    Backup {
+        #[arg(long)]
+        full: bool,
+        /// A word for the file name: boot, shutdown, manual.
+        #[arg(long)]
+        label: Option<String>,
+        #[arg(long)]
+        keep: Option<usize>,
+        /// Do nothing if the newest backup of this kind is younger than this many hours.
+        #[arg(long)]
+        if_older_than_hours: Option<u64>,
+    },
+    /// The live pulse: recent calls, the hottest zones, the busy agents.
+    Pulse {
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
     /// Search the index.
     Search {
         query: Vec<String>,
@@ -657,6 +686,97 @@ async fn run(args: Args) -> Result<()> {
                         "disabled"
                     }
                 );
+            }
+        }
+
+        Command::Ask { question, limit, no_model } => {
+            let question = question.join(" ");
+            if question.trim().is_empty() {
+                bail!("nothing to ask");
+            }
+            let result: cortex_rpc::protocol::AskResult = client
+                .call(
+                    method::BRAIN_ASK,
+                    cortex_rpc::protocol::AskParams {
+                        question,
+                        limit,
+                        use_model: Some(!no_model),
+                        session_id: None,
+                    },
+                )
+                .await?;
+            if args.json {
+                print_json(&result)?;
+            } else {
+                print!("{}", result.text);
+            }
+        }
+
+        Command::Backup { full, label, keep, if_older_than_hours } => {
+            let result: cortex_rpc::protocol::StoreBackupResult = client
+                .call(
+                    method::STORE_BACKUP,
+                    cortex_rpc::protocol::StoreBackupParams {
+                        kind: Some(if full { "full" } else { "light" }.to_string()),
+                        label,
+                        keep,
+                        if_older_than_secs: if_older_than_hours.map(|h| h * 3600),
+                    },
+                )
+                .await?;
+            if args.json {
+                print_json(&result)?;
+            } else if result.skipped {
+                println!("{} backup skipped: the newest in {} is recent enough", result.kind, result.dir);
+            } else {
+                println!(
+                    "{} backup {} ({}, {} ms)",
+                    result.kind,
+                    result.path.as_deref().unwrap_or("?"),
+                    human_bytes(result.bytes),
+                    result.took_ms
+                );
+                for (table, rows) in &result.rows {
+                    println!("  {table:<20} {rows}");
+                }
+                for old in &result.pruned {
+                    println!("  pruned {old}");
+                }
+            }
+        }
+
+        Command::Pulse { limit } => {
+            let result: cortex_rpc::protocol::BrainActivityResult = client
+                .call(
+                    method::BRAIN_ACTIVITY,
+                    cortex_rpc::protocol::BrainActivityParams { after: 0, limit: Some(limit) },
+                )
+                .await?;
+            if args.json {
+                print_json(&result)?;
+            } else {
+                println!("zones (heat, half-life {} min)", result.half_life_ms / 60_000);
+                for z in result.zones.iter().take(12) {
+                    println!("  {:<28} {:>6.1}  reads {:>5.1}  writes {:>5.1}", z.zone, z.heat, z.reads, z.writes);
+                }
+                println!("agents");
+                for a in &result.agents {
+                    let ago = (result.now_ms - a.last_ms) / 1000;
+                    println!("  {:<24} {:>4} calls  last {} {}s ago", a.actor, a.calls, a.last_method, ago);
+                }
+                println!("recent");
+                for e in &result.events {
+                    let ago = (result.now_ms - e.ts_ms) / 1000;
+                    println!(
+                        "  {:>5}s  {:<8} {:<16} {:<20} {:<18} {}",
+                        ago,
+                        e.kind,
+                        e.actor,
+                        e.method,
+                        e.zone.as_deref().unwrap_or("-"),
+                        e.label
+                    );
+                }
             }
         }
 

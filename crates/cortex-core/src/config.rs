@@ -16,6 +16,7 @@ pub struct Config {
     pub resources: ResourceConfig,
     pub agent: AgentConfig,
     pub federation: FederationConfig,
+    pub curator: CuratorConfig,
     pub log: LogConfig,
 }
 
@@ -28,6 +29,7 @@ impl Default for Config {
             resources: ResourceConfig::default(),
             agent: AgentConfig::default(),
             federation: FederationConfig::default(),
+            curator: CuratorConfig::default(),
             log: LogConfig::default(),
         }
     }
@@ -330,6 +332,55 @@ impl Default for FederationConfig {
     }
 }
 
+/// The curator behind `brain.ask`: a small language model that reads the candidates retrieval
+/// found and decides which of them answer the question.
+///
+/// Off by default (R4). Retrieval and the cross-encoder answer `brain.ask` without it; the model
+/// only chooses among what they already found and says why in a line. The endpoint is an
+/// OpenAI-compatible chat completion URL — in practice a local `llama-server` — and nothing else
+/// is ever called.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CuratorConfig {
+    pub enabled: bool,
+    /// `http://127.0.0.1:<port>/v1/chat/completions`. Must be a loopback address.
+    pub endpoint: String,
+    /// The model name sent in the request. Local servers usually ignore it.
+    pub model: String,
+    /// How long one decision may take before the ranked answer is returned instead.
+    pub timeout_ms: u64,
+    /// How many candidates the model is shown. Each costs roughly a hundred tokens of prompt.
+    pub candidates: usize,
+}
+
+impl Default for CuratorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            endpoint: "http://127.0.0.1:8091/v1/chat/completions".to_string(),
+            model: "curator".to_string(),
+            timeout_ms: 20_000,
+            candidates: 14,
+        }
+    }
+}
+
+impl CuratorConfig {
+    /// Loopback only: the curator reads snippets of private files, and a configuration that
+    /// pointed it at another machine would send them there.
+    pub fn endpoint_is_loopback(&self) -> bool {
+        let rest = self
+            .endpoint
+            .strip_prefix("http://")
+            .unwrap_or(self.endpoint.as_str());
+        if rest.starts_with("[::1]") {
+            return true;
+        }
+        let host = rest.split(['/', ':']).next().unwrap_or("");
+        matches!(host, "127.0.0.1" | "localhost")
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LogConfig {
@@ -371,6 +422,13 @@ impl Config {
     /// search returns nothing.
     pub fn validate(&self, path: &Path) -> Result<()> {
         let bad = |msg: String| Err(Error::config(path, msg));
+
+        if self.curator.enabled && !self.curator.endpoint_is_loopback() {
+            return bad(format!(
+                "curator.endpoint must be a loopback address (127.0.0.1, localhost or [::1]), not {:?}",
+                self.curator.endpoint
+            ));
+        }
 
         if !["auto", "cpu", "cuda"].contains(&self.embedding.device.as_str()) {
             return bad(format!(
@@ -497,6 +555,22 @@ impl Config {
     /// Serialise back to TOML, for `cortex config show` and for writing a starter file.
     pub fn to_toml(&self) -> String {
         toml::to_string_pretty(self).expect("Config is always serialisable")
+    }
+}
+
+#[cfg(test)]
+mod curator_tests {
+    use super::CuratorConfig;
+
+    #[test]
+    fn only_a_loopback_endpoint_is_a_curator() {
+        let at = |e: &str| CuratorConfig { endpoint: e.into(), ..CuratorConfig::default() };
+        assert!(at("http://127.0.0.1:8091/v1/chat/completions").endpoint_is_loopback());
+        assert!(at("http://localhost:8091/v1/chat/completions").endpoint_is_loopback());
+        assert!(at("http://[::1]:8091/v1/chat/completions").endpoint_is_loopback());
+        assert!(!at("http://example.com:8091/v1/chat/completions").endpoint_is_loopback());
+        assert!(!at("http://localhost.example.com/v1").endpoint_is_loopback());
+        assert!(!at("https://127.0.0.1.example.com/v1").endpoint_is_loopback());
     }
 }
 

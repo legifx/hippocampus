@@ -15,6 +15,7 @@ use cortex_ingest::throttle;
 use cortex_query::search;
 use cortex_query::PathIndex;
 use cortex_rpc::protocol::SearchUpdateParams;
+use cortex_rpc::protocol::BrainActivityParams;
 use cortex_rpc::protocol::{SyncNowResult, SyncReplayResult, SyncStatusResult};
 use cortex_rpc::protocol::{
     method, ActivityPingResult, AgentSetEnabledParams, AgentStatusResult, AuditRecentParams,
@@ -72,6 +73,8 @@ pub struct Daemon {
     pub shutdown: Arc<Notify>,
     /// The federation worker's handle (M7). Always present; usually off.
     pub federation: Arc<crate::sync_stage::Federation>,
+    /// The live pulse the Agent View draws: recent calls and zone heat, in memory only.
+    pub pulse: Arc<crate::pulse::Pulse>,
 }
 
 impl Daemon {
@@ -106,6 +109,7 @@ impl Daemon {
             trash,
             database_path,
             federation,
+            pulse: Arc::new(crate::pulse::Pulse::new()),
             started: Instant::now(),
             shutdown: Arc::new(Notify::new()),
         }
@@ -691,7 +695,18 @@ async fn dispatch(
     refinable: &mut Option<(search::Outcome, Refinement)>,
     ctx: &mut ConnCtx,
 ) -> Result<serde_json::Value, RpcError> {
+    // Kept for the pulse only when the pulse will look at it; the clone is of the request,
+    // which is small for every method the live view draws.
+    let for_pulse = params.clone();
     let answer = dispatch_inner(daemon, method, params, refinable, ctx).await;
+    daemon.pulse.record(
+        &daemon.store,
+        &ctx.actor.as_str(),
+        method,
+        answer.is_ok(),
+        for_pulse.as_ref(),
+        answer.as_ref().ok(),
+    );
 
     // Count it against the session, if this connection is working under one. Here rather than
     // in each handler for the obvious reason and one less obvious: a refusal never reaches a
@@ -1285,6 +1300,15 @@ async fn dispatch_inner(
             json(IndexSetPausedResult { paused: params.paused })
         }
 
+        method::BRAIN_ACTIVITY => {
+            let params: BrainActivityParams = params
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(|e| RpcError::invalid_params(e.to_string()))?
+                .unwrap_or_default();
+            json(daemon.pulse.snapshot(params.after, params.limit.unwrap_or(120).min(400)))
+        }
+
         method::AUDIT_RECENT => {
             let params: AuditRecentParams = params
                 .map(serde_json::from_value)
@@ -1740,6 +1764,235 @@ async fn dispatch_inner(
             json(pack)
         }
 
+        method::BRAIN_ASK => {
+            let params: cortex_rpc::protocol::AskParams = parse(params)?;
+            let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
+            let surface = surface(daemon, &ctx.actor, &auditor);
+            surface.gate("brain.ask").map_err(tool_error)?;
+            daemon.activity.ping();
+            let started = Instant::now();
+            let question = params.question.trim().to_string();
+            if question.is_empty() {
+                return Err(RpcError::invalid_params("question is empty"));
+            }
+            let limit = params.limit.unwrap_or(5).clamp(1, 12);
+
+            // What is *known* about the question: the memory arm of a context pack, without
+            // files — the files come from the search below, which reads their content.
+            let reader = surface.reader_scope(params.session_id.as_deref(), &[]);
+            let loaded = daemon.semantics.get();
+            let model = loaded.as_ref().map(|l| l.embedder.model());
+            let semantic = match (loaded.as_ref(), model.as_ref()) {
+                (Some(loaded), Some(model)) => Some(cortex_query::context::Semantic {
+                    embedder: loaded.embedder.as_ref(),
+                    memory_vectors: loaded.memory_vectors.as_ref(),
+                    model: cortex_store::embeddings::ModelRef {
+                        id: &model.id,
+                        version: &model.version,
+                        dim: model.dim,
+                    },
+                }),
+                _ => None,
+            };
+            let now = indexer::unix_now();
+            let pack = cortex_query::context::build(
+                cortex_query::context::ContextParams {
+                    store: &daemon.store,
+                    semantic,
+                    reader: &reader,
+                    task: &question,
+                    budget_tokens: 900,
+                    kinds: &[],
+                    include_files: false,
+                    include_history: false,
+                    now,
+                    candidates: cortex_query::context::DEFAULT_CANDIDATES,
+                    mmr_lambda: cortex_query::context::DEFAULT_LAMBDA,
+                    rrf_k: daemon.config.search.rrf_k,
+                    chars_per_token: cortex_core::tokens::CHARS_PER_TOKEN,
+                },
+                &pack_id(now, &ctx.actor, &question),
+            );
+            let mut candidates: Vec<crate::curator::Candidate> = pack
+                .items
+                .iter()
+                .filter(|i| i.kind.is_some())
+                .take(4)
+                .map(|i| crate::curator::Candidate {
+                    kind: "memory",
+                    path: i.path.as_ref().map(|p| p.display().to_string()),
+                    memory_id: Some(i.node_id),
+                    title: i.text.chars().take(60).collect(),
+                    snippet: Some(i.text.clone()),
+                    zone: None,
+                })
+                .collect();
+
+            // Where it is written down: files, by meaning and by words — bulk data dropped,
+            // one candidate per file — and, when the question names a project, that project's
+            // own documentation. Then one fused order; `ask.rs` says why each step exists.
+            let outcome = daemon.run_search(&SearchParams {
+                query: question.clone(),
+                mode: QueryMode::Auto,
+                limit: Some(60),
+                prefix: Some(false),
+                rerank: Some(false),
+            });
+            let zone_rows = daemon.store.zones().unwrap_or_default();
+            let zones: std::collections::HashMap<i64, String> = zone_rows
+                .iter()
+                .filter_map(|z| z.id.map(|id| (id.0, z.name.clone())))
+                .collect();
+            let zone_roots: Vec<(String, std::path::PathBuf)> =
+                zone_rows.iter().map(|z| (z.name.clone(), z.root_path.clone())).collect();
+            let named = crate::ask::named_zones(&question, &zone_roots);
+            let in_named = |path: &str| {
+                named.iter().any(|(_, root)| std::path::Path::new(path).starts_with(root))
+            };
+
+            let mut ranked: Vec<crate::ask::Ranked> = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            let mut position = 0usize;
+            for hit in outcome.hits {
+                let path = hit.path.display().to_string();
+                if crate::ask::is_bulk_for(&path, &question) || !seen.insert(path.clone()) {
+                    continue;
+                }
+                ranked.push(crate::ask::Ranked {
+                    in_named_zone: in_named(&path),
+                    retrieval: position,
+                    candidate: crate::curator::Candidate {
+                        kind: "file",
+                        title: hit
+                            .path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| path.clone()),
+                        path: Some(path),
+                        memory_id: None,
+                        snippet: hit.snippet.clone(),
+                        zone: hit.zone_id.and_then(|z| zones.get(&z.0).cloned()),
+                    },
+                });
+                position += 1;
+                if position >= 30 {
+                    break;
+                }
+            }
+            for (i, doc) in crate::ask::project_candidates(&question, &named, &seen)
+                .into_iter()
+                .enumerate()
+            {
+                ranked.push(crate::ask::Ranked { candidate: doc, retrieval: i, in_named_zone: true });
+            }
+            for (i, memory) in candidates.into_iter().enumerate() {
+                ranked.push(crate::ask::Ranked { candidate: memory, retrieval: 4 + i, in_named_zone: false });
+            }
+            let candidates = crate::ask::order(
+                &question,
+                ranked,
+                daemon.semantics.reranker().as_deref(),
+            );
+            let retrieval_ms = started.elapsed().as_millis() as u64;
+
+            let config = daemon.config.curator.clone();
+            let use_model = params.use_model.unwrap_or(true);
+            let asked = question.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                crate::curator::decide(&config, &asked, candidates, limit, use_model, retrieval_ms)
+            })
+            .await
+            .map_err(|e| RpcError::internal(format!("curator task failed: {e}")))?;
+
+            auditor.allowed(
+                indexer::unix_now(),
+                "brain.ask",
+                &serde_json::json!({ "question": question, "limit": limit }),
+                &format!(
+                    "{} items, {} mode, {} candidates, {} ms",
+                    result.items.len(),
+                    result.curator.mode,
+                    result.curator.candidates,
+                    result.curator.retrieval_ms + result.curator.model_ms
+                ),
+            );
+            json(result)
+        }
+
+        method::STORE_BACKUP => {
+            if matches!(ctx.actor, Actor::Agent(_)) {
+                return Err(RpcError::invalid_params(
+                    "store.backup is not an agent tool; a person or the system takes backups",
+                ));
+            }
+            let params: cortex_rpc::protocol::StoreBackupParams = params
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(|e| RpcError::invalid_params(e.to_string()))?
+                .unwrap_or_default();
+            let kind = match params.kind.as_deref().unwrap_or("light") {
+                "light" => cortex_store::backup::BackupKind::Light,
+                "full" => cortex_store::backup::BackupKind::Full,
+                other => {
+                    return Err(RpcError::invalid_params(format!(
+                        "kind must be light or full, not {other:?}"
+                    )))
+                }
+            };
+            let dir = daemon
+                .database_path
+                .parent()
+                .map(|p| p.join("backups"))
+                .unwrap_or_else(|| std::path::PathBuf::from("backups"));
+            if let Some(secs) = params.if_older_than_secs {
+                let newest = cortex_store::backup::existing(&dir, &kind).pop();
+                let young = newest
+                    .and_then(|p| std::fs::metadata(p).ok())
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.elapsed().ok())
+                    .is_some_and(|age| age.as_secs() < secs);
+                if young {
+                    return json(cortex_rpc::protocol::StoreBackupResult {
+                        skipped: true,
+                        kind: kind.as_str().to_string(),
+                        path: None,
+                        bytes: 0,
+                        rows: Vec::new(),
+                        pruned: Vec::new(),
+                        took_ms: 0,
+                        dir: dir.display().to_string(),
+                    });
+                }
+            }
+            let keep = params.keep.unwrap_or(match kind {
+                cortex_store::backup::BackupKind::Light => 20,
+                cortex_store::backup::BackupKind::Full => 2,
+            });
+            let stamp = time_stamp();
+            let started = Instant::now();
+            let store = daemon.store.clone();
+            let label = params.label.clone();
+            let target = dir.clone();
+            // A full backup writes the whole database; it must not hold a runtime thread.
+            let report = tokio::task::spawn_blocking(move || {
+                store.backup(&target, kind, &stamp, label.as_deref(), keep)
+            })
+            .await
+            .map_err(|e| RpcError::internal(format!("backup task failed: {e}")))?
+            .map_err(internal)?;
+            tracing::info!(path = %report.path.display(), bytes = report.bytes, "backup written");
+            json(cortex_rpc::protocol::StoreBackupResult {
+                skipped: false,
+                kind: report.kind.as_str().to_string(),
+                path: Some(report.path.display().to_string()),
+                bytes: report.bytes,
+                rows: report.rows,
+                pruned: report.pruned.iter().map(|p| p.display().to_string()).collect(),
+                took_ms: started.elapsed().as_millis() as u64,
+                dir: dir.display().to_string(),
+            })
+        }
+
         method::AGENT_SESSION_BEGIN => {
             let params: cortex_core::tools::SessionBeginParams = optional(params)?;
             let auditor = Auditor::new(daemon.store.clone(), &ctx.actor);
@@ -1774,6 +2027,57 @@ async fn dispatch_inner(
                     .sessions(&params)
                     .map_err(tool_error)?,
             )
+        }
+
+        method::BRAIN_SERVICES => {
+            use cortex_rpc::protocol::{
+                BackupKindState, BackupService, BrainServicesResult, CuratorService, FederationService,
+            };
+            let config = daemon.config.curator.clone();
+            let curator = tokio::task::spawn_blocking(move || crate::curator::health(&config))
+                .await
+                .unwrap_or(CuratorService { enabled: false, reachable: false, sleeping: None, model: None });
+
+            let dir = daemon
+                .database_path
+                .parent()
+                .map(|p| p.join("backups"))
+                .unwrap_or_else(|| std::path::PathBuf::from("backups"));
+            let state_of = |kind: cortex_store::backup::BackupKind| {
+                let all = cortex_store::backup::existing(&dir, &kind);
+                let latest = all.last().cloned();
+                let meta = latest.as_ref().and_then(|p| std::fs::metadata(p).ok());
+                BackupKindState {
+                    count: all.len(),
+                    latest: latest.map(|p| p.display().to_string()),
+                    latest_age_secs: meta
+                        .as_ref()
+                        .and_then(|m| m.modified().ok())
+                        .and_then(|t| t.elapsed().ok())
+                        .map(|d| d.as_secs()),
+                    latest_bytes: meta.map(|m| m.len()),
+                }
+            };
+            let backups = BackupService {
+                dir: dir.display().to_string(),
+                light: state_of(cortex_store::backup::BackupKind::Light),
+                full: state_of(cortex_store::backup::BackupKind::Full),
+            };
+
+            let s = daemon.federation.snapshot();
+            let counts = daemon.store.outbox_counts().map_err(internal)?;
+            let basis = crate::sync_stage::describe(&s);
+            let federation = FederationService {
+                enabled: s.enabled,
+                transport: s.transport.clone(),
+                pending: counts.pending as i64,
+                dead: counts.dead as i64,
+                last_sync_at: s.last_sync_at,
+                last_error: s.last_error.clone(),
+                backoff_ms: s.backoff_ms,
+                basis,
+            };
+            json(BrainServicesResult { curator, backups, federation })
         }
 
         method::SYNC_STATUS => {
@@ -2584,6 +2888,29 @@ fn optional<T: serde::de::DeserializeOwned + Default>(
 /// memories with their attribution. A default that filled a tenth of the window would be a
 /// default nobody leaves alone.
 const DEFAULT_CONTEXT_BUDGET: usize = 2_048;
+
+/// `YYYYmmdd-HHMMSS` in UTC, for backup file names: sortable, and the same on every machine.
+fn time_stamp() -> String {
+    let secs = indexer::unix_now();
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400);
+    // Civil from days (Howard Hinnant's algorithm), to avoid a date crate for one file name.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!(
+        "{y:04}{m:02}{d:02}-{:02}{:02}{:02}",
+        rem / 3_600,
+        (rem % 3_600) / 60,
+        rem % 60
+    )
+}
 
 /// A stable, readable identifier for one pack.
 ///

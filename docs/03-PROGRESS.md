@@ -1172,6 +1172,60 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
 
+### 2026-09-27 — The brain view, the curator, backups, and an index that was one third data
+
+The owner's brief: finish the explorer, make the agent half actually work, a second tab with the
+brain in 3D, live logs and a heatmap that cost nothing in the background, a local embedding plus a
+small decision model as curator (and an honest evaluation of whether that saves tokens), a robust
+load-aware pipeline to the Main Brain, backups at every boot and shutdown, and every harness on the
+machine told to use the brain. This entry is the Core half; the private half is in the Extension.
+
+**What was broken, found by looking rather than assumed.** The root disk was 100 % full (632 MB
+free) — `target/debug` alone was 79 GB of build cache; removed. Four sessions of work (2026-09-06 to
+09-17) sat uncommitted; tested (1095 Rust, 77 vitest) and committed as a checkpoint. The installed
+daemon was schema 9 against a schema-10 tree. The MCP server was *disabled* for the home directory
+in Claude Code and pointed at a build path, and no other harness had it at all — hence 0 agent
+sessions and 1 memory. The reranker had never been fetched. And a third of the index was data
+(D122).
+
+**Built.**
+- `brain.activity` — the live pulse (D119); `cortex pulse` prints it.
+- `brain.ask` / `brain_ask` / `cortex ask` — the curator (D120), with `[curator]` config (loopback
+  only), `scripts/hippocampus-curator` and `packaging/systemd/hippocampus-curator.service`.
+- `store.backup` / `cortex backup [--full]` — light and full backups with rotation (D121).
+- `brain.services` — curator awake/asleep, backup ages, federation state, for the status line.
+- Retrieval hygiene: data extensions metadata-only, start-up requeue of content the rules forbid,
+  entry files as project markers, every child of a projects folder a zone (D122).
+- The window: **Gehirn** as the rail's third destination (`BrainView.tsx`, `brain.css`,
+  `ui-agent/src/brain3d.ts`) — status line, 3D brain rendered on demand (D123), heatmap, agents,
+  live log, and a box to ask the curator. `hippocampus --brain` / `--files` open the window on a
+  section and toggle it away when it is already showing there.
+
+**The curator, measured** (12 questions, expected file named per question, `cortex ask`):
+
+| run | hit@1 | hit@3 | latency | answer size |
+|---|---|---|---|---|
+| ranked, before D122 fixes | 4/12 | 5/12 | 151 ms | ~370 tokens |
+| model (Qwen3-4B), before | 3/12 | 4/12 | 1157 ms | ~305 tokens |
+| ranked, after | 5/12 | 8/12 | 66 ms | ~341 tokens |
+| model, after | 6/12 | 7/12 | 1201 ms | ~259 tokens |
+
+Reading only the one right file by hand averages ~9 400 tokens on this set; an agent that greps
+first reads more. A `brain_ask` answer is ~260–340 tokens and names the file. So the token saving is
+real *when retrieval finds the file* — which is now two thirds of the time in the top three — and
+the model's contribution is a sentence of answer and a shorter list, not better recall. Idle cost:
+252 MB VRAM and ~0 CPU (the model unloads after five minutes); awake, ~3.5 GB VRAM for ~1.2 s per
+question. `run_eval.py` is not in the repository (the questions name private projects); the method
+is: `cortex --json ask` per question, compare the first item's path.
+
+**Evidence.** `cargo test --workspace` 1121 passed, 0 failed. `ui`: tsc clean, vitest 77 passed,
+Playwright 192 + 5 new (`tests/brain.spec.ts`: numbers as sent, log grows, curator from the window,
+polling stops when the view is left, 400 px without overflow).
+
+**Not done here, deliberately.** M12 steps 2–4 are untouched. The brain view's CPU cost in the real
+WebKitGTK window has not been measured yet — the snippet in "How to answer a report of slowness"
+is the way, with the view open and agents working.
+
 ### 2026-09-17 — M12 step 1: the origin is projected from the episode, and the red test was a test
 
 The session in the order the work demanded: the previous agent's two open problems first, then the

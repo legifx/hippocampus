@@ -1135,6 +1135,20 @@ export const ipc = {
 
   brainReport: () => transport.invoke<unknown>("brain_report"),
 
+  /** The live pulse: calls newer than `after`, zone heat, busy agents. */
+  brainActivity: (after = 0, limit = 120) =>
+    transport.invoke<BrainActivity>("brain_activity", { after, limit }),
+
+  /** The curator: the few paths and memories that answer a question. */
+  brainAsk: (question: string, limit = 6, useModel = true) =>
+    transport.invoke<AskResult>("brain_ask", { question, limit, useModel }),
+
+  /** The curator, the backups and federation in one answer. */
+  brainServices: () => transport.invoke<BrainServices>("brain_services"),
+
+  /** A backup now. Light unless `full`. */
+  storeBackup: (full = false) => transport.invoke<StoreBackupResult>("store_backup", { full }),
+
   startupReport: () => transport.invoke<StartupReport>("startup_report"),
 
   /** The reranked order, arriving after the answer it improves (D7). */
@@ -1150,6 +1164,113 @@ export const ipc = {
    */
   onWindowShown: (handler: () => void) => transport.listen("window:shown", () => handler()),
 
+  /** The launcher asked for a section while the window was hidden: show it there. */
+  onWindowSection: (handler: (section: string) => void) =>
+    transport.listen("window:section", (payload) => handler(String(payload))),
+
+  /** The launcher asked for a section while the window was showing: switch, or put it away. */
+  onWindowSectionToggle: (handler: (section: string) => void) =>
+    transport.listen("window:section-toggle", (payload) => handler(String(payload))),
+
   onDaemonUnavailable: (handler: (message: string) => void) =>
     transport.listen("daemon:unavailable", (payload) => handler(String(payload))),
 };
+
+// ---------------------------------------------------------------------------------------------
+// The brain view: live pulse, curator, services
+// ---------------------------------------------------------------------------------------------
+
+export interface PulseEvent {
+  seq: number;
+  ts_ms: number;
+  actor: string;
+  method: string;
+  kind: "read" | "search" | "write" | "refused" | string;
+  zone: string | null;
+  hue: number | null;
+  label: string;
+  paths: string[];
+}
+
+export interface ZoneHeat {
+  zone: string;
+  hue: number | null;
+  reads: number;
+  writes: number;
+  heat: number;
+  last_ms: number;
+}
+
+export interface AgentPulse {
+  actor: string;
+  calls: number;
+  last_ms: number;
+  last_method: string;
+}
+
+export interface BrainActivity {
+  seq: number;
+  now_ms: number;
+  half_life_ms: number;
+  events: PulseEvent[];
+  zones: ZoneHeat[];
+  agents: AgentPulse[];
+  active_agents: number;
+  calls: number;
+}
+
+export interface AskItem {
+  kind: "file" | "memory" | string;
+  path: string | null;
+  memory_id: number | null;
+  title: string;
+  why: string | null;
+  snippet: string | null;
+  zone: string | null;
+}
+
+export interface AskResult {
+  question: string;
+  answer: string | null;
+  items: AskItem[];
+  curator: {
+    mode: "model" | "ranked" | string;
+    model: string | null;
+    note: string | null;
+    candidates: number;
+    retrieval_ms: number;
+    model_ms: number;
+  };
+  text: string;
+}
+
+export interface BackupKindState {
+  count: number;
+  latest: string | null;
+  latest_age_secs: number | null;
+  latest_bytes: number | null;
+}
+
+export interface BrainServices {
+  curator: { enabled: boolean; reachable: boolean; sleeping: boolean | null; model: string | null };
+  backups: { dir: string; light: BackupKindState; full: BackupKindState };
+  federation: {
+    enabled: boolean;
+    transport: string;
+    pending: number;
+    dead: number;
+    last_sync_at: number | null;
+    last_error: string | null;
+    backoff_ms: number;
+    basis: string;
+  };
+}
+
+export interface StoreBackupResult {
+  skipped: boolean;
+  kind: string;
+  path: string | null;
+  bytes: number;
+  took_ms: number;
+  dir: string;
+}

@@ -34,6 +34,7 @@ import { ResultList } from "./components/ResultList";
 import { useOperations } from "./hooks/useOperations";
 import { useOverview } from "./hooks/useOverview";
 import { NavRail, type Section } from "./components/NavRail";
+import { BrainView } from "./components/BrainView";
 import { Overview } from "./components/Overview";
 import { useSelection } from "./hooks/useSelection";
 import { useView } from "./hooks/useView";
@@ -250,6 +251,11 @@ export function App({ startPath = START_PATH, startSection = "overview" }: AppPr
   // is a path inside the browser, not a destination of its own, and a rail that pretended
   // otherwise would be a second navigation model beside the one `useView` already is (M10).
   const [section, setSection] = useState<Section>(startSection);
+  /** Whether the brain view has been opened this session; it stays mounted afterwards. */
+  const [brainSeen, setBrainSeen] = useState(startSection === "brain");
+  useEffect(() => {
+    if (section === "brain") setBrainSeen(true);
+  }, [section]);
   // The window the numbers are read over. Held here rather than inside the start screen, because
   // the rail reads over the same one, and two places that each remembered a window would
   // eventually disagree about which one is on screen.
@@ -361,6 +367,33 @@ export function App({ startPath = START_PATH, startSection = "overview" }: AppPr
       unlisten?.();
     };
   }, [setQuery]);
+
+  // The launcher's section flags (`hippocampus --brain`, `--files`): see `lib.rs`.
+  const sectionRef = useRef(section);
+  sectionRef.current = section;
+  useEffect(() => {
+    let disposed = false;
+    const offs: (() => void)[] = [];
+    const known = (s: string): s is Section => s === "files" || s === "brain" || s === "overview";
+    ipc
+      .onWindowSection((next) => {
+        if (!disposed && known(next)) goSection(next);
+      })
+      .then((off) => (disposed ? off() : offs.push(off)))
+      .catch(() => {});
+    ipc
+      .onWindowSectionToggle((next) => {
+        if (disposed || !known(next)) return;
+        if (sectionRef.current === next) ipc.dismiss().catch(() => {});
+        else goSection(next);
+      })
+      .then((off) => (disposed ? off() : offs.push(off)))
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      offs.forEach((off) => off());
+    };
+  }, [goSection]);
 
   useEffect(() => {
     let disposed = false;
@@ -1232,7 +1265,14 @@ export function App({ startPath = START_PATH, startSection = "overview" }: AppPr
             it is where looking starts and a window that hid it would be a window you have to
             remember to type into (the first character typed leaves this screen — see `onChange`),
             and the notices below stay because they are about the daemon, not about a list. */}
-        {section === "overview" ? (
+        {/* Kept mounted once it has been shown: the scene inside costs a snapshot and a GPU
+            context to build, and `active` stops every frame and every poll while it is hidden. */}
+        {brainSeen && (
+          <div className="hc-brain-host" hidden={section !== "brain"}>
+            <BrainView active={section === "brain" && visible} />
+          </div>
+        )}
+        {section === "brain" ? null : section === "overview" ? (
           <Overview
             state={stats}
             windowSecs={windowSecs}

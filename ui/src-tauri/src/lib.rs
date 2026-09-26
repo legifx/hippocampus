@@ -248,6 +248,63 @@ async fn brain_diff(
         .await
 }
 
+/// The live pulse: recent calls, zone heat and busy agents, newer than `after`.
+#[tauri::command]
+async fn brain_activity(
+    state: tauri::State<'_, AppState>,
+    after: Option<u64>,
+    limit: Option<usize>,
+) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(
+            cortex_rpc::protocol::method::BRAIN_ACTIVITY,
+            json!({ "after": after.unwrap_or(0), "limit": limit }),
+        )
+        .await
+}
+
+/// The curator, asked by the person at the window rather than by an agent.
+#[tauri::command]
+async fn brain_ask(
+    state: tauri::State<'_, AppState>,
+    question: String,
+    limit: Option<usize>,
+    use_model: Option<bool>,
+) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(
+            cortex_rpc::protocol::method::BRAIN_ASK,
+            json!({ "question": question, "limit": limit, "use_model": use_model }),
+        )
+        .await
+}
+
+/// The curator, the backups and federation, for the brain view's status line.
+#[tauri::command]
+async fn brain_services(state: tauri::State<'_, AppState>) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(cortex_rpc::protocol::method::BRAIN_SERVICES, json!({}))
+        .await
+}
+
+/// A backup, now, at the person's request.
+#[tauri::command]
+async fn store_backup(
+    state: tauri::State<'_, AppState>,
+    full: Option<bool>,
+) -> Result<Value, BridgeError> {
+    state
+        .bridge
+        .call(
+            cortex_rpc::protocol::method::STORE_BACKUP,
+            json!({ "kind": if full.unwrap_or(false) { "full" } else { "light" }, "label": "manual" }),
+        )
+        .await
+}
+
 /// The last consolidation report, without running a pass.
 #[tauri::command]
 async fn brain_report(state: tauri::State<'_, AppState>) -> Result<Value, BridgeError> {
@@ -1168,8 +1225,25 @@ pub fn run() {
             // whereas a stray invocation — a shell completion, a script, a restart race —
             // otherwise puts a search box in front of whoever is sitting there. It cost an
             // interruption to learn that once.
+            // `--files`, `--brain`, `--overview`: which section the summon is for. Hidden, the
+            // window comes up there. Showing, the page decides — the same section again puts it
+            // away, another one switches to it — because only the page knows where it is.
+            let section = argv.iter().find_map(|a| match a.as_str() {
+                "--files" => Some("files"),
+                "--brain" => Some("brain"),
+                "--overview" => Some("overview"),
+                _ => None,
+            });
             if argv.iter().any(|a| a == "--hide") {
                 conceal(&window);
+            } else if let Some(section) = section {
+                if window.is_visible().unwrap_or(false) {
+                    let _ = window.emit("window:section-toggle", section);
+                    let _ = window.set_focus();
+                } else {
+                    let _ = window.emit("window:section", section);
+                    summon(&window, false);
+                }
             } else if argv.iter().any(|a| a == "--show" || a == "--toggle") {
                 summon(&window, argv.iter().any(|a| a == "--toggle"));
             } else {
@@ -1304,6 +1378,10 @@ pub fn run() {
             brain_graph,
             brain_diff,
             brain_report,
+            brain_activity,
+            brain_ask,
+            brain_services,
+            store_backup,
         ])
         .run(tauri::generate_context!())
         .expect("the overlay failed to start");

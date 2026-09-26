@@ -408,6 +408,40 @@ impl Store {
         )?)
     }
 
+    /// Queue again the files that still hold content the given rule no longer lets be read.
+    ///
+    /// The deny-list and the built-in bulky list can change between runs — a user adds a
+    /// pattern, an upgrade stops reading data files — and nothing about those files changes to
+    /// trigger a re-read, so their old chunks would stay searchable for ever. Put back to
+    /// `pending`, the extract stage classifies them again and, finding them metadata-only,
+    /// removes their content with them. Returns how many were queued.
+    pub fn requeue_unreadable(&self, may_read: impl Fn(&std::path::Path) -> bool) -> Result<usize> {
+        let stale: Vec<i64> = {
+            let conn = self.conn();
+            let mut stmt = conn.prepare(
+                "SELECT n.id, n.path FROM nodes n
+                 WHERE n.kind = 'file' AND n.path IS NOT NULL
+                   AND EXISTS (SELECT 1 FROM chunks c WHERE c.node_id = n.id)",
+            )?;
+            let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+            rows.filter_map(|r| r.ok())
+                .filter(|(_, path)| !may_read(std::path::Path::new(path)))
+                .map(|(id, _)| id)
+                .collect()
+        };
+        if stale.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "UPDATE nodes SET extract_state = 'pending', extract_note = NULL WHERE id = ?1",
+        )?;
+        for id in &stale {
+            stmt.execute([id])?;
+        }
+        Ok(stale.len())
+    }
+
     /// Rank chunks against a prepared FTS5 match expression.
     ///
     /// The expression is built by `cortex_query::lexical`, never by string-pasting user input:
@@ -839,6 +873,23 @@ mod tests {
             "an id that is no longer pending must drop out rather than be re-extracted"
         );
         assert!(store.pending_by_ids(&[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn content_the_rules_no_longer_allow_is_queued_for_removal_and_nothing_else_is() {
+        let (store, node) = store_with_file("results.jsonl");
+        store.replace_chunks(node, &[chunk(0, "a benchmark row")]).unwrap();
+        store.set_extract_state(node, ExtractState::Done, None).unwrap();
+        assert!(store.pending_extraction(10).unwrap().is_empty());
+
+        // A rule that still allows it queues nothing.
+        assert_eq!(store.requeue_unreadable(|_| true).unwrap(), 0);
+        // A rule that no longer does queues exactly that file.
+        let queued = store
+            .requeue_unreadable(|p| !p.to_string_lossy().ends_with(".jsonl"))
+            .unwrap();
+        assert_eq!(queued, 1);
+        assert_eq!(store.pending_extraction(10).unwrap().len(), 1);
     }
 
     #[test]

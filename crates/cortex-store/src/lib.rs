@@ -10,6 +10,7 @@
 //! transaction otherwise, and that barrier — not the work — dominates a large index run.
 
 pub mod agent;
+pub mod backup;
 pub mod chunks;
 pub mod embeddings;
 pub mod graph;

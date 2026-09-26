@@ -202,6 +202,12 @@
   --hc-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 
   --hc-accent-blue: #86aef0;
+  /* The brain view: a call that reads, one that writes, and the hippocampus they enter through.
+     The same three hues the 3D scene uses, so the legend and the sparks agree. */
+  --hc-brain-read: #62d5f0;
+  --hc-brain-write: #f5a94a;
+  --hc-brain-core: #4fd8c0;
+  --hc-brain-refused: #f06a6a;
   --hc-accent-blue-soft: rgba(134, 174, 240, 0.22);
   --hc-pink: #ff8fd0;
   --hc-danger: #f2555a;

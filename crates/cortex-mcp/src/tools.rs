@@ -434,6 +434,44 @@ pub const TOOLS: &[Tool] = &[
     // `brain_context` is deliberately first among these in the description an agent reads: it
     // is the tool to reach for at the start of a task, and every other one here exists so that
     // what it returns can be corrected, attributed or improved.
+    // The curator. Where `brain_context` hands over what is *known* before a task, this answers
+    // "where is X" in one call: retrieval, the cross-encoder and — when configured — a small
+    // local decision model that reads the candidates so the agent does not have to.
+    Tool {
+        name: "brain_ask",
+        method: method::BRAIN_ASK,
+        gated: false,
+        text_field: Some("text"),
+        description: "Ask where something is or what is known about it — a concept, a decision, \
+                      a log, a file, a project — and get back the few paths and memories that \
+                      answer it, each with a one-line reason, and a short answer when the index \
+                      contains one. Use this INSTEAD of grepping or reading files to find \
+                      things: one call replaces a search-and-read loop. Read the paths it names; \
+                      if it says nothing answers, search the files yourself.",
+        schema: || {
+            object(
+                json!({
+                    "question": {
+                        "type": "string",
+                        "description": "What you are looking for, as a sentence. Name the project if you know it."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "At most this many items. Default 5."
+                    },
+                    "use_model": {
+                        "type": "boolean",
+                        "description": "false = retrieval only, faster, without the decision model's reading."
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "From `agent_session_begin`, if you opened one."
+                    }
+                }),
+                &["question"],
+            )
+        },
+    },
     Tool {
         name: "brain_context",
         method: method::BRAIN_CONTEXT,
@@ -700,6 +738,9 @@ mod tests {
     /// while working from the CLI and the socket (second review of 2026-09-05, §3.2). So every
     /// method is either a tool or on this list, and a new one is neither until somebody decides.
     const NOT_A_TOOL: &[(&str, &str)] = &[
+        (method::BRAIN_SERVICES, "the window's status line; nothing in it helps an agent do a task"),
+        (method::STORE_BACKUP, "maintenance of the store itself; the daemon refuses it to agents"),
+        (method::BRAIN_ACTIVITY, "the live view's own feed of recent calls; an agent has `audit_recent` and `brain_diff`"),
         (method::PING, "transport plumbing; a client checks liveness through its own connection"),
         (method::STATUS, "the daemon's own dashboard; `brain_report` is what an agent should read"),
         (method::NODE_GET, "raw node record; `fs_stat` and `brain_explain` answer the agent's questions"),

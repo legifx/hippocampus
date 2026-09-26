@@ -12,6 +12,7 @@
  * - **Dateien** — the browser, which is what this window did before, unchanged. The places list is
  *   a path inside it rather than a third destination, because it always was one and a rail that
  *   said otherwise would be a second navigation model beside `useView` (M10).
+ * - **Gehirn** — the brain as the agents use it, live: 3D view, heatmap, live log, the curator.
  * - **Inspector** — the Agent Inspector, which used to be behind a keystroke.
  *
  * The counts beside them come from the same statistics call the start screen uses. They are
@@ -24,7 +25,7 @@
 import { formatSize } from "../format";
 import type { OverviewDaemon, OverviewIndex } from "../ipc";
 
-export type Section = "overview" | "files";
+export type Section = "overview" | "files" | "brain";
 
 /**
  * How long the daemon has been up, in the shortest form that is still honest.
@@ -128,6 +129,22 @@ export function NavRail({
       </button>
 
       <div className="hc-rail-group">Agenten</div>
+
+      {/* The brain as the agents use it, live: a destination of its own, because it is a whole
+          screen — the 3D brain, the heatmap, the live log and the curator — not a panel. */}
+      <button
+        type="button"
+        className={section === "brain" ? "hc-nav raised-flat" : "hc-nav"}
+        aria-current={section === "brain" ? "page" : undefined}
+        aria-label="Gehirn"
+        title="Gehirn — Agenten live (Mod+B)"
+        onClick={() => onSection("brain")}
+      >
+        <span className="hc-nav-glyph">
+          <Glyph name="brain" />
+        </span>
+        <span className="hc-nav-label">Gehirn</span>
+      </button>
 
       <button
         type="button"

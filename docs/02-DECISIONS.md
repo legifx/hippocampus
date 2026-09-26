@@ -3602,3 +3602,101 @@ here; when the detector lands it will write `untrusted` for the rows it actually
 at `untrusted` rather than `observation`. Then the column default, the backfill and
 `Origin::ceiling` all move down together, in one migration, and the canonical dump is what proves it
 moved.
+
+---
+
+### D119 — The live pulse is a view held in memory, not a table
+
+**Status:** ACCEPTED · 2026-09-27 · the brain view (Gehirn)
+
+The brain view needs what the index does not keep: the last few hundred calls in order, how hot
+each zone is *now*, and which agents are busy. `brain.activity` answers from `cortexd/src/pulse.rs`,
+a bounded ring (400 events) and per-zone read/write counters that halve every five minutes, filled
+from `dispatch` on every call except the window's own housekeeping (status, overview, zones,
+preview and thumbnail traffic). Nothing is written to the store: the audit log stays the record,
+and a pulse that could be needed by a rebuild would violate R2. `record` takes one short lock,
+walks at most 400 JSON values for paths and never touches the database — the zone table is copied
+in every two minutes and matched by longest prefix. A memory with no path is placed by its scope's
+project. Not an agent tool (`NOT_A_TOOL`): an agent has `audit_recent` and `brain_diff`.
+
+**Revisit if:** somebody wants the heatmap over days. That is a query over the audit log, not a
+longer ring.
+
+### D120 — `brain.ask`: a curator that chooses, measured before it was believed
+
+**Status:** ACCEPTED · 2026-09-27 · the curator
+
+`brain_ask(question)` answers "where is X / what is known about X" in one call: the memory arm of
+a context pack, a hybrid search, the named project's own documentation, one fused order
+(`cortexd/src/ask.rs`), and — when `[curator]` is enabled — a small local model behind a loopback
+OpenAI-compatible endpoint that picks the few candidates that answer and says why in a line
+(`cortexd/src/curator.rs`). The model may only choose: its output is constrained by a JSON schema,
+a number it invents is dropped, and a model that chooses nothing gets the ranked list back. Every
+failure (off, unreachable, slow, schema broken) degrades to the ranked order and says which.
+The endpoint must be loopback; the configuration refuses anything else.
+
+**What the first measurement said, and what changed because of it.** Twelve real questions about
+twelve real projects, each with the file a person would name as the answer. First run: the right
+file first **4/12** without the model and **3/12** with it. The model was not the problem: it was
+shown a tokeniser's calibration corpus, a third-party repository's training data in JSON Lines and
+voice-over scripts, because large varied text matches every question a little. Three changes —
+bulk data dropped from the candidates, a question that names a project gets that project's docs,
+memories must score like the third-best document to be shown — took it to **hit@3 8/12** ranked and
+**hit@1 6/12** with the model, answers now mostly right in substance. Numbers in `03-PROGRESS.md`.
+
+**Why a small local model and not the big one.** Qwen3-4B Q4_K_M on the GPU decides in ~1.0–1.5 s
+(2.4 GB weights, ~3.5 GB with context) and **unloads itself after five idle minutes**
+(`llama-server --sleep-idle-seconds`), leaving 252 MB of CUDA context; waking takes 0.7 s. The 27B
+model would decide better and cost the whole card while resident. The process, the choice of GPU
+or CPU at start, and the idle unload are `scripts/hippocampus-curator` and
+`packaging/systemd/hippocampus-curator.service`; which model is private configuration.
+
+**Revisit if:** the gold set grows past a dozen questions and the model's hit@1 stays level with
+the ranked order — then the model is paying for its one-line reasons only, and that may not be
+worth 3.5 GB of VRAM when awake.
+
+### D121 — Two backups, different in kind: light at every boot and shutdown, full once a day
+
+**Status:** ACCEPTED · 2026-09-27 · `store.backup`
+
+R2 makes the episode log the one thing a rebuild cannot reproduce. A **light** backup copies it and
+the handful of tables a person made by hand (`meta` with the sync origin, the audit log, the undo
+journal, notes, zones, sessions, packs) into a plain SQLite file — 3.2 MB in 78 ms on the owner's
+store — so it can run at every boot and every shutdown. A **full** backup is `VACUUM INTO`, a
+consistent copy of everything, restorable by copying it back; gigabytes, so at most daily. Both are
+written under a temporary name and renamed into place, and rotate per kind. `store.backup` is
+refused to agents.
+
+### D122 — Data files are metadata, and a projects folder's children are projects
+
+**Status:** ACCEPTED · 2026-09-27 · retrieval quality
+
+Measured on the owner's index: **75 316 of 206 469 chunks (36 %) came from `.jsonl` files** —
+benchmark results and training sets — and they took the first places for questions about projects
+they had nothing to do with. JSON Lines, Parquet, Arrow, NumPy, model weights and checkpoints are
+now `MetadataOnly` in the built-in list: their paths stay findable, their contents are not
+embedded. Because such a change touches files that did not change, the daemon now checks at start
+which indexed files still hold content the current rules forbid and queues them, so the extract
+stage removes it (`Store::requeue_unreadable`); the same happens when a user adds an `extra_deny`
+pattern.
+
+Zones followed the same lesson. Project markers were manifests (`.git`, `Cargo.toml`, …), and on a
+workstation where agents start most projects most of them have none — so a dozen projects shared
+the root's zone and a heatmap by zone painted them as one place. Entry files (`README.md`,
+`CLAUDE.md`, `AGENTS.md`, `PROGRESS.md`, `requirements.txt`, `setup.py`, `docs/`) are markers now,
+and a root with at least three direct project children is a projects folder in which every child
+directory is a zone.
+
+### D123 — The brain view renders on demand
+
+**Status:** ACCEPTED · 2026-09-27 · the brain view (Gehirn)
+
+D59 measured that any continuously running animation recomposites this window every frame, at up
+to a core. The brain view's scene (`ui-agent/src/brain3d.ts`) therefore has no render loop of its
+own: a frame is scheduled only while a spark is travelling (1.1 s per call), a glow is fading
+(0.7 s), the camera is moving or settling, or the optional rotation is on — capped at 30 frames a
+second, one draw call per layer, no post-processing. Idle and visible it draws nothing; hidden or
+in another section it schedules nothing and the view stops polling. The shape carries the model:
+the hippocampus at the centre is where every request enters, each zone owns a fixed region of the
+cortex (golden spiral in zone-id order), and a node's depth is its tier — Working near the
+hippocampus, Cold at the surface — so forgetting is movement outward.

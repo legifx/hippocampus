@@ -30,6 +30,8 @@ thiserror.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# The curator's one outbound call: a loopback chat-completion endpoint, when configured.
+ureq = { version = "3", features = ["json"] }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

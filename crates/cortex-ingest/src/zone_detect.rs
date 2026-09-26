@@ -32,6 +32,16 @@ const PROJECT_MARKERS: &[&str] = &[
     "flake.nix",
     "composer.json",
     "Gemfile",
+    // A project that is mostly prose, or Python without packaging, or a sketch an agent keeps
+    // notes for, has none of the above — and on a workstation where agents start most projects,
+    // that is most of them. Their entry files are markers just as much as a manifest is.
+    "README.md",
+    "CLAUDE.md",
+    "AGENTS.md",
+    "requirements.txt",
+    "setup.py",
+    "PROGRESS.md",
+    "docs",
 ];
 
 /// How deep below a configured root to look for project markers.
@@ -80,12 +90,28 @@ pub fn detect(roots: &[PathBuf], budget: usize) -> Vec<Zone> {
             push_unique(&mut found, &mut seen, Zone::derived(&area, name_for(&area), icon_for(&area)));
         }
 
-        for project in project_roots(root, PROJECT_SCAN_DEPTH) {
+        let projects = project_roots(root, PROJECT_SCAN_DEPTH);
+        for project in &projects {
             push_unique(
                 &mut found,
                 &mut seen,
-                Zone::derived(&project, name_for(&project), Some("project".to_string())),
+                Zone::derived(project, name_for(project), Some("project".to_string())),
             );
+        }
+
+        // A root whose children are mostly projects is a projects folder, and in a projects
+        // folder every child is a project — including the ones that carry no marker yet: a plan
+        // and a script, a research dump, a study. Without this they all share the root's zone,
+        // and a heatmap by zone paints them as one place.
+        let direct = projects.iter().filter(|p| p.parent() == Some(root.as_path())).count();
+        if direct >= 3 {
+            for child in plain_children(root) {
+                push_unique(
+                    &mut found,
+                    &mut seen,
+                    Zone::derived(&child, name_for(&child), Some("project".to_string())),
+                );
+            }
         }
     }
 
@@ -138,6 +164,25 @@ fn immediate_areas(root: &Path) -> Vec<PathBuf> {
         })
         .map(|e| e.path())
         .collect()
+}
+
+/// The directories directly under `root` that a walk would enter, in name order.
+fn plain_children(root: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut out: Vec<PathBuf> = entries
+        .flatten()
+        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .filter(|e| {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            !name.starts_with('.') && !denylist::should_skip_subtree(&name)
+        })
+        .map(|e| e.path())
+        .collect();
+    out.sort();
+    out
 }
 
 /// Directories within `depth` of `root` that look like project roots.
@@ -236,6 +281,37 @@ mod tests {
 
     fn roots_of(zones: &[Zone]) -> Vec<String> {
         zones.iter().map(|z| z.root_path.display().to_string()).collect()
+    }
+
+    #[test]
+    fn in_a_projects_folder_every_child_is_a_project_even_without_a_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        for (dir, marker) in [("a", ".git"), ("b", "Cargo.toml"), ("c", "README.md")] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+            std::fs::write(root.join(dir).join(marker), "").unwrap();
+        }
+        std::fs::create_dir_all(root.join("sketch")).unwrap();
+        std::fs::write(root.join("sketch/plan.txt"), "an idea").unwrap();
+        std::fs::create_dir_all(root.join(".hidden")).unwrap();
+
+        let roots = roots_of(&detect(&[root.to_path_buf()], 1000));
+        let has = |p: std::path::PathBuf| roots.contains(&p.display().to_string());
+        assert!(has(root.join("sketch")), "{roots:?}");
+        assert!(!has(root.join(".hidden")));
+    }
+
+    #[test]
+    fn two_projects_do_not_make_a_projects_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        for dir in ["a", "b"] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+            std::fs::write(root.join(dir).join("Cargo.toml"), "").unwrap();
+        }
+        std::fs::create_dir_all(root.join("music")).unwrap();
+        let roots = roots_of(&detect(&[root.to_path_buf()], 1000));
+        assert!(!roots.contains(&root.join("music").display().to_string()));
     }
 
     #[test]

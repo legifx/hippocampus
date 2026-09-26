@@ -289,6 +289,17 @@ pub mod method {
     pub const SYNC_STATUS: &str = "sync.status";
     pub const SYNC_NOW: &str = "sync.now";
     pub const SYNC_REPLAY: &str = "sync.replay";
+    /// The live pulse: what is being asked of and written to the brain right now, by whom, and
+    /// in which zone. In memory only and never persisted — a view, not a record (the audit log
+    /// is the record). Not an agent tool.
+    pub const BRAIN_ACTIVITY: &str = "brain.activity";
+    /// The curator: a question in, the few items that answer it out, chosen and — when a local
+    /// decision model is configured and reachable — explained in one line each.
+    pub const BRAIN_ASK: &str = "brain.ask";
+    /// A backup of the store, taken while the daemon runs. Refused to agents.
+    pub const STORE_BACKUP: &str = "store.backup";
+    /// The services around the brain in one answer: the curator, the backups, federation.
+    pub const BRAIN_SERVICES: &str = "brain.services";
 
     /// Every method this build serves. Used by `status` so a client can discover the surface.
     /// Methods that may be answered out of order, concurrently with each other.
@@ -336,6 +347,11 @@ pub mod method {
                 | AGENT_STATUS
                 | BRAIN_GRAPH
                 | BRAIN_REPORT
+                | BRAIN_ACTIVITY
+                | BRAIN_SERVICES
+                // The curator reads, and writes only the pack records `brain.context` writes,
+                // for the same reason that one is here: a slow model must not hold up a preview.
+                | BRAIN_ASK
                 | AUDIT_RECENT
                 | STATS_OVERVIEW
                 | FS_LIST
@@ -432,6 +448,10 @@ pub mod method {
         BRAIN_DIFF,
         BRAIN_RECALL,
         BRAIN_EXPLAIN,
+        BRAIN_ACTIVITY,
+        BRAIN_ASK,
+        STORE_BACKUP,
+        BRAIN_SERVICES,
     ];
 }
 
@@ -1188,4 +1208,215 @@ pub struct SyncNowResult {
 pub struct SyncReplayResult {
     pub replaying: bool,
     pub basis: String,
+}
+
+// ---------------------------------------------------------------------------------------------
+// brain.activity — the live pulse
+// ---------------------------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BrainActivityParams {
+    /// Only events with a larger sequence number. `0` asks for the recent tail.
+    #[serde(default)]
+    pub after: u64,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+/// One call, as the live view draws it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PulseEvent {
+    pub seq: u64,
+    pub ts_ms: i64,
+    /// `human`, `agent:<name>`, `system` or `unknown`.
+    pub actor: String,
+    pub method: String,
+    /// `read`, `search`, `write` or `refused`.
+    pub kind: String,
+    /// The zone the call touched most, by name; absent when it touched no indexed place.
+    pub zone: Option<String>,
+    pub hue: Option<u16>,
+    /// A short human-readable line: the query, the task, the memory's first words, a file name.
+    pub label: String,
+    /// Up to a handful of the paths the call was about, for the scene to light up.
+    pub paths: Vec<String>,
+}
+
+/// How much a zone is being asked about and written to, decayed over time.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ZoneHeat {
+    pub zone: String,
+    pub hue: Option<u16>,
+    pub reads: f64,
+    pub writes: f64,
+    /// `reads + 2 * writes`, the number the heatmap sorts and colours by.
+    pub heat: f64,
+    pub last_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentPulse {
+    pub actor: String,
+    /// Calls inside the heat window.
+    pub calls: u64,
+    pub last_ms: i64,
+    pub last_method: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrainActivityResult {
+    /// The newest sequence number; pass it back as `after`.
+    pub seq: u64,
+    pub now_ms: i64,
+    /// The half-life the heat decays with, so a client can extrapolate between polls.
+    pub half_life_ms: i64,
+    pub events: Vec<PulseEvent>,
+    /// Hottest first.
+    pub zones: Vec<ZoneHeat>,
+    /// Most recently active first.
+    pub agents: Vec<AgentPulse>,
+    /// Agents (not the person, not the system) with a call inside the window.
+    pub active_agents: usize,
+    /// Calls by everybody inside the window.
+    pub calls: u64,
+}
+
+// ---------------------------------------------------------------------------------------------
+// brain.ask — the curator
+// ---------------------------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AskParams {
+    /// What the agent wants to find: a concept, a log, a decision, a file. A sentence works best.
+    pub question: String,
+    /// At most this many items come back. Default 5.
+    #[serde(default)]
+    pub limit: Option<usize>,
+    /// `false` skips the decision model even when one is configured: retrieval and the
+    /// cross-encoder alone, in a few hundred milliseconds.
+    #[serde(default)]
+    pub use_model: Option<bool>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+}
+
+/// One thing the curator chose.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AskItem {
+    /// `file` or `memory`.
+    pub kind: String,
+    pub path: Option<String>,
+    pub memory_id: Option<i64>,
+    /// The file name, or the memory's first words.
+    pub title: String,
+    /// Why it answers the question, in the decision model's words; absent in ranked mode.
+    pub why: Option<String>,
+    /// The passage that matched, shortened.
+    pub snippet: Option<String>,
+    pub zone: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CuratorInfo {
+    /// `model` when the decision model chose, `ranked` when retrieval order stands.
+    pub mode: String,
+    pub model: Option<String>,
+    /// Why the model was not used, when it was not.
+    pub note: Option<String>,
+    pub candidates: usize,
+    pub retrieval_ms: u64,
+    pub model_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AskResult {
+    pub question: String,
+    /// One to three sentences, when the decision model could answer from the candidates.
+    pub answer: Option<String>,
+    pub items: Vec<AskItem>,
+    pub curator: CuratorInfo,
+    /// The same, as the block an agent reads. What `brain_ask` returns as its text.
+    pub text: String,
+}
+
+// ---------------------------------------------------------------------------------------------
+// store.backup
+// ---------------------------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StoreBackupParams {
+    /// `light` (the default) or `full`.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// A word saying why: `boot`, `shutdown`, `manual`. Part of the file name.
+    #[serde(default)]
+    pub label: Option<String>,
+    /// Keep this many of the kind, newest first. Default 20 light, 2 full.
+    #[serde(default)]
+    pub keep: Option<usize>,
+    /// Skip, and say so, when the newest backup of this kind is younger than this.
+    #[serde(default)]
+    pub if_older_than_secs: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoreBackupResult {
+    pub skipped: bool,
+    pub kind: String,
+    pub path: Option<String>,
+    pub bytes: u64,
+    pub rows: Vec<(String, i64)>,
+    pub pruned: Vec<String>,
+    pub took_ms: u64,
+    pub dir: String,
+}
+
+// ---------------------------------------------------------------------------------------------
+// brain.services
+// ---------------------------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CuratorService {
+    pub enabled: bool,
+    /// The endpoint answered its health check.
+    pub reachable: bool,
+    /// The model is unloaded and will load on the next question (llama.cpp's idle sleep).
+    pub sleeping: Option<bool>,
+    /// The model file's name, when the server says.
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupKindState {
+    pub count: usize,
+    pub latest: Option<String>,
+    pub latest_age_secs: Option<u64>,
+    pub latest_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupService {
+    pub dir: String,
+    pub light: BackupKindState,
+    pub full: BackupKindState,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FederationService {
+    pub enabled: bool,
+    pub transport: String,
+    pub pending: i64,
+    pub dead: i64,
+    pub last_sync_at: Option<i64>,
+    pub last_error: Option<String>,
+    pub backoff_ms: u64,
+    /// One sentence: is it syncing, and if not, why not.
+    pub basis: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrainServicesResult {
+    pub curator: CuratorService,
+    pub backups: BackupService,
+    pub federation: FederationService,
 }

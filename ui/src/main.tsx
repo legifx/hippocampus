@@ -6,6 +6,7 @@ import "./glass.css";
 import "./kit.css";
 import "./app.css";
 import "./shell.css";
+import "./brain.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("the document has no #root to mount into");
