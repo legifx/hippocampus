@@ -1292,7 +1292,7 @@ export function App({ startPath = START_PATH, startSection = "overview" }: AppPr
           />
         ) : (
           <>
-        <div className="hc-column">
+        <div className="hc-column hc-section-enter">
           {/* What this list is, in the daemon's words.
             *
             * Only for the places the index made. A directory's basis says how many entries it

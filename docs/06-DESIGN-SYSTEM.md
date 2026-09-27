@@ -302,3 +302,20 @@ is `ui/tests/materials.spec.ts`.
 **Two shapes to keep.** A card is a panel with a header and a body — the header says what the card
 is about, the body holds at most one list or one bar. And a chip is a state, not a number: it is
 read at a glance and never the only thing that carries its meaning.
+## §10 Liquid (D125, 2026-09-27)
+
+The owner's brief after the brain view landed: "still very monotonous and ugly — liquid glass,
+small animations, minimalist". Implemented as one layer, `ui/src/liquid.css`, loaded last, with its
+values in `tokens.css` §2c. It changes surfaces and motion, not layout decisions the tests measure.
+
+| | what | why |
+|---|---|---|
+| Canvas | `--hc-canvas` plus four static radial glows (`--hc-glow-1…4`) on `.hc-overlay` | glass needs something behind it; painted once, never moves (D114) |
+| Islands | rail, search field, list, preview, side panel, cards, brain panels: translucent fill lightening to the top, rim light, dark lower seam, soft drop (`--hc-lq-*`); gaps instead of hairlines | the showcase's material, without `backdrop-filter` (§8.1) |
+| Pills | nav, buttons, segmented thumbs: convex gradient with a bright top rim | the showcase's "liquid" controls |
+| Active place | one `.hc-nav-pill` with a shared framer-motion `layoutId`, sliding between destinations | the one continuous motion, and only on a click |
+| Accents | a free-standing bar or a dot, never a left border on a rounded box (the radius bent those into brackets) | |
+| Status | tinted chips (`--hc-tint-*`) for on/warn/off | as in the showcase |
+| Sheets | the inspector is opaque (`--hc-lq-fill-solid`, alpha 1) — even 1.6 % transparency showed the list through | |
+| Motion | one-shot only: sections rise (`hc-rise`), the file list fades, sheets slide in, rows and cards light on hover, presses sink to 0.96; `prefers-reduced-motion` turns all of it off, a hidden window already has `animation: none` | D59 — nothing loops |
+| Rows | one line: name, folder (faint, gives way first), numbers (give way last, from the left) | two stacked lines in a 28 px row overlapped |

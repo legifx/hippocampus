@@ -116,7 +116,7 @@ export function ContextSidebar({
   if (!hit) {
     return (
       <aside className="hc-context glass-flat" aria-label="Kontext">
-        <p className="hc-faint">Nichts ausgewählt</p>
+        <p className="hc-faint hc-empty-note">Nichts ausgewählt</p>
       </aside>
     );
   }

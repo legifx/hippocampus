@@ -20,6 +20,7 @@ import "../kit.css";
 import "../app.css";
 import "../shell.css";
 import "../brain.css";
+import "../liquid.css";
 
 const params = new URLSearchParams(location.search);
 const HIT_COUNT = Number(params.get("hits") ?? "10000");

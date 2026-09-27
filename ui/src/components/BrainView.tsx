@@ -241,8 +241,8 @@ export function BrainView({ active }: { active: boolean }) {
   const light = services?.backups.light;
 
   return (
-    <section className="hc-brain" aria-label="Gehirn">
-      <header className="hc-brain-status glass glass-flat">
+    <section className="hc-brain hc-section-enter" aria-label="Gehirn">
+      <header className="hc-brain-status glass glass-flat" style={{ ["--i" as string]: 0 }}>
         <span className="hc-brain-stat">
           <strong>{activity?.active_agents ?? 0}</strong> Agenten aktiv
         </span>
@@ -283,7 +283,7 @@ export function BrainView({ active }: { active: boolean }) {
         </div>
 
         <aside className="hc-brain-side">
-          <section className="hc-brain-card glass glass-flat" aria-label="Heatmap">
+          <section className="hc-brain-card glass glass-flat" aria-label="Heatmap" style={{ ["--i" as string]: 1 }}>
             <h3>Heatmap <span className="hc-meta">— Themenbereiche jetzt</span></h3>
             {zones.length === 0 ? (
               <p className="hc-meta">Gerade fragt niemand etwas. Jeder Zugriff eines Agenten erscheint hier.</p>
@@ -310,7 +310,7 @@ export function BrainView({ active }: { active: boolean }) {
             )}
           </section>
 
-          <section className="hc-brain-card glass glass-flat" aria-label="Agenten">
+          <section className="hc-brain-card glass glass-flat" aria-label="Agenten" style={{ ["--i" as string]: 2 }}>
             <h3>Agenten</h3>
             {agents.length === 0 ? (
               <p className="hc-meta">Keiner in den letzten zehn Minuten.</p>
@@ -329,7 +329,7 @@ export function BrainView({ active }: { active: boolean }) {
             )}
           </section>
 
-          <section className="hc-brain-card hc-brain-log glass glass-flat" aria-label="Live-Log">
+          <section className="hc-brain-card hc-brain-log glass glass-flat" aria-label="Live-Log" style={{ ["--i" as string]: 3 }}>
             <h3>Live-Log</h3>
             {log.length === 0 ? (
               <p className="hc-meta">Noch nichts seit dem Öffnen.</p>
@@ -352,7 +352,7 @@ export function BrainView({ active }: { active: boolean }) {
         </aside>
       </div>
 
-      <section className="hc-brain-ask glass glass-flat" aria-label="Das Gehirn fragen">
+      <section className="hc-brain-ask glass glass-flat" aria-label="Das Gehirn fragen" style={{ ["--i" as string]: 4 }}>
         <form
           onSubmit={(e) => {
             e.preventDefault();

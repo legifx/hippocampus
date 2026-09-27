@@ -22,7 +22,9 @@
  * a rail whose icons come from somewhere else is a rail that breaks when that somewhere does.
  */
 
+import { motion } from "framer-motion";
 import { formatSize } from "../format";
+import { kitSpring } from "../motion";
 import type { OverviewDaemon, OverviewIndex } from "../ipc";
 
 export type Section = "overview" | "files" | "brain";
@@ -105,10 +107,11 @@ export function NavRail({
           raise is what the places column puts on the place you are in. */}
       <button
         type="button"
-        className={section === "overview" ? "hc-nav raised-flat" : "hc-nav"}
+        className="hc-nav"
         aria-current={section === "overview" ? "page" : undefined}
         onClick={() => onSection("overview")}
       >
+        {section === "overview" && <motion.span layoutId="hc-nav-pill" className="hc-nav-pill" transition={kitSpring("spring")} />}
         <span className="hc-nav-glyph">
           <Glyph name="grid" />
         </span>
@@ -117,10 +120,11 @@ export function NavRail({
 
       <button
         type="button"
-        className={section === "files" ? "hc-nav raised-flat" : "hc-nav"}
+        className="hc-nav"
         aria-current={section === "files" ? "page" : undefined}
         onClick={() => onSection("files")}
       >
+        {section === "files" && <motion.span layoutId="hc-nav-pill" className="hc-nav-pill" transition={kitSpring("spring")} />}
         <span className="hc-nav-glyph">
           <Glyph name="folder" />
         </span>
@@ -134,12 +138,13 @@ export function NavRail({
           screen — the 3D brain, the heatmap, the live log and the curator — not a panel. */}
       <button
         type="button"
-        className={section === "brain" ? "hc-nav raised-flat" : "hc-nav"}
+        className="hc-nav"
         aria-current={section === "brain" ? "page" : undefined}
         aria-label="Gehirn"
         title="Gehirn — Agenten live (Mod+B)"
         onClick={() => onSection("brain")}
       >
+        {section === "brain" && <motion.span layoutId="hc-nav-pill" className="hc-nav-pill" transition={kitSpring("spring")} />}
         <span className="hc-nav-glyph">
           <Glyph name="brain" />
         </span>

@@ -3714,3 +3714,20 @@ the model unit on an internal port; the model unit is `StopWhenUnneeded` and bec
 once `/health` answers, so no request is forwarded to a port nobody listens on. After five idle
 minutes the proxy exits and the model unit stops with it: **idle cost zero RAM, zero VRAM, zero
 CPU**. The price is a cold start: the first question after a pause took 2.9 s instead of 1.6 s.
+
+### D125 — Liquid: a lit canvas and glass islands, revising D115
+
+**Status:** ACCEPTED · 2026-09-27 · revises D115 (the flat canvas)
+
+D115 kept the canvas flat because the kit's coloured backdrop "cost the minimalism". The owner's
+verdict on the result was that the window is monotonous and ugly, and asked explicitly for liquid
+glass. The measured reason is on the same page as D115: glass on a flat background has nothing to
+be glass over, so every surface read as a slightly lighter grey rectangle. The canvas is now lit by
+four soft glows — static, so D114's objection (a drifting canvas cost four composited layers and
+12 fps) does not apply: it is painted once. Surfaces became islands with gaps between them, the
+active destination is one sliding pill, and all motion is one-shot. Details and the token table:
+`06-DESIGN-SYSTEM.md` §10. Evidence: vitest 77, Playwright 194/194 twice in a row, perf suite 16/16.
+
+Three bugs fell out of the redesign and are fixed with it: two-line result rows overlapping in a
+28 px row, left-border accents bent into brackets by the row radius, and an inspector that showed
+the window through it.

@@ -26,7 +26,7 @@ export function PreviewPane({ hit }: { hit: SearchHit | null }) {
   if (!hit) {
     return (
       <section className="hc-preview glass-flat" aria-label="Vorschau">
-        <p className="hc-faint">Nichts ausgewählt</p>
+        <p className="hc-faint hc-empty-note">Nichts ausgewählt</p>
       </section>
     );
   }
@@ -53,7 +53,7 @@ export function PreviewPane({ hit }: { hit: SearchHit | null }) {
 export function PreviewBody({ state }: { state: PreviewState }) {
   switch (state.kind) {
     case "idle":
-      return <p className="hc-faint">Nichts ausgewählt</p>;
+      return <p className="hc-faint hc-empty-note">Nichts ausgewählt</p>;
     case "loading":
       return <p className="hc-faint">…</p>;
     case "text":

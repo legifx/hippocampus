@@ -1,0 +1,599 @@
+/*
+ * Liquid — the look the owner asked for on 2026-09-27: liquid glass, minimalist, small animations
+ * (D125). Loaded after every other stylesheet; it restyles surfaces and motion and changes no
+ * layout decision the tests measure (400 px without overflow, the list's windowing, the rail).
+ *
+ * Three layers:
+ *   1. A lit canvas. Three soft glows behind everything, painted once and never moved (D114): the
+ *      reason the old window looked like grey paper is that glass on a flat background has nothing
+ *      to be glass *over*.
+ *   2. Islands. Rail, header, list, preview and side panel float on the canvas with gaps instead of
+ *      hairlines between them; each is a glass surface — a translucent fill that lightens towards
+ *      the top, a rim of light along its upper edge, a dark seam along the lower, a soft drop.
+ *   3. Motion. Only one-shot transitions: a surface rises in when it appears, a press sinks, a
+ *      hover lights, the active place slides. Nothing loops (D59), everything is off when the window
+ *      is hidden (`[data-visible="no"]` in app.css) and for a person who asked for reduced motion.
+ *
+ * §8 of the design system still holds: no `backdrop-filter` on islands (the canvas is soft enough
+ * that a translucent fill reads as frosted without blurring anything), and no `box-shadow` on
+ * anything that repeats per row.
+ */
+
+/* ------------------------------------------------------------------ 1. canvas */
+
+.hc-overlay {
+  background:
+    radial-gradient(52% 46% at 6% -6%, var(--hc-glow-1), transparent 72%),
+    radial-gradient(44% 42% at 104% 12%, var(--hc-glow-2), transparent 70%),
+    radial-gradient(62% 54% at 58% 112%, var(--hc-glow-3), transparent 72%),
+    radial-gradient(40% 50% at 45% 45%, var(--hc-glow-4), transparent 75%),
+    var(--hc-canvas);
+  border: 1px solid var(--hc-lq-edge);
+  column-gap: 10px;
+  padding: 10px;
+}
+
+/* The heartbeat stays — it is how the window says the daemon is indexing (D59: it animates only
+   then) — and takes the canvas's own light instead of a grey wash. */
+.hc-breath {
+  background: radial-gradient(70% 120% at 50% -40%, var(--hc-glow-1), transparent 70%);
+  opacity: 0.35;
+}
+
+/* ------------------------------------------------------------------ 2. islands */
+
+.hc-rail,
+.hc-field.gi,
+.hc-column,
+.hc-preview,
+.hc-context,
+.hc-card,
+.hc-tile,
+.hc-brain-status,
+.hc-brain-card,
+.hc-brain-ask,
+.hc-brain-stage,
+.hc-ov-hero {
+  background: linear-gradient(180deg, var(--hc-lq-fill-hi), var(--hc-lq-fill) 38%, var(--hc-lq-fill));
+  border: 1px solid var(--hc-lq-edge);
+  box-shadow:
+    inset 0 1px 0 var(--hc-lq-rim),
+    inset 0 -1px 0 var(--hc-lq-rim-bottom),
+    var(--hc-lq-shadow);
+  border-radius: var(--hc-radius-panel);
+}
+
+.hc-rail {
+  border-right: 1px solid var(--hc-lq-edge);
+  padding: 16px 10px 12px;
+  border-radius: 22px;
+}
+
+.hc-head {
+  border-bottom: 0;
+  padding: 0 2px 10px 0;
+}
+
+.hc-field.gi {
+  border-radius: 999px;
+  padding-inline: 0.35em;
+  min-height: 2.6em;
+}
+
+.hc-body {
+  column-gap: 10px;
+}
+
+.hc-column {
+  overflow: hidden;
+}
+
+.hc-preview,
+.hc-context {
+  border-left: 1px solid var(--hc-lq-edge);
+}
+
+.hc-preview-head,
+.hc-inspector-head {
+  border-bottom: 1px solid var(--hc-lq-edge);
+}
+
+.hc-brain-stage {
+  background: radial-gradient(80% 70% at 50% 45%, var(--hc-lq-fill-hi), transparent 70%), var(--hc-scene-void);
+}
+
+/* The inspector is a sheet over the window, not a pane beside it: it needs an opaque body, or the
+   list underneath shows through it (it did — the fill was the 6 % glass fill with no blur). */
+.hc-inspector,
+.hc-inspector.glass,
+.hc-inspector.glass-strong {
+  background:
+    radial-gradient(60% 40% at 100% 0%, var(--hc-glow-1), transparent 70%),
+    var(--hc-lq-fill-solid);
+  border: 1px solid var(--hc-lq-edge);
+  box-shadow: inset 0 1px 0 var(--hc-lq-rim), var(--hc-lq-sheet-drop);
+}
+.hc-inspector-head {
+  background: transparent;
+  padding: 12px 16px;
+}
+.hc-inspector-body code {
+  color: var(--hc-lq-accent);
+}
+
+/* ------------------------------------------------------------------ the search pill */
+
+.hc-field {
+  position: relative;
+}
+
+.hc-field.gi {
+  transition: box-shadow var(--hc-dur-base) var(--hc-ease-out), border-color var(--hc-dur-base) var(--hc-ease-out);
+}
+.hc-field.gi:focus-within {
+  background: linear-gradient(180deg, var(--hc-lq-fill-hi), var(--hc-lq-fill));
+  border-color: var(--hc-lq-accent-edge);
+  box-shadow:
+    inset 0 1px 0 var(--hc-lq-rim),
+    0 0 0 4px var(--hc-lq-accent-soft),
+    0 0 36px -6px var(--hc-lq-accent-glow),
+    var(--hc-lq-shadow);
+}
+
+.hc-input::placeholder {
+  color: var(--hc-text-faint);
+  transition: opacity var(--hc-dur-base) var(--hc-ease-out);
+}
+.hc-input:focus::placeholder {
+  opacity: 0.55;
+}
+
+/* ------------------------------------------------------------------ rail: liquid pills */
+
+.hc-mark-glyph {
+  color: var(--hc-lq-accent);
+}
+
+.hc-nav {
+  position: relative;
+  border-radius: 999px;
+  transition: background-color var(--hc-dur-fast) var(--hc-ease-out), color var(--hc-dur-fast) var(--hc-ease-out),
+    transform var(--hc-dur-fast) var(--hc-ease-press);
+}
+.hc-nav:active {
+  transform: scale(0.97);
+}
+
+/* The pill that marks where you are. Rendered once by NavRail with a shared layout id, so moving
+   between destinations slides it rather than switching it (motion.ts `spring`). */
+.hc-nav-pill {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--hc-lq-pill-top), var(--hc-lq-pill-bottom));
+  border: 1px solid var(--hc-lq-edge);
+  box-shadow: inset 0 1px 0 var(--hc-lq-pill-rim), inset 0 -1px 0 var(--hc-lq-rim-bottom), var(--hc-lq-pill-drop);
+  pointer-events: none;
+}
+.hc-nav > *:not(.hc-nav-pill) {
+  position: relative;
+  z-index: 1;
+}
+.hc-nav.raised-flat {
+  background: none;
+  box-shadow: none;
+}
+.hc-nav[aria-current="page"] .hc-nav-glyph {
+  color: var(--hc-lq-accent);
+}
+/* The old accent bar at the rail's edge; the sliding pill says the same thing. */
+.hc-nav[aria-current="page"]::before {
+  display: none;
+}
+
+/* ------------------------------------------------------------------ chips, like the showcase's */
+
+.hc-chip {
+  border-radius: 999px;
+  border: 1px solid var(--hc-lq-edge);
+  background: var(--hc-lq-fill);
+}
+.hc-chip[data-tone="on"] {
+  color: var(--hc-tint-green);
+  background: var(--hc-tint-green-bg);
+  border-color: color-mix(in srgb, var(--hc-tint-green) 28%, transparent);
+}
+.hc-chip[data-tone="warn"] {
+  color: var(--hc-tint-amber);
+  background: var(--hc-tint-amber-bg);
+  border-color: color-mix(in srgb, var(--hc-tint-amber) 28%, transparent);
+}
+.hc-chip[data-tone="off"] {
+  color: var(--hc-tint-red);
+  background: var(--hc-tint-red-bg);
+}
+
+/* ------------------------------------------------------------------ rows */
+
+.hc-row {
+  transition: background-color var(--hc-dur-fast) var(--hc-ease-out), transform var(--hc-dur-fast) var(--hc-ease-out);
+}
+@media (hover: hover) {
+  .hc-row:hover {
+    background-color: var(--hc-lq-hover);
+  }
+}
+.hc-row-selected {
+  background-color: var(--hc-lq-accent-soft);
+  border-left-color: var(--hc-zone, var(--hc-lq-accent));
+}
+
+/* ------------------------------------------------------------------ buttons and segments */
+
+.gb,
+.hc-pill,
+.hc-brain-mini,
+.hc-sort-btn {
+  transition: transform var(--hc-dur-fast) var(--hc-ease-press), background-color var(--hc-dur-fast) var(--hc-ease-out),
+    box-shadow var(--hc-dur-base) var(--hc-ease-out), border-color var(--hc-dur-base) var(--hc-ease-out);
+}
+.gb:active,
+.hc-pill:active,
+.hc-brain-mini:active,
+.hc-sort-btn:active {
+  transform: scale(0.96);
+}
+
+.hc-pill,
+.hc-brain-mini {
+  border-radius: 999px;
+  border: 1px solid var(--hc-lq-edge);
+  background: linear-gradient(180deg, var(--hc-lq-pill-top), var(--hc-lq-pill-bottom));
+  box-shadow: inset 0 1px 0 var(--hc-lq-pill-rim), var(--hc-lq-button-drop);
+}
+.hc-pill:hover,
+.hc-brain-mini:not(:disabled):hover {
+  border-color: var(--hc-lq-accent-edge);
+  box-shadow: inset 0 1px 0 var(--hc-lq-pill-rim), 0 0 18px -6px var(--hc-lq-accent-glow);
+}
+
+.seg {
+  background: var(--hc-lq-well);
+  box-shadow: var(--hc-lq-well-shadow);
+  border-radius: 999px;
+}
+.seg-thumb {
+  background: linear-gradient(180deg, var(--hc-lq-pill-top), var(--hc-lq-pill-bottom));
+  box-shadow: inset 0 1px 0 var(--hc-lq-pill-rim), inset 0 -1px 0 var(--hc-lq-rim-bottom), var(--hc-lq-thumb-drop);
+  border-radius: 999px;
+}
+
+/* ------------------------------------------------------------------ cards and numbers */
+
+.hc-card,
+.hc-tile {
+  transition: transform var(--hc-dur-base) var(--hc-ease-spring), border-color var(--hc-dur-base) var(--hc-ease-out),
+    box-shadow var(--hc-dur-base) var(--hc-ease-out);
+}
+.hc-tile[data-opens]:hover,
+.hc-card:hover {
+  border-color: color-mix(in srgb, var(--hc-lq-accent) 30%, var(--hc-lq-edge));
+}
+.hc-tile[data-opens]:hover {
+  transform: translateY(-2px);
+}
+/* Numbers in the display face, tabular — monospace made the dashboard read like a log. */
+.hc-tile-value,
+.hc-kv-value,
+.hc-legend-count,
+.hc-legend-share,
+.hc-nav-count,
+.hc-session-meta {
+  font-family: var(--hc-font);
+  font-variant-numeric: tabular-nums;
+}
+.hc-tile-value {
+  letter-spacing: -0.03em;
+  font-weight: 640;
+}
+.hc-kv-value {
+  font-weight: 600;
+}
+.hc-ov-title {
+  font-weight: 640;
+  letter-spacing: -0.025em;
+}
+
+/* An empty pane says so quietly, in the middle, instead of in its corner. */
+.hc-empty {
+  margin: auto;
+  text-align: center;
+  color: var(--hc-text-faint);
+}
+.hc-tile-label,
+.hc-card-title,
+.hc-rail-group {
+  letter-spacing: 0.11em;
+}
+
+/* Bars and meters are liquid too: a well with a glowing fill. */
+.hc-bar,
+.hc-heat-bar,
+.hc-place-bar,
+.hc-meter {
+  background: var(--hc-lq-well);
+  box-shadow: var(--hc-lq-well-shadow);
+  border-radius: 999px;
+}
+.hc-heat-fill,
+.hc-place-fill {
+  box-shadow: 0 0 10px -2px var(--hc-lq-accent-glow);
+}
+
+/* ------------------------------------------------------------------ 3. motion */
+
+@keyframes hc-rise {
+  from {
+    opacity: 0;
+    transform: translateY(var(--hc-rise-distance));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes hc-sheet-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes hc-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* A destination rises in when it is shown; its cards follow one another by a few milliseconds,
+   the index coming from `--i` set inline (capped, so a long page does not take a second to land). */
+.hc-section-enter {
+  animation: hc-rise 360ms var(--hc-ease-island) both;
+}
+.hc-section-enter .hc-brain-card,
+.hc-section-enter .hc-brain-status,
+.hc-section-enter .hc-brain-ask {
+  animation: hc-rise 420ms var(--hc-ease-island) both;
+  animation-delay: calc(min(var(--i, 0), 10) * 32ms + 60ms);
+}
+
+.hc-inspector {
+  animation: hc-sheet-in 320ms var(--hc-ease-island) both;
+}
+
+.hc-palette,
+.hc-quicklook,
+.hc-openwith,
+.hc-conflict {
+  animation: hc-rise 260ms var(--hc-ease-island) both;
+}
+
+.hc-answer,
+.hc-log li:first-child {
+  animation: hc-rise 300ms var(--hc-ease-island) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hc-section-enter,
+  .hc-section-enter .hc-brain-card,
+  .hc-section-enter .hc-brain-status,
+  .hc-section-enter .hc-brain-ask,
+  .hc-inspector,
+  .hc-palette,
+  .hc-quicklook,
+  .hc-openwith,
+  .hc-conflict,
+  .hc-answer,
+  .hc-log li:first-child {
+    animation: none;
+  }
+  .hc-nav,
+  .hc-row,
+  .gb,
+  .hc-pill,
+  .hc-tile {
+    transition: none;
+  }
+}
+
+/* ------------------------------------------------------------------ narrow windows */
+
+@media (max-width: 600px) {
+  .hc-overlay {
+    padding: 6px;
+    column-gap: 6px;
+  }
+  .hc-head {
+    margin-bottom: 6px;
+  }
+}
+
+/* ------------------------------------------------------------------ empty panes */
+
+.hc-empty-note {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  font-size: var(--hc-text-sm);
+  animation: hc-fade 400ms var(--hc-ease-out) both;
+}
+.hc-empty-note::before {
+  content: "";
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, var(--hc-lq-pill-top), var(--hc-lq-fill) 70%);
+  border: 1px solid var(--hc-lq-edge);
+  box-shadow: inset 0 1px 0 var(--hc-lq-pill-rim);
+}
+.hc-preview:has(> .hc-empty-note),
+.hc-context:has(> .hc-empty-note) {
+  justify-content: center;
+}
+
+/* ------------------------------------------------------------------ one-line rows */
+
+/* The row is one line tall (28 px, the virtual list's fixed step), and it used to stack the name
+   over its folder in two grid rows — which overflowed and printed the two lines over each other.
+   One line now, as a flex row with an explicit order of giving way: the folder goes first (it is
+   the least needed, and it can be read in the side panel), the name is truncated next, and the
+   numbers last — they are the columns the headings stand over (memory-columns.spec.ts). */
+.hc-row {
+  display: flex;
+  align-items: center;
+  column-gap: 10px;
+  padding-right: 10px;
+}
+.hc-row-name {
+  /* Shrink factors of at least one: below a sum of one, flexbox hands out only that fraction of
+     the overflow and the row runs out over the panel. */
+  flex: 0 1000 auto;
+  min-width: 0;
+}
+.hc-row-dir {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 0.86em;
+}
+.hc-row-snippet {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.hc-row-meta {
+  /* Gives way last, and from the left, so what is left of it still stands under its headings. */
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  justify-content: flex-end;
+}
+
+/* The zone was a 2 px left border on a rounded row, and the radius bent it into a bracket. A
+   small dot in the zone's colour at the row's left edge says the same without the bracket. */
+.hc-row {
+  border-left: 0;
+  padding-left: 1.05em;
+}
+.hc-row::before {
+  content: "";
+  position: absolute;
+  left: 0.45em;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  margin-top: -2.5px;
+  border-radius: 50%;
+  background: var(--hc-zone-border, transparent);
+  transition: transform var(--hc-dur-fast) var(--hc-ease-spring), background-color var(--hc-dur-fast) var(--hc-ease-out);
+}
+.hc-row-selected::before {
+  background: var(--hc-zone, var(--hc-lq-accent));
+  transform: scale(1.4);
+  box-shadow: 0 0 8px var(--hc-lq-accent-glow);
+}
+
+/* ------------------------------------------------------------------ accents that do not bend */
+
+/* A coloured left border on a rounded box is bent by the radius into a bracket. The accent is a
+   free-standing bar inside the box instead, inset from both corners. */
+.hc-memory {
+  border-left: 0;
+  position: relative;
+}
+.hc-place,
+.hc-place-current {
+  border-left-color: transparent;
+  position: relative;
+}
+.hc-memory::before,
+.hc-place-current::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 9px;
+  bottom: 9px;
+  width: 2px;
+  border-radius: 2px;
+}
+.hc-memory::before {
+  background: var(--hc-tint-green);
+  opacity: 0.7;
+}
+.hc-place-current::before {
+  background: var(--hc-lq-accent);
+  box-shadow: 0 0 8px var(--hc-lq-accent-glow);
+}
+.hc-memory {
+  padding-left: 14px;
+}
+
+/* ------------------------------------------------------------------ the inspector sheet */
+
+.hc-inspector-split {
+  gap: 10px;
+  padding: 10px;
+}
+.hc-inspector-pane,
+.hc-inspector-split > .hc-inspector-pane + .hc-inspector-pane {
+  background: linear-gradient(180deg, var(--hc-lq-fill-hi), var(--hc-lq-fill) 40%);
+  border: 1px solid var(--hc-lq-edge);
+  box-shadow: inset 0 1px 0 var(--hc-lq-rim);
+  border-radius: var(--hc-radius-panel);
+  padding: 14px 16px;
+}
+.hc-inspector-pane h2 {
+  letter-spacing: 0.11em;
+  color: var(--hc-text-faint);
+}
+.hc-rows .hc-row-item {
+  border-radius: 10px;
+  padding-inline: 8px;
+  transition: background-color var(--hc-dur-fast) var(--hc-ease-out);
+}
+.hc-rows .hc-row-item + .hc-row-item {
+  border-top-color: transparent;
+}
+@media (hover: hover) {
+  .hc-rows .hc-row-item:hover {
+    background-color: var(--hc-lq-hover);
+  }
+}
+.hc-rows .hc-row-item code {
+  color: var(--hc-lq-accent);
+  font-size: 0.92em;
+}
+.hc-rows .hc-row-item:first-child {
+  animation: hc-rise 300ms var(--hc-ease-island) both;
+}
+.hc-dot-live {
+  box-shadow: 0 0 0 3px var(--hc-tint-green-bg), 0 0 10px var(--hc-tint-green);
+}
+
+/* The file list only fades in: it is where the person works, and a list that slides while it is
+   being read (or measured — thumbnails.spec.ts caught a row at 27.995 px mid-slide) is worse
+   than one that simply appears. */
+.hc-column.hc-section-enter {
+  animation-name: hc-fade;
+  animation-duration: 240ms;
+}

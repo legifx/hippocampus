@@ -1172,6 +1172,17 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
 
+### 2026-09-27 (later) — Liquid: the interface redone at the owner's request
+
+"Das GUI ist noch sehr eintönig und hässlich — liquid glass, kleine Animationen, minimalistisch."
+One layer, `ui/src/liquid.css` + `tokens.css` §2c (D125, design system §10): a lit static canvas,
+glass islands with gaps, liquid pills, a sliding nav pill (framer-motion `layoutId`), tinted status
+chips, one-line result rows, opaque inspector sheet, one-shot motion only. Fixed on the way: result
+rows printed two lines over each other; rounded rows bent their zone border into a bracket; the
+inspector let the list show through. Tests: vitest 77, Playwright 194/194 (twice), perf 16/16.
+Not measured yet: the real window's idle CPU with the new surfaces — the cgroup snippet above,
+with the window open and still, should read near the 4.8–5.1 % of D59.
+
 ### 2026-09-27 — The brain view, the curator, backups, and an index that was one third data
 
 The owner's brief: finish the explorer, make the agent half actually work, a second tab with the
