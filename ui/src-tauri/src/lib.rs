@@ -248,6 +248,13 @@ async fn brain_diff(
         .await
 }
 
+/// A line from the page into the service journal: the one place a person can read what a
+/// resident, usually hidden webview was doing.
+#[tauri::command]
+fn ui_log(message: String) {
+    tracing::info!(target: "hippocampus_ui_lib::page", "{}", message.chars().take(300).collect::<String>());
+}
+
 /// The live pulse: recent calls, zone heat and busy agents, newer than `after`.
 #[tauri::command]
 async fn brain_activity(
@@ -1057,9 +1064,15 @@ fn startup_report(state: tauri::State<'_, AppState>) -> startup::Report {
 /// Toggling rather than showing, because a key pressed by accident should undo itself, and
 /// because the same binding then serves both directions.
 pub fn summon<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>, toggle: bool) {
-    if toggle && window.is_visible().unwrap_or(false) {
-        conceal(window);
-        return;
+    // Put away only what is in front of the person. A mapped window that niri has scrolled out
+    // of view, or that sits on another workspace, is not — pressing the key there must bring it,
+    // and bringing it means mapping it again, because a focus request alone does not move it.
+    if window.is_visible().unwrap_or(false) {
+        if toggle && window.is_focused().unwrap_or(false) {
+            conceal(window);
+            return;
+        }
+        let _ = window.hide();
     }
 
     // The number the resident model exists for. M4 §1's 300 ms is about a cold start and stays
@@ -1237,12 +1250,24 @@ pub fn run() {
             if argv.iter().any(|a| a == "--hide") {
                 conceal(&window);
             } else if let Some(section) = section {
-                if window.is_visible().unwrap_or(false) {
+                // Only a window that has the focus is in front of the person. Under niri a
+                // window that is mapped but scrolled away, or on another workspace, still
+                // reports itself visible — and a summon that only switched the section there
+                // changed a window nobody could see (2026-09-27: "es lädt nicht").
+                if window.is_focused().unwrap_or(false) {
+                    tracing::info!(section, "section asked for while focused: switch or put away");
                     let _ = window.emit("window:section-toggle", section);
-                    let _ = window.set_focus();
                 } else {
-                    let _ = window.emit("window:section", section);
+                    tracing::info!(section, "section asked for while not in front: summon there");
+                    // Unmapped and mapped again: the compositor places a new surface where the
+                    // person is and focuses it, which a focus request alone does not achieve.
+                    if window.is_visible().unwrap_or(false) {
+                        let _ = window.hide();
+                    }
                     summon(&window, false);
+                    // Sent after the window is mapped: a page in an unmapped WebKit view does not
+                    // reliably run what it is sent, and the section is the point of the summon.
+                    let _ = window.emit("window:section", section);
                 }
             } else if argv.iter().any(|a| a == "--show" || a == "--toggle") {
                 summon(&window, argv.iter().any(|a| a == "--toggle"));
@@ -1378,6 +1403,7 @@ pub fn run() {
             brain_graph,
             brain_diff,
             brain_report,
+            ui_log,
             brain_activity,
             brain_ask,
             brain_services,

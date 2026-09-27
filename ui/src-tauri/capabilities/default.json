@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "overlay-events",
+  "description": "The page may listen to the events the shell sends it (window shown/hidden, the section a launcher asked for, transfer progress, the daemon's notifications) — and nothing else from the core plugins. Without this every listener failed with 'plugin:event|listen not allowed by ACL', silently, since the first release.",
+  "windows": ["overlay"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
+}

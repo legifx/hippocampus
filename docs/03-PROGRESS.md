@@ -1242,6 +1242,18 @@ project memories (actor `ingest`) and 36 entity cards on the Main Brain. Federat
 first memory end to end (a journal line on the server within a minute of `cortex sync now`).
 `.dart_tool` is a bulky directory now (Flutter build output was being indexed).
 
+**"Es lädt nicht" — the owner, and three bugs behind it.** (1) **Every event listener in the
+window had failed since the first release**: no Tauri capability allowed `plugin:event|listen`, so
+`window:visible`, `window:shown`, `transfer:progress`, `daemon:unavailable` and the new section
+events never reached the page — silently, the error was swallowed by a `.catch`. Found only once
+the page could log into the journal (`ui_log`). `ui/src-tauri/capabilities/default.json` grants
+listen/unlisten and nothing else. This also means `useVisibility` had never seen the window hidden,
+so everything gated on it polled in the background — worth re-measuring. (2) Under niri a window
+scrolled out of view reports itself visible, so the launcher's toggle hid what nobody could see and
+the section flag switched a window nobody could see; a summon now remaps unless the window has the
+focus. (3) niri opens a remapped window unfocused without an activation token — the owner's config
+now has a window rule `open-focused true` for `app-id="^hippocampus$"`.
+
 **Correction (D124).** Asleep, llama-server kept 2.7 GB of RAM; the curator is now socket-activated
 and stopped after five idle minutes — idle it costs nothing, a cold question takes 2.9 s instead of
 1.6 s. Idle base load measured: cortexd 0.05 % of a core and 0 MB VRAM, the hidden window 0.08 %.

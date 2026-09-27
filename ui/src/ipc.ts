@@ -1135,6 +1135,9 @@ export const ipc = {
 
   brainReport: () => transport.invoke<unknown>("brain_report"),
 
+  /** A line into the overlay service's journal. */
+  uiLog: (message: string) => transport.invoke<void>("ui_log", { message }).catch(() => {}),
+
   /** The live pulse: calls newer than `after`, zone heat, busy agents. */
   brainActivity: (after = 0, limit = 120) =>
     transport.invoke<BrainActivity>("brain_activity", { after, limit }),

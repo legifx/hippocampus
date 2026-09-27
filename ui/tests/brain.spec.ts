@@ -65,3 +65,29 @@ test.describe("the brain view", () => {
     expect(overflow).toBeLessThanOrEqual(0);
   });
 });
+
+test.describe("the launcher's section flags", () => {
+  async function fire(page: import("@playwright/test").Page, event: string, payload: unknown) {
+    await page.evaluate(
+      ([e, p]) => {
+        const l = (window as unknown as { __hcListeners?: Map<string, Set<(x: unknown) => void>> }).__hcListeners;
+        l?.get(e as string)?.forEach((h) => h(p));
+      },
+      [event, payload],
+    );
+  }
+
+  test("`--brain` while hidden opens the window on the brain", async ({ page }) => {
+    await page.goto(`/harness.html?section=overview`);
+    await page.waitForSelector(".hc-ov-headline");
+    await fire(page, "window:section", "brain");
+    await fire(page, "window:shown", null);
+    await expect(page.getByRole("region", { name: "Gehirn", exact: true })).toBeVisible();
+  });
+
+  test("`--files` while showing the brain switches to the files", async ({ page }) => {
+    await page.goto(`/harness.html?section=brain`);
+    await fire(page, "window:section-toggle", "files");
+    await expect(page.getByRole("region", { name: "Gehirn", exact: true })).toBeHidden();
+  });
+});

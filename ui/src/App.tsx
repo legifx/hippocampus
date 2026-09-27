@@ -377,12 +377,17 @@ export function App({ startPath = START_PATH, startSection = "overview" }: AppPr
     const known = (s: string): s is Section => s === "files" || s === "brain" || s === "overview";
     ipc
       .onWindowSection((next) => {
+        ipc.uiLog(`window:section ${next} (disposed=${disposed})`);
         if (!disposed && known(next)) goSection(next);
       })
-      .then((off) => (disposed ? off() : offs.push(off)))
-      .catch(() => {});
+      .then((off) => {
+        ipc.uiLog("listening for window:section");
+        return disposed ? off() : offs.push(off);
+      })
+      .catch((e) => ipc.uiLog(`window:section listener failed: ${e}`));
     ipc
       .onWindowSectionToggle((next) => {
+        ipc.uiLog(`window:section-toggle ${next} (current ${sectionRef.current})`);
         if (disposed || !known(next)) return;
         if (sectionRef.current === next) ipc.dismiss().catch(() => {});
         else goSection(next);
