@@ -1777,9 +1777,85 @@ async fn dispatch_inner(
             }
             let limit = params.limit.unwrap_or(5).clamp(1, 12);
 
+            // Where it is written down: files, by meaning and by words — bulk data dropped,
+            // one candidate per file — and, when the question names a project, that project's
+            // own documentation. Then one fused order; `ask.rs` says why each step exists.
+            let outcome = daemon.run_search(&SearchParams {
+                query: question.clone(),
+                mode: QueryMode::Auto,
+                limit: Some(60),
+                prefix: Some(false),
+                rerank: Some(false),
+            });
+            let zone_rows = daemon.store.zones().unwrap_or_default();
+            let zones: std::collections::HashMap<i64, String> = zone_rows
+                .iter()
+                .filter_map(|z| z.id.map(|id| (id.0, z.name.clone())))
+                .collect();
+            let zone_roots: Vec<(String, std::path::PathBuf)> =
+                zone_rows.iter().map(|z| (z.name.clone(), z.root_path.clone())).collect();
+            let named = crate::ask::named_zones(&question, &zone_roots);
+            let in_named = |path: &str| {
+                named.iter().any(|(_, root)| std::path::Path::new(path).starts_with(root))
+            };
+
+            let mut ranked: Vec<crate::ask::Ranked> = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            let mut position = 0usize;
+            for hit in outcome.hits {
+                let path = hit.path.display().to_string();
+                if crate::ask::is_bulk_for(&path, &question) || !seen.insert(path.clone()) {
+                    continue;
+                }
+                ranked.push(crate::ask::Ranked {
+                    in_named_zone: in_named(&path),
+                    retrieval: position,
+                    candidate: crate::curator::Candidate {
+                        kind: "file",
+                        title: hit
+                            .path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| path.clone()),
+                        path: Some(path),
+                        memory_id: None,
+                        snippet: hit.snippet.clone(),
+                        zone: hit.zone_id.and_then(|z| zones.get(&z.0).cloned()),
+                    },
+                });
+                position += 1;
+                if position >= 20 {
+                    break;
+                }
+            }
+            for (i, doc) in crate::ask::project_candidates(&question, &named, &seen)
+                .into_iter()
+                .enumerate()
+            {
+                ranked.push(crate::ask::Ranked { candidate: doc, retrieval: i, in_named_zone: true });
+            }
             // What is *known* about the question: the memory arm of a context pack, without
             // files — the files come from the search below, which reads their content.
-            let reader = surface.reader_scope(params.session_id.as_deref(), &[]);
+            // Project memories are visible to whoever works in that project. Asking about it is
+            // working in it: the zones the question names, and the zones of the best documents,
+            // are the projects this reader reads — otherwise every project card an agent wrote
+            // would be invisible to exactly the question it answers.
+            let mut project_roots: Vec<std::path::PathBuf> =
+                named.iter().map(|(_, root)| root.clone()).collect();
+            for r in ranked.iter().take(8) {
+                if let Some(path) = r.candidate.path.as_deref() {
+                    if let Some((_, root)) = zone_roots
+                        .iter()
+                        .filter(|(_, root)| std::path::Path::new(path).starts_with(root))
+                        .max_by_key(|(_, root)| root.as_os_str().len())
+                    {
+                        if !project_roots.contains(root) {
+                            project_roots.push(root.clone());
+                        }
+                    }
+                }
+            }
+            let reader = surface.reader_scope(params.session_id.as_deref(), &project_roots);
             let loaded = daemon.semantics.get();
             let model = loaded.as_ref().map(|l| l.embedder.model());
             let semantic = match (loaded.as_ref(), model.as_ref()) {
@@ -1828,63 +1904,6 @@ async fn dispatch_inner(
                 })
                 .collect();
 
-            // Where it is written down: files, by meaning and by words — bulk data dropped,
-            // one candidate per file — and, when the question names a project, that project's
-            // own documentation. Then one fused order; `ask.rs` says why each step exists.
-            let outcome = daemon.run_search(&SearchParams {
-                query: question.clone(),
-                mode: QueryMode::Auto,
-                limit: Some(60),
-                prefix: Some(false),
-                rerank: Some(false),
-            });
-            let zone_rows = daemon.store.zones().unwrap_or_default();
-            let zones: std::collections::HashMap<i64, String> = zone_rows
-                .iter()
-                .filter_map(|z| z.id.map(|id| (id.0, z.name.clone())))
-                .collect();
-            let zone_roots: Vec<(String, std::path::PathBuf)> =
-                zone_rows.iter().map(|z| (z.name.clone(), z.root_path.clone())).collect();
-            let named = crate::ask::named_zones(&question, &zone_roots);
-            let in_named = |path: &str| {
-                named.iter().any(|(_, root)| std::path::Path::new(path).starts_with(root))
-            };
-
-            let mut ranked: Vec<crate::ask::Ranked> = Vec::new();
-            let mut seen = std::collections::HashSet::new();
-            let mut position = 0usize;
-            for hit in outcome.hits {
-                let path = hit.path.display().to_string();
-                if crate::ask::is_bulk_for(&path, &question) || !seen.insert(path.clone()) {
-                    continue;
-                }
-                ranked.push(crate::ask::Ranked {
-                    in_named_zone: in_named(&path),
-                    retrieval: position,
-                    candidate: crate::curator::Candidate {
-                        kind: "file",
-                        title: hit
-                            .path
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_else(|| path.clone()),
-                        path: Some(path),
-                        memory_id: None,
-                        snippet: hit.snippet.clone(),
-                        zone: hit.zone_id.and_then(|z| zones.get(&z.0).cloned()),
-                    },
-                });
-                position += 1;
-                if position >= 30 {
-                    break;
-                }
-            }
-            for (i, doc) in crate::ask::project_candidates(&question, &named, &seen)
-                .into_iter()
-                .enumerate()
-            {
-                ranked.push(crate::ask::Ranked { candidate: doc, retrieval: i, in_named_zone: true });
-            }
             for (i, memory) in candidates.into_iter().enumerate() {
                 ranked.push(crate::ask::Ranked { candidate: memory, retrieval: 4 + i, in_named_zone: false });
             }

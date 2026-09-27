@@ -223,3 +223,37 @@ and everything agents remembered — and nothing else.
   good as the history behind them; a fresh index has a flat legend and says so.
 - **It has been used daily by one person.** M6's gate — a week of exclusive use — and M9's —
   a second person installing it unaided — are recorded in `03-PROGRESS.md` when they happen.
+
+
+## The curator, backups and the brain view (2026-09-27)
+
+**The curator** (`brain_ask`, D120) works without a model: retrieval and the cross-encoder answer
+in ranked order. To let a model choose and explain, run an OpenAI-compatible server on a loopback
+port — `scripts/hippocampus-curator` starts llama.cpp's `llama-server` sized to the free video
+memory and lets it unload itself after five idle minutes — and enable it:
+
+```toml
+[curator]
+enabled = true
+endpoint = "http://127.0.0.1:8091/v1/chat/completions"   # loopback only; anything else is refused
+timeout_ms = 20000
+candidates = 10
+```
+
+Where llama-server and the model live is configured in `~/.config/hippocampus/curator.conf`
+(`HC_LLAMA_SERVER`, `HC_CURATOR_MODEL`, …; see the script's header), and the unit is
+`hippocampus-curator.service`. A 4B model at Q4 needs ~3.5 GB of video memory while awake and
+~250 MB asleep; waking takes under a second.
+
+**Embedding on the CPU.** On a machine where a large local model competes for video memory, set
+`[embedding] device = "cpu"` and run `cortex model fetch --runtime-only` once for the CPU runtime.
+Queries stay in milliseconds; only bulk re-embedding is slower.
+
+**Backups** (D121): `hippocampus-backup.service` takes a light backup at login and at shutdown,
+`hippocampus-backup-full.timer` a full one daily; `cortex backup [--full]` by hand. They live in
+`~/.local/state/hippocampus/backups/`. To restore a full backup: stop the daemon, copy the file
+over `cortex.db` (remove `cortex.db-wal`/`-shm`), start it. A light backup holds the episode log;
+restoring it means a rebuild from the files.
+
+**Opening the window on a section:** `hippocampus --files`, `hippocampus --brain` (and
+`--overview`). Bound to a key, pressing it again while that section shows puts the window away.

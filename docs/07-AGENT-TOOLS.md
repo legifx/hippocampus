@@ -41,6 +41,16 @@ recency-and-frequency model has: **a memory that keeps arriving in your context 
 reported useful decays faster than one that is never retrieved at all.** Reporting honestly that
 something was noise is worth more than reporting that everything helped.
 
+**`brain_ask(question)`** — "where is X, what is known about X", in one call and **instead of a
+search-and-read loop**. It fuses the memory arm, a hybrid search and the named project's own
+documentation, reranks them with the cross-encoder, and — when a curator model is configured —
+lets a small local model choose the few items that answer and say why in a line, plus a short
+answer when the passages contain one. It reads the project memories of the zones the question
+names and of the zones its best documents live in. Measured on the owner's index (12 questions):
+the expected file first 9/12 with the model, in the top three 10/12 without it; ~1.5 s with the
+model, ~0.5 s without (`use_model: false`). Read the paths it names; if it says nothing answers,
+search yourself. See D120.
+
 **`brain_search(query)`** — when you are looking for a *file* rather than for what is known. The
 two are different questions and the second one is the one this system is unusual at.
 

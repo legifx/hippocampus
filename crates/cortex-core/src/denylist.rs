@@ -60,6 +60,7 @@ const BULKY_DIRS: &[&str] = &[
     "build",
     "dist",
     ".next",
+    ".dart_tool",
     ".venv",
     "venv",
     "__pycache__",
