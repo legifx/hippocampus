@@ -1242,6 +1242,10 @@ project memories (actor `ingest`) and 36 entity cards on the Main Brain. Federat
 first memory end to end (a journal line on the server within a minute of `cortex sync now`).
 `.dart_tool` is a bulky directory now (Flutter build output was being indexed).
 
+**Correction (D124).** Asleep, llama-server kept 2.7 GB of RAM; the curator is now socket-activated
+and stopped after five idle minutes — idle it costs nothing, a cold question takes 2.9 s instead of
+1.6 s. Idle base load measured: cortexd 0.05 % of a core and 0 MB VRAM, the hidden window 0.08 %.
+
 **Not done here, deliberately.** M12 steps 2–4 are untouched. The brain view's CPU cost in the real
 WebKitGTK window has not been measured yet — the snippet in "How to answer a report of slowness"
 is the way, with the view open and agents working.

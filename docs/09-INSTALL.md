@@ -241,9 +241,10 @@ candidates = 10
 ```
 
 Where llama-server and the model live is configured in `~/.config/hippocampus/curator.conf`
-(`HC_LLAMA_SERVER`, `HC_CURATOR_MODEL`, …; see the script's header), and the unit is
-`hippocampus-curator.service`. A 4B model at Q4 needs ~3.5 GB of video memory while awake and
-~250 MB asleep; waking takes under a second.
+(`HC_LLAMA_SERVER`, `HC_CURATOR_MODEL`, …; see the script's header), and it is started on demand by
+`hippocampus-curator-proxy.socket` (enable that, not the service) and stopped after five idle
+minutes (D124). A 4B model at Q4 needs ~3.5 GB of video memory while running and nothing while
+stopped; a cold question takes ~3 s.
 
 **Embedding on the CPU.** On a machine where a large local model competes for video memory, set
 `[embedding] device = "cpu"` and run `cortex model fetch --runtime-only` once for the CPU runtime.

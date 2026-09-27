@@ -1,19 +1,17 @@
 [Unit]
-Description=Hippocampus curator: the decision model behind brain.ask (unloads itself when idle)
+Description=Hippocampus curator: the decision model behind brain.ask (started on demand)
 Documentation=https://github.com/hippocampus-fm/hippocampus
+# Started by hippocampus-curator-proxy.socket on the first question, stopped with the proxy.
 # Not required by the daemon: without the curator, brain.ask answers in ranked order and says so.
-After=hippocampus-cortexd.service
+StopWhenUnneeded=yes
 
 [Service]
 Type=simple
+Environment=HC_CURATOR_PORT=8092
 ExecStart=%h/.local/bin/hippocampus-curator
-Restart=on-failure
-RestartSec=15
-# The model is loaded on demand and dropped after HC_CURATOR_IDLE_SECS; this is the ceiling for
-# the CPU case, where the weights live in RAM rather than on the card.
+# Active only once it answers, so the proxy never forwards to a port nobody listens on yet.
+ExecStartPost=/bin/sh -c 'for i in $(seq 1 300); do curl -sf http://127.0.0.1:8092/health >/dev/null && exit 0; sleep 0.2; done; exit 1'
+TimeoutStartSec=90
 MemoryHigh=5G
 MemoryMax=6G
 Nice=5
-
-[Install]
-WantedBy=default.target

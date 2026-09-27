@@ -1,0 +1,8 @@
+[Unit]
+Description=Hippocampus curator: the loopback port brain.ask talks to; starts the model on first use
+
+[Socket]
+ListenStream=127.0.0.1:8091
+
+[Install]
+WantedBy=sockets.target

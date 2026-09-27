@@ -3700,3 +3700,17 @@ in another section it schedules nothing and the view stops polling. The shape ca
 the hippocampus at the centre is where every request enters, each zone owns a fixed region of the
 cortex (golden spiral in zone-id order), and a node's depth is its tier — Working near the
 hippocampus, Cold at the surface — so forgetting is movement outward.
+
+### D124 — The curator is started by its socket and stopped when idle, not put to sleep
+
+**Status:** ACCEPTED · 2026-09-27 · corrects part of D120
+
+D120 claimed the curator costs almost nothing idle because `llama-server --sleep-idle-seconds`
+unloads the model. Measured afterwards: asleep it released the video memory (254 MB left) but
+**kept 2.7 GB of anonymous RAM**. So the process itself goes now. `hippocampus-curator-proxy.socket`
+listens on the loopback port `brain.ask` calls; the first connection starts
+`hippocampus-curator-proxy.service` (`systemd-socket-proxyd --exit-idle-time=300`), which requires
+the model unit on an internal port; the model unit is `StopWhenUnneeded` and becomes active only
+once `/health` answers, so no request is forwarded to a port nobody listens on. After five idle
+minutes the proxy exits and the model unit stops with it: **idle cost zero RAM, zero VRAM, zero
+CPU**. The price is a cold start: the first question after a pause took 2.9 s instead of 1.6 s.

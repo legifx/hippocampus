@@ -23,8 +23,11 @@
 set -euo pipefail
 
 conf="${XDG_CONFIG_HOME:-$HOME/.config}/hippocampus/curator.conf"
+unit_port="${HC_CURATOR_PORT:-}"
 # shellcheck disable=SC1090
 [[ -f "$conf" ]] && . "$conf"
+# A port set by the unit (the socket-activated setup listens on 8091 and forwards here) wins.
+[[ -n "$unit_port" ]] && HC_CURATOR_PORT="$unit_port"
 
 server="${HC_LLAMA_SERVER:-$(command -v llama-server || true)}"
 model="${HC_CURATOR_MODEL:-${XDG_STATE_HOME:-$HOME/.local/state}/hippocampus/models/curator/model.gguf}"

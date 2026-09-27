@@ -1,0 +1,10 @@
+[Unit]
+Description=Hippocampus curator: hand connections to the model, and stop it after five idle minutes
+Requires=hippocampus-curator.service
+After=hippocampus-curator.service
+
+[Service]
+# Exits after five minutes without a connection; the model unit is StopWhenUnneeded and goes
+# with it, so an idle curator holds no memory at all — llama-server's own sleep freed the video
+# memory but kept 2.7 GB of RAM (measured 2026-09-27, D124).
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd --exit-idle-time=300 127.0.0.1:8092

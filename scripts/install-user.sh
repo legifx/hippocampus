@@ -44,7 +44,7 @@ echo "  ${bin_dir}/hippocampus-curator"
 for unit in hippocampus-cortexd.service hippocampus-overlay.service \
             hippocampus-consolidate.service hippocampus-consolidate.timer \
             hippocampus-backup.service hippocampus-backup-full.service hippocampus-backup-full.timer \
-            hippocampus-curator.service; do
+            hippocampus-curator.service hippocampus-curator-proxy.service hippocampus-curator-proxy.socket; do
   install -m 0644 "${repo_root}/packaging/systemd/${unit}" "${unit_dir}/${unit}"
   echo "  ${unit_dir}/${unit}"
 done
@@ -60,7 +60,7 @@ Installed. Nothing is running yet — enable what you want:
   systemctl --user enable --now hippocampus-consolidate.timer # the nightly pass (D116)
   systemctl --user enable --now hippocampus-backup.service    # light backup at login and shutdown (D121)
   systemctl --user enable --now hippocampus-backup-full.timer # full backup, daily (D121)
-  systemctl --user enable --now hippocampus-curator.service   # brain.ask's decision model (D120; needs llama-server and a model)
+  systemctl --user enable --now hippocampus-curator-proxy.socket # brain.ask's decision model, started on demand (D120, D124)
 
 Without the timer nothing consolidates: the pass has no other trigger than a person asking for it.
 
