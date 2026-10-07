@@ -235,6 +235,8 @@ pub fn render(question: &str, answer: Option<&str>, items: &[AskItem], info: &Cu
     }
     for (i, item) in items.iter().enumerate() {
         let place = match (&item.path, item.memory_id) {
+            // The peer's location means nothing on this machine; say whose it is.
+            (Some(p), _) if item.kind == "peer" => format!("peer: {p} — {}", item.title),
             (Some(p), _) => p.clone(),
             (None, Some(id)) => format!("memory #{id}"),
             _ => item.title.clone(),

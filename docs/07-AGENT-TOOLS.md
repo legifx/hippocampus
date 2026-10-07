@@ -49,7 +49,8 @@ answer when the passages contain one. It reads the project memories of the zones
 names and of the zones its best documents live in. Measured on the owner's index (12 questions):
 the expected file first 9/12 with the model, in the top three 10/12 without it; ~1.5 s with the
 model, ~0.5 s without (`use_model: false`). Read the paths it names; if it says nothing answers,
-search yourself. See D120.
+search yourself. See D120. When a `recall` peer is configured (D126), up to three items from the
+peer follow, marked `peer:` — their location is the peer's, not a path on this machine.
 
 **`brain_search(query)`** — when you are looking for a *file* rather than for what is known. The
 two are different questions and the second one is the one this system is unusual at.

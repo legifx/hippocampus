@@ -18,12 +18,14 @@
 use crate::error::{Error, Result};
 use std::path::{Path, PathBuf};
 
-/// What a plugin is for. The Core dispatches to a plugin by kind; a `sync` plugin is handed
-/// batches, and nothing else is.
+/// What a plugin is for. The Core dispatches to a plugin by kind: a `sync` plugin is handed
+/// batches and nothing else; a `recall` plugin is handed a question from `brain.ask` and nothing
+/// else (D126). A declaration of one kind is never run as the other.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PluginKind {
     Sync,
+    Recall,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -109,5 +111,16 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("endpoint"), "{err}");
+    }
+
+    #[test]
+    fn a_recall_plugin_is_its_own_kind() {
+        let decl = PluginDecl::from_toml(
+            "kind = \"recall\"\ncommand = \"/bin/true\"\n",
+            &PathBuf::from("<test>"),
+        )
+        .unwrap();
+        assert_eq!(decl.kind, PluginKind::Recall);
+        assert_ne!(decl.kind, PluginKind::Sync);
     }
 }

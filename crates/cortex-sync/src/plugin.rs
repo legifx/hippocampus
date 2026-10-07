@@ -36,87 +36,104 @@ impl Transport for Plugin {
     }
 
     fn push(&mut self, batch: &SyncBatch) -> Result<SyncAck, TransportError> {
-        let request = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": METHOD_PUSH,
-            "params": batch,
-        });
-
-        let mut child = Command::new(&self.decl.command)
-            .args(&self.decl.args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .map_err(|e| TransportError::Unreachable(format!("could not start plugin: {e}")))?;
-
-        // Write on this thread, read on another, so a plugin that answers before it has read
-        // everything cannot deadlock against a full pipe.
-        let stdout = child.stdout.take().expect("piped");
-        let reader = std::thread::spawn(move || {
-            let mut line = String::new();
-            let mut reader = BufReader::new(stdout);
-            let read = reader.read_line(&mut line);
-            read.map(|_| line)
-        });
-
-        let written = (|| -> std::io::Result<()> {
-            let mut stdin = child.stdin.take().expect("piped");
-            serde_json::to_writer(&mut stdin, &request)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-            stdin.write_all(b"\n")?;
-            stdin.flush()
-        })();
-        // A plugin that exits before reading closes the pipe; that is a refusal we will see in
-        // the exit status, not an unreachable peer.
-        let _ = written;
-
-        let deadline = std::time::Instant::now() + Duration::from_millis(self.decl.timeout_ms);
-        let status = loop {
-            match child.try_wait() {
-                Ok(Some(status)) => break status,
-                Ok(None) if std::time::Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(1));
-                }
-                Ok(None) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(TransportError::Unreachable(format!(
-                        "plugin did not answer within {} ms",
-                        self.decl.timeout_ms
-                    )));
-                }
-                Err(e) => return Err(TransportError::Unreachable(e.to_string())),
-            }
-        };
-
-        let line = reader
-            .join()
-            .map_err(|_| TransportError::Unreachable("reader thread panicked".into()))?
-            .map_err(|e| TransportError::Unreachable(e.to_string()))?;
-
-        if line.trim().is_empty() {
-            return Err(TransportError::Unreachable(format!(
-                "plugin exited with {status} without answering"
-            )));
-        }
-        let response: serde_json::Value = serde_json::from_str(line.trim())
-            .map_err(|e| TransportError::Malformed(format!("{e}: {}", line.trim())))?;
-        if let Some(error) = response.get("error") {
-            let message = error
-                .get("message")
-                .and_then(|m| m.as_str())
-                .unwrap_or("no message")
-                .to_string();
-            return Err(TransportError::Refused(message));
-        }
-        let result = response
-            .get("result")
-            .ok_or_else(|| TransportError::Malformed("neither result nor error".into()))?;
-        serde_json::from_value(result.clone())
+        let params = serde_json::to_value(batch)
+            .map_err(|e| TransportError::Malformed(format!("batch is not JSON: {e}")))?;
+        let result = exchange(&self.decl, METHOD_PUSH, params)?;
+        serde_json::from_value(result)
             .map_err(|e| TransportError::Malformed(format!("result is not an ack: {e}")))
     }
+}
+
+/// One JSON-RPC exchange with a declared plugin: start it, write one request, read one line,
+/// kill it at the declaration's deadline. Shared by every plugin kind, so a `recall` plugin is
+/// held to exactly the rules a `sync` plugin is.
+///
+/// No answer, a command that cannot be started and the deadline passing are `Unreachable`; an
+/// `error` in the answer is `Refused`; anything else that is not a `result` is `Malformed`.
+pub fn exchange(
+    decl: &PluginDecl,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, TransportError> {
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": method,
+        "params": params,
+    });
+
+    let mut child = Command::new(&decl.command)
+        .args(&decl.args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|e| TransportError::Unreachable(format!("could not start plugin: {e}")))?;
+
+    // Write on this thread, read on another, so a plugin that answers before it has read
+    // everything cannot deadlock against a full pipe.
+    let stdout = child.stdout.take().expect("piped");
+    let reader = std::thread::spawn(move || {
+        let mut line = String::new();
+        let mut reader = BufReader::new(stdout);
+        let read = reader.read_line(&mut line);
+        read.map(|_| line)
+    });
+
+    let written = (|| -> std::io::Result<()> {
+        let mut stdin = child.stdin.take().expect("piped");
+        serde_json::to_writer(&mut stdin, &request)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        stdin.write_all(b"\n")?;
+        stdin.flush()
+    })();
+    // A plugin that exits before reading closes the pipe; that is a refusal we will see in
+    // the exit status, not an unreachable peer.
+    let _ = written;
+
+    let deadline = std::time::Instant::now() + Duration::from_millis(decl.timeout_ms);
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(TransportError::Unreachable(format!(
+                    "plugin did not answer within {} ms",
+                    decl.timeout_ms
+                )));
+            }
+            Err(e) => return Err(TransportError::Unreachable(e.to_string())),
+        }
+    };
+
+    let line = reader
+        .join()
+        .map_err(|_| TransportError::Unreachable("reader thread panicked".into()))?
+        .map_err(|e| TransportError::Unreachable(e.to_string()))?;
+
+    if line.trim().is_empty() {
+        return Err(TransportError::Unreachable(format!(
+            "plugin exited with {status} without answering"
+        )));
+    }
+    let response: serde_json::Value = serde_json::from_str(line.trim())
+        .map_err(|e| TransportError::Malformed(format!("{e}: {}", line.trim())))?;
+    if let Some(error) = response.get("error") {
+        let message = error
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("no message")
+            .to_string();
+        return Err(TransportError::Refused(message));
+    }
+    response
+        .get("result")
+        .cloned()
+        .ok_or_else(|| TransportError::Malformed("neither result nor error".into()))
 }
 
 #[cfg(test)]

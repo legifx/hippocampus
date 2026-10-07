@@ -179,6 +179,7 @@ fn main() -> Result<()> {
     // directory or a plugin name, and it runs on its own thread like every other stage.
     let federation = Arc::new(sync_stage::Federation::start(store.clone(), &config, &paths));
     let federation_for_shutdown = federation.clone();
+    let recall = sync_stage::recall(&config, &paths);
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -214,6 +215,7 @@ fn main() -> Result<()> {
                 .unwrap_or_else(|_| cortex_agent::trash::Trash::at(paths.trash_dir())),
             paths.database(),
             federation.clone(),
+            recall,
         ));
         let listener = server::bind(&paths.socket())
             .with_context(|| format!("could not bind {}", paths.socket().display()))?;

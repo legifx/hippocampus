@@ -17,6 +17,7 @@ pub mod derive;
 pub mod filedrop;
 pub mod plugin;
 pub mod protocol;
+pub mod recall;
 pub mod transport;
 pub mod worker;
 

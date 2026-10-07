@@ -75,6 +75,8 @@ pub struct Daemon {
     pub federation: Arc<crate::sync_stage::Federation>,
     /// The live pulse the Agent View draws: recent calls and zone heat, in memory only.
     pub pulse: Arc<crate::pulse::Pulse>,
+    /// The peer `brain.ask` also asks, when `federation.recall_plugin` names one (D126).
+    pub recall: Option<Arc<cortex_sync::recall::Recall>>,
 }
 
 impl Daemon {
@@ -91,6 +93,7 @@ impl Daemon {
         trash: cortex_agent::trash::Trash,
         database_path: PathBuf,
         federation: Arc<crate::sync_stage::Federation>,
+        recall: Option<Arc<cortex_sync::recall::Recall>>,
     ) -> Self {
         let policy = Policy::new(&config.agent, config.index.extra_deny.clone());
         Self {
@@ -110,6 +113,7 @@ impl Daemon {
             database_path,
             federation,
             pulse: Arc::new(crate::pulse::Pulse::new()),
+            recall,
             started: Instant::now(),
             shutdown: Arc::new(Notify::new()),
         }
@@ -1776,6 +1780,12 @@ async fn dispatch_inner(
                 return Err(RpcError::invalid_params("question is empty"));
             }
             let limit = params.limit.unwrap_or(5).clamp(1, 12);
+            // The peer is asked first and answers while this machine searches (D126): its
+            // deadline runs alongside retrieval and the decision model, not after them.
+            let peer = daemon.recall.clone().map(|recall| {
+                let asked = question.clone();
+                tokio::task::spawn_blocking(move || recall.query(&asked, PEER_ITEMS))
+            });
 
             // Where it is written down: files, by meaning and by words — bulk data dropped,
             // one candidate per file — and, when the question names a project, that project's
@@ -1922,17 +1932,48 @@ async fn dispatch_inner(
             })
             .await
             .map_err(|e| RpcError::internal(format!("curator task failed: {e}")))?;
+            let mut result = result;
+            let mut peer_note = String::new();
+            if let Some(handle) = peer {
+                match handle.await {
+                    Ok(Ok(found)) => {
+                        peer_note = format!(", {} from the peer", found.len());
+                        result.items.extend(found.into_iter().map(|p| cortex_rpc::protocol::AskItem {
+                            kind: "peer".into(),
+                            path: Some(p.location),
+                            memory_id: None,
+                            title: p.title,
+                            why: None,
+                            snippet: p.snippet,
+                            zone: None,
+                        }));
+                        result.text = crate::curator::render(
+                            &result.question,
+                            result.answer.as_deref(),
+                            &result.items,
+                            &result.curator,
+                        );
+                    }
+                    // A peer that is away costs this answer nothing but the note.
+                    Ok(Err(e)) => {
+                        tracing::debug!(error = %e, "recall peer did not answer");
+                        peer_note = ", peer did not answer".into();
+                    }
+                    Err(e) => tracing::warn!(error = %e, "recall task failed"),
+                }
+            }
 
             auditor.allowed(
                 indexer::unix_now(),
                 "brain.ask",
                 &serde_json::json!({ "question": question, "limit": limit }),
                 &format!(
-                    "{} items, {} mode, {} candidates, {} ms",
+                    "{} items, {} mode, {} candidates, {} ms{}",
                     result.items.len(),
                     result.curator.mode,
                     result.curator.candidates,
-                    result.curator.retrieval_ms + result.curator.model_ms
+                    result.curator.retrieval_ms + result.curator.model_ms,
+                    peer_note
                 ),
             );
             json(result)
@@ -2907,6 +2948,8 @@ fn optional<T: serde::de::DeserializeOwned + Default>(
 /// memories with their attribution. A default that filled a tenth of the window would be a
 /// default nobody leaves alone.
 const DEFAULT_CONTEXT_BUDGET: usize = 2_048;
+/// How many of the peer's items `brain.ask` lists, on top of its own `limit` (D126).
+const PEER_ITEMS: usize = 3;
 
 /// `YYYYmmdd-HHMMSS` in UTC, for backup file names: sortable, and the same on every machine.
 fn time_stamp() -> String {

@@ -1172,6 +1172,16 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
 
+### 2026-10-07 — `brain.ask` asks the peer too (D126)
+
+The owner wants the peer to be the main memory and this Cortex its local part. New plugin kind
+`recall` (`cortex-core::plugins`), `cortex_sync::recall::Recall`, and `plugin::exchange` pulled out
+of the sync transport so both kinds share one process/deadline rule. `federation.recall_plugin`
+(unset by default) names the declaration; `brain.ask` starts it before searching and appends up
+to three `peer` items, rendered as `peer: <location> — <title>`. Not stored, not given to the
+curator, `brain_context` unchanged. Tests: four in `recall.rs` (kind check, limit and size cut,
+question reaches the plugin, deadline), a config default test. The Extension ships the plugin.
+
 ### 2026-09-27 (later) — Liquid: the interface redone at the owner's request
 
 "Das GUI ist noch sehr eintönig und hässlich — liquid glass, kleine Animationen, minimalistisch."

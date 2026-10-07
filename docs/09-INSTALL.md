@@ -145,6 +145,8 @@ batch_interval_ms = 1000
 max_backoff_ms = 300000
 send_chunk_text = false        # file content never leaves unless this is true
 send_file_activity = true      # which files were touched (metadata) does, unless this is false
+# recall_plugin = "..."        # a kind = "recall" plugin: brain.ask also asks the peer (D126).
+                               # The question leaves the machine; unset, nothing does.
 
 [log]
 filter = "info"                # a `tracing` filter, e.g. "cortexd=debug"

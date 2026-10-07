@@ -193,3 +193,27 @@ pub fn describe(s: &SyncStatus) -> String {
     }
     parts.join("; ")
 }
+
+/// The peer `brain.ask` asks, if `federation.recall_plugin` names a `recall` declaration (D126).
+/// A missing or wrongly-kinded declaration is logged and leaves `brain.ask` local: a typo in a
+/// config file must not cost an agent its answers.
+pub fn recall(config: &Config, paths: &Paths) -> Option<Arc<cortex_sync::recall::Recall>> {
+    let name = config.federation.recall_plugin.as_ref()?;
+    let decl = match PluginDecl::load(&paths.plugins_dir(), name) {
+        Ok(decl) => decl,
+        Err(e) => {
+            tracing::warn!(error = %e, "recall plugin declaration unreadable; brain.ask stays local");
+            return None;
+        }
+    };
+    match cortex_sync::recall::Recall::new(name.clone(), decl) {
+        Ok(recall) => {
+            tracing::info!(plugin = %name, "brain.ask also asks the peer");
+            Some(Arc::new(recall))
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "recall plugin refused; brain.ask stays local");
+            None
+        }
+    }
+}

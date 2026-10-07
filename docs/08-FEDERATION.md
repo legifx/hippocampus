@@ -196,6 +196,40 @@ above and talks to a concrete Main Brain in whatever way that brain wants. It ma
 translate, authenticate, or hold a connection open in a daemon of its own. The Core never
 learns which of those it does.
 
+### The way back: `recall` (D126)
+
+Everything above sends *to* the peer. A `recall` plugin is how an agent here reads what the
+peer knows, at the moment it asks:
+
+```toml
+# config.toml
+[federation]
+recall_plugin = "main-brain-recall"   # → plugins/main-brain-recall.toml
+```
+
+```toml
+# plugins/main-brain-recall.toml
+kind = "recall"
+command = "/opt/hippocampus-ext/bin/recall"
+timeout_ms = 2500
+```
+
+```json
+{"jsonrpc": "2.0", "id": 1, "method": "recall.query", "params": {"question": "…", "limit": 3}}
+{"jsonrpc": "2.0", "id": 1, "result": {"items": [{"title": "…", "location": "…", "snippet": "…"}]}}
+```
+
+`brain.ask` starts the plugin before it searches, so the peer's deadline runs alongside
+retrieval and the curator, and appends at most three items of kind `peer` to its answer. They are
+shown and never stored: the index stays a cache of this machine's files. A peer that does not
+answer in time, refuses, or cannot be started costs the answer nothing but a note in the audit
+line. The exchange is the same one-process-per-call JSON-RPC as `sync` (`plugin::exchange`), and a
+declaration of one kind is never run as the other.
+
+**This is the one path on which a question leaves the machine** — "searches never" in the table
+above holds for the event stream, not for this. It is off unless `recall_plugin` names a
+declaration, and it does not depend on `federation.enabled`.
+
 ---
 
 ## Backpressure and the offline case

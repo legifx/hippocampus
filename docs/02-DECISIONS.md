@@ -3731,3 +3731,25 @@ active destination is one sliding pill, and all motion is one-shot. Details and 
 Three bugs fell out of the redesign and are fixed with it: two-line result rows overlapping in a
 28 px row, left-border accents bent into brackets by the row radius, and an inspector that showed
 the window through it.
+
+### D126 — `brain.ask` may also ask the peer, through a `recall` plugin
+
+**Status:** ACCEPTED · 2026-10-07 · extends D9/D17 (plugins, federation)
+
+The owner's peer is the bigger memory: this machine's Cortex is the local part of it, and what the
+peer knows was invisible to an agent here unless it went and looked. Federation only ever sent
+*to* the peer. The way back is a second plugin kind, `recall`: `brain.ask` hands its question to
+the declared plugin when it starts, retrieval and the curator run meanwhile, and up to three items
+the peer returns are appended as kind `peer`, never fed to the curator and never stored (R2: the
+index is a cache of this machine's files, and a peer's answer is not one of them).
+
+Alternatives: a separate MCP tool for the peer (agents would have to know to call it, and the
+instructions everywhere say `brain_ask` first); syncing the peer's store down into this index
+(breaks R2 and doubles the store); feeding the peer's items to the curator (one more slow input
+for a 4B model, and a peer that echoes this machine's own memories would crowd them out — the
+plugin is expected to leave out what came from here).
+
+What it costs: a question now leaves the machine, which no setting did before. Hence off by
+default and independent of `federation.enabled`; the Core still knows no address (the plugin
+does). Latency: the peer's deadline overlaps the local work. Measured with the Extension's plugin
+over the owner's tailnet: 0.13 s per question on a kept-open connection, 0.56 s for the first.

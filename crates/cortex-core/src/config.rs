@@ -313,6 +313,12 @@ pub struct FederationConfig {
     /// They are metadata, which the default lets through; memories and annotations are always
     /// sent, searches never.
     pub send_file_activity: bool,
+    /// The name of a `kind = "recall"` declaration in `plugins/<name>.toml`, or unset. When set,
+    /// `brain.ask` also hands its question to that plugin and lists what the peer knows next
+    /// to what this machine knows (D126). This is the one place a question leaves the machine,
+    /// so it is off unless named here; it does not depend on `enabled`, which is about sending
+    /// events.
+    pub recall_plugin: Option<String>,
 }
 
 impl Default for FederationConfig {
@@ -328,6 +334,7 @@ impl Default for FederationConfig {
             max_backoff_ms: 300_000,
             send_chunk_text: false,
             send_file_activity: true,
+            recall_plugin: None,
         }
     }
 }
@@ -614,6 +621,7 @@ mod tests {
         let c = Config::default();
         assert!(c.index.content_roots.is_empty());
         assert!(!c.federation.enabled);
+        assert!(c.federation.recall_plugin.is_none(), "no question leaves the machine by default");
     }
 
     #[test]
