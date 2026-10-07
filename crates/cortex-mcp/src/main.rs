@@ -16,7 +16,7 @@ mod tools;
 use anyhow::{Context, Result};
 use clap::Parser;
 use cortex_core::paths::Paths;
-use cortex_rpc::client::Client;
+use cortex_rpc::client::{Client, ClientError};
 use cortex_rpc::protocol::{method, AgentStatusResult, IdentifyParams, IdentifyResult};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -95,11 +95,51 @@ async fn main() -> Result<()> {
         "serving the Agent Surface over MCP"
     );
 
-    serve(client).await
+    serve(Conn { client, socket, actor: args.actor }).await
+}
+
+/// The daemon connection, and what it takes to make it again. An agent session outlives a
+/// daemon restart — a new binary, a config change — and before 2026-10-07 every tool call after
+/// one answered "Broken pipe" until the agent's harness was restarted (D127).
+struct Conn {
+    client: Client,
+    socket: std::path::PathBuf,
+    actor: String,
+}
+
+impl Conn {
+    async fn reconnect(&mut self) -> Result<(), ClientError> {
+        let mut client = Client::connect(&self.socket).await?;
+        let _: IdentifyResult = client
+            .call(method::IDENTIFY, IdentifyParams { session: None, actor: self.actor.clone() })
+            .await?;
+        self.client = client;
+        tracing::info!(actor = %self.actor, "reconnected to the daemon");
+        Ok(())
+    }
+
+    /// One call, and one retry on a fresh connection when the old one was gone before the
+    /// request could be written. A connection that died *after* the request was sent is made
+    /// again but the call is not repeated: the daemon may have done it, and a gated write or a
+    /// memory must not happen twice.
+    async fn call(&mut self, method_name: &str, arguments: Value) -> Result<Value, ClientError> {
+        match self.client.call::<_, Value>(method_name, arguments.clone()).await {
+            Err(ClientError::Transport(e)) => {
+                tracing::warn!(error = %e, "daemon connection lost; reconnecting");
+                self.reconnect().await?;
+                self.client.call(method_name, arguments).await
+            }
+            Err(ClientError::NoResponse) => {
+                let _ = self.reconnect().await;
+                Err(ClientError::NoResponse)
+            }
+            other => other,
+        }
+    }
 }
 
 /// The stdio loop. One JSON value per line in, one per line out.
-async fn serve(mut client: Client) -> Result<()> {
+async fn serve(mut client: Conn) -> Result<()> {
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     let mut stdout = tokio::io::stdout();
 
@@ -137,7 +177,7 @@ async fn serve(mut client: Client) -> Result<()> {
     Ok(())
 }
 
-async fn handle(client: &mut Client, method_name: &str, params: Value) -> Result<Option<Value>> {
+async fn handle(client: &mut Conn, method_name: &str, params: Value) -> Result<Option<Value>> {
     match method_name {
         "initialize" => Ok(Some(json!({
             "protocolVersion": PROTOCOL_VERSION,
@@ -202,7 +242,7 @@ async fn handle(client: &mut Client, method_name: &str, params: Value) -> Result
             // The daemon decides. Its refusal is content, not a protocol error: an agent that
             // is told "outside the allow-list" can ask the user to widen it, whereas a
             // transport error tells it only that something went wrong.
-            match client.call::<_, Value>(tool.method, arguments).await {
+            match client.call(tool.method, arguments).await {
                 Ok(mut result) => {
                     // The text block is the whole answer pretty-printed, unless the tool names a
                     // field that already *is* what a model should read — in which case that

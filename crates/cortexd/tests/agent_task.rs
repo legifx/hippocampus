@@ -158,6 +158,34 @@ impl Session {
     }
 }
 
+impl Session {
+    /// Stop the daemon and start a new one on the same root, the MCP server left running — what
+    /// a new binary or a config change does to every agent session on the machine.
+    fn restart_daemon(&mut self) {
+        let _ = Command::new(bin("cortex"))
+            .arg("--root")
+            .arg(self.root.path())
+            .arg("shutdown")
+            .output();
+        let _ = self.daemon.wait();
+        self.daemon = Command::new(bin("cortexd"))
+            .arg("--root")
+            .arg(self.root.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let socket = self.root.path().join("run/cortex.sock");
+        for _ in 0..100 {
+            if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        panic!("the daemon did not come back");
+    }
+}
+
 impl Drop for Session {
     fn drop(&mut self) {
         let _ = self.mcp.kill();
@@ -302,4 +330,19 @@ fn the_session_reports_the_tools_it_actually_has() {
     for tool in listed["tools"].as_array().unwrap() {
         assert_eq!(tool["inputSchema"]["type"], json!("object"), "{tool}");
     }
+}
+
+#[test]
+fn a_session_survives_a_daemon_restart() {
+    // Before D127 every call after a restart answered "Broken pipe" until the agent's harness
+    // was restarted too.
+    let mut session = Session::start();
+    session.call("brain_memories", json!({}));
+    session.restart_daemon();
+    let after = session.call("brain_memories", json!({}));
+    assert!(after.get("memories").is_some(), "{after}");
+    // And it is still the same actor on the new connection, not an anonymous one.
+    session.call("brain_remember", json!({ "text": "written after the restart", "kind": "fact" }));
+    let mine = session.call("brain_memories", json!({})).to_string();
+    assert!(mine.contains("written after the restart") && mine.contains("agent:claude"), "{mine}");
 }

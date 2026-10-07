@@ -3753,3 +3753,16 @@ What it costs: a question now leaves the machine, which no setting did before. H
 default and independent of `federation.enabled`; the Core still knows no address (the plugin
 does). Latency: the peer's deadline overlaps the local work. Measured with the Extension's plugin
 over the owner's tailnet: 0.13 s per question on a kept-open connection, 0.56 s for the first.
+
+### D127 — The MCP bridge makes its daemon connection again
+
+**Status:** ACCEPTED · 2026-10-07
+
+`cortex-mcp` connected once at start. A daemon restart — a new binary, a config change — left
+every running agent session with a dead socket, and every tool call answered "Broken pipe" until
+the agent's harness was restarted; on the owner's machine that hit every open session twice in one
+day. Now a call that fails because the connection is gone before the request was written
+reconnects, identifies as the same actor, and is sent once more. A connection that dies *after*
+the request was written is made again but the call is not repeated, because the daemon may have
+carried it out, and a gated write or a memory must not happen twice; the agent gets the error and
+decides. Test: `a_session_survives_a_daemon_restart` (agent_task.rs).

@@ -1181,6 +1181,9 @@ of the sync transport so both kinds share one process/deadline rule. `federation
 to three `peer` items, rendered as `peer: <location> — <title>`. Not stored, not given to the
 curator, `brain_context` unchanged. Tests: four in `recall.rs` (kind check, limit and size cut,
 question reaches the plugin, deadline), a config default test. The Extension ships the plugin.
+Same day, D127: `cortex-mcp` reconnects after a daemon restart instead of answering "Broken pipe"
+for the rest of the session (one retry, only when the request was never written). Installed:
+`cortexd` and `cortex-mcp` only (the UI in ~/.local/bin is still the 2026-09-27 build).
 
 ### 2026-09-27 (later) — Liquid: the interface redone at the owner's request
 
