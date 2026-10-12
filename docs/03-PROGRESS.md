@@ -1172,6 +1172,20 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
 
+### 2026-10-12 — A deleted directory no longer rebuilds the whole vector index (D128)
+
+The owner's machine lagged with btop showing little: `cortexd` at one core and 43 MB/s, IO pressure
+11–16 % full, swap thrashing. The log showed `rebuilding the vector index from the store` every four
+to five minutes since login, `expected` shrinking by 2–4 k each time (825 148 → 814 950). Cause: a
+file or directory removed from disk goes through `remove_path_on`, whose `DELETE FROM nodes`
+cascades the chunks away without the `dead_chunks` note of 0009 (and leaves their contentless FTS
+rows behind); the same held for the destination row a rename overwrites. The reconcile then saw
+`present > expected` and refilled ~820 k vectors. A build directory churning (a Fabric gametest)
+kept it going. Fix: `bury_chunks_on` notes the chunks and drops their FTS rows before both deletes.
+Tests: `removing_a_directory_notes_its_chunks_as_dead`, `a_rename_onto_an_existing_file_notes_the_overwritten_chunks`
+(the first fails without the fix); cortex-store 192/192. FTS rows orphaned before this stay until
+a `--rebuild-index`; they match nothing a search can show, since the join to `chunks` drops them.
+
 ### 2026-10-07 — `brain.ask` asks the peer too (D126)
 
 The owner wants the peer to be the main memory and this Cortex its local part. New plugin kind

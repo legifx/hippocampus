@@ -3766,3 +3766,21 @@ reconnects, identifies as the same actor, and is sent once more. A connection th
 the request was written is made again but the call is not repeated, because the daemon may have
 carried it out, and a gated write or a memory must not happen twice; the agent gets the error and
 decides. Test: `a_session_survives_a_daemon_restart` (agent_task.rs).
+
+### D128 — Every path that deletes a file node notes its chunks as dead
+
+**Status:** ACCEPTED · 2026-10-12
+
+D-0009 gave the embedding stage a `dead_chunks` table so a removed chunk's vector is removed one by
+one instead of by a full rebuild — but only `replace_chunks` and `delete_chunks` wrote to it. Removing
+a path (a file or a whole directory deleted on disk) and the overwrite inside a rename deleted
+`nodes` rows and let `ON DELETE CASCADE` take the chunks, with no note and no FTS clean-up. On the
+owner's machine a churning build directory turned that into a rebuild of ~820 k vectors every four to
+five minutes, which with the swap traffic made the whole desktop lag. Now both paths call
+`bury_chunks_on` first, set-based (one `INSERT … SELECT`, one `DELETE … IN`), so a directory with
+thousands of files costs two statements. Rule for later code: a `DELETE FROM nodes` on file nodes
+goes through `bury_chunks_on` or deletes the chunks itself first; a cascade alone is a bug.
+
+Alternative not taken: tolerate small drifts in `reconcile_index`. It hides the leak instead of
+closing it, and a search would keep hitting vectors of files that are gone.
+

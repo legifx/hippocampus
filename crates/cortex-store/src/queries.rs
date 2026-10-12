@@ -767,8 +767,24 @@ fn append_episode_on(
     Ok(EpisodeId(conn.last_insert_rowid()))
 }
 
+/// Note the chunks of every node `filter` selects as dead and drop their FTS rows, ahead of a
+/// `DELETE FROM nodes` that cascades the chunks themselves away.
+///
+/// The cascade reaches neither the contentless FTS index nor the vector index. Before this, a
+/// deleted build directory left thousands of orphan vectors behind, the embedding stage saw
+/// `present > expected` and rebuilt the whole index — minutes of CPU and disk on a large corpus,
+/// again after every churn of that directory (0009 migration, D128).
+fn bury_chunks_on(conn: &rusqlite::Connection, filter: &str, path: &str) -> Result<()> {
+    let chunks =
+        format!("SELECT c.id FROM chunks c JOIN nodes n ON n.id = c.node_id WHERE {filter}");
+    conn.execute(&format!("DELETE FROM chunks_fts WHERE rowid IN ({chunks})"), [path])?;
+    conn.execute(&format!("INSERT OR IGNORE INTO dead_chunks (chunk_id) {chunks}"), [path])?;
+    Ok(())
+}
+
 fn remove_path_on(conn: &rusqlite::Connection, path: &Path) -> Result<usize> {
     let path = path_to_str(path)?;
+    bury_chunks_on(conn, "n.path = ?1 OR n.path LIKE ?1 || '/%'", path)?;
     Ok(conn.execute(
         "DELETE FROM nodes WHERE path = ?1 OR path LIKE ?1 || '/%'",
         [path],
@@ -794,6 +810,7 @@ fn rename_node_on(conn: &rusqlite::Connection, from: &Path, to: &Path) -> Result
 
     // The destination may already exist if the move overwrote something. Its row has to go
     // first, or the unique index on `path` rejects the rename.
+    bury_chunks_on(conn, "n.path = ?1", to)?;
     conn.execute("DELETE FROM nodes WHERE path = ?1", [to])?;
 
     let moved = conn.execute("UPDATE nodes SET path = ?2 WHERE path = ?1", [from, to])?;
@@ -973,6 +990,58 @@ mod tests {
         assert_eq!(episodes[0].actor, Actor::Agent("claude".into()));
         assert_eq!(episodes[0].metadata["query"], "foo");
         assert_eq!(episodes[1].actor, Actor::Human);
+    }
+
+    fn chunked(store: &Store, path: &str, text: &str) -> NodeId {
+        let id = store.upsert_node(&upsert(NodeKind::File, path), 0).unwrap();
+        let chunk = crate::chunks::ChunkWrite {
+            ordinal: 0,
+            byte_start: 0,
+            byte_end: text.len() as i64,
+            hash: format!("h-{text}"),
+            preview: None,
+            text: text.to_string(),
+        };
+        store.replace_chunks(id, &[chunk]).unwrap();
+        id
+    }
+
+    fn searchable(store: &Store) -> i64 {
+        store
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM chunks_fts WHERE chunks_fts MATCH 'alpha OR beta OR gamma'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn removing_a_directory_notes_its_chunks_as_dead() {
+        // A cascade from `nodes` reaches `chunks` but neither the FTS rows nor the vector
+        // index. Unnoted, every deleted build directory forced a full vector index rebuild.
+        let store = Store::open_in_memory().unwrap();
+        chunked(&store, "/build/a", "alpha");
+        chunked(&store, "/build/sub/b", "beta");
+        chunked(&store, "/keep", "gamma");
+
+        store.remove_path(Path::new("/build")).unwrap();
+
+        assert_eq!(store.dead_chunks(10).unwrap().len(), 2, "both buried chunks are noted");
+        assert_eq!(searchable(&store), 1, "and only the survivor is still searchable");
+    }
+
+    #[test]
+    fn a_rename_onto_an_existing_file_notes_the_overwritten_chunks() {
+        let store = Store::open_in_memory().unwrap();
+        chunked(&store, "/a", "alpha");
+        chunked(&store, "/b", "beta");
+
+        store.rename_node(Path::new("/a"), Path::new("/b")).unwrap();
+
+        assert_eq!(store.dead_chunks(10).unwrap().len(), 1, "the overwritten chunk is noted");
+        assert_eq!(searchable(&store), 1);
     }
 
     #[test]
