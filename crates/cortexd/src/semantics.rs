@@ -82,6 +82,7 @@ pub struct IdleEmbedder {
     model: cortex_embed::ModelId,
     backend: String,
     max_batch: usize,
+    cpu_threads: usize,
     last_used: Mutex<Instant>,
     loading: AtomicBool,
     releases: AtomicU64,
@@ -96,6 +97,7 @@ impl IdleEmbedder {
             model: first.model(),
             backend: first.backend(),
             max_batch: first.max_batch(),
+            cpu_threads: first.cpu_threads(),
             inner: RwLock::new(Some(first)),
             loader: Box::new(loader),
             last_used: Mutex::new(Instant::now()),
@@ -220,6 +222,10 @@ impl Embedder for IdleHandle {
 
     fn max_batch(&self) -> usize {
         self.0.max_batch
+    }
+
+    fn cpu_threads(&self) -> usize {
+        self.0.cpu_threads
     }
 
     fn backend(&self) -> String {

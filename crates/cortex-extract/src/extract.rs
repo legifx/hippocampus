@@ -78,10 +78,12 @@ fn read_text(path: &Path, limits: ExtractLimits) -> Result<Extracted, ExtractErr
     let truncated = bytes_read > limits.max_bytes;
     if truncated {
         buffer.truncate(limits.max_bytes);
-        // Do not cut a character in half; the tail is worth less than the corruption costs.
-        while !buffer.is_empty() && std::str::from_utf8(&buffer).is_err() {
-            buffer.pop();
-        }
+        // Do not cut a character in half: drop an incomplete sequence at the very end, and only
+        // that. Malformed bytes earlier are the lossy decoder's business, exactly as when the file
+        // is read whole. (This used to pop bytes until the *whole* buffer validated, which cut a
+        // file with one bad byte back to that byte — so no chunk after it could ever be read back,
+        // and the buffer was re-validated once per byte popped. D131.)
+        buffer.truncate(complete_prefix_len(&buffer));
     }
 
     let text = strip_bom(String::from_utf8_lossy(&buffer).into_owned());
@@ -91,6 +93,29 @@ fn read_text(path: &Path, limits: ExtractLimits) -> Result<Extracted, ExtractErr
         text,
         truncated,
     })
+}
+
+/// The length of `bytes` without an incomplete UTF-8 sequence at its end.
+///
+/// A sequence is at most four bytes, so its lead byte is among the last four. A byte that is
+/// neither a continuation nor a lead is malformed and is left for the lossy decoder.
+fn complete_prefix_len(bytes: &[u8]) -> usize {
+    for back in 1..=bytes.len().min(4) {
+        let i = bytes.len() - back;
+        let b = bytes[i];
+        if b & 0b1100_0000 == 0b1000_0000 {
+            continue;
+        }
+        let needed = match b {
+            0x00..=0x7f => 1,
+            0xc0..=0xdf => 2,
+            0xe0..=0xef => 3,
+            0xf0..=0xf7 => 4,
+            _ => 1,
+        };
+        return if back < needed { i } else { bytes.len() };
+    }
+    bytes.len()
 }
 
 /// Remove a UTF-8 byte order mark.
@@ -162,6 +187,29 @@ mod tests {
         let out = extract(&path, Handling::PlainText, ExtractLimits { max_bytes: 1001 }).unwrap();
         assert!(out.truncated);
         assert!(out.text.chars().all(|c| c == 'ä'), "truncation corrupted the text");
+    }
+
+    #[test]
+    fn a_malformed_byte_before_the_cut_does_not_shorten_a_truncated_read() {
+        // One bad byte early in a long file. The read is bounded at 500 bytes and must come back
+        // with all of them, decoded leniently — not cut back to the bad byte.
+        let mut content = b"ab\xffcd".to_vec();
+        content.extend(std::iter::repeat_n(b'x', 1000));
+        let (_tmp, path) = write("bad-byte.txt", &content);
+
+        let out = extract(&path, Handling::PlainText, ExtractLimits { max_bytes: 500 }).unwrap();
+        assert!(out.truncated);
+        assert_eq!(out.bytes_read, 500);
+        assert!(out.text.starts_with("ab\u{fffd}cd"));
+    }
+
+    #[test]
+    fn only_an_incomplete_character_at_the_end_is_dropped() {
+        assert_eq!(complete_prefix_len("a€".as_bytes()), 4);
+        assert_eq!(complete_prefix_len(&"a€".as_bytes()[..3]), 1);
+        assert_eq!(complete_prefix_len(b"a\xff"), 2);
+        assert_eq!(complete_prefix_len(b"\x80\x80\x80\x80"), 4);
+        assert_eq!(complete_prefix_len(b""), 0);
     }
 
     #[test]

@@ -33,8 +33,8 @@ pub const MAX_PAUSE: Duration = Duration::from_secs(5);
 ///
 /// The share is of **one core**, because the stage is single-threaded. On a sixteen-thread
 /// machine a share of 0.15 is therefore about one per cent of the machine, which is the
-/// intended magnitude: this work is meant to be invisible, not merely polite. When extraction
-/// becomes parallel, the share has to be divided across the workers rather than reinterpreted.
+/// intended magnitude: this work is meant to be invisible, not merely polite. A stage whose
+/// slice keeps several cores busy divides its share first, with [`share_per_worker`].
 pub fn pause_after(worked: Duration, share: f64) -> Duration {
     // A share at or above one means "no throttling asked for"; anything at or below zero means
     // the work is not allowed to proceed at all, and the caller should be waiting, not working.
@@ -45,9 +45,21 @@ pub fn pause_after(worked: Duration, share: f64) -> Duration {
         return MAX_PAUSE;
     }
 
-    let factor = (1.0 - share) / share;
-    let pause = worked.mul_f64(factor);
-    pause.min(MAX_PAUSE)
+    pause_after_uncapped(worked, share).min(MAX_PAUSE)
+}
+
+/// [`pause_after`] without the [`MAX_PAUSE`] cap, for a caller whose sleep wakes for stop requests
+/// on its own. A stage whose slice can be longer than [`SLICE`] needs it — one inference call is one
+/// slice: capped, a 1.5-second slice at a share of 0.0375 rests 5 s instead of 38 s, and the share
+/// actually spent is six times the configured one (D129).
+pub fn pause_after_uncapped(worked: Duration, share: f64) -> Duration {
+    if share >= 1.0 {
+        return Duration::ZERO;
+    }
+    if share <= 0.0 {
+        return MAX_PAUSE;
+    }
+    worked.mul_f64((1.0 - share) / share)
 }
 
 /// The share that applies right now.
@@ -63,12 +75,50 @@ pub fn share_for(active: bool, active_share: f64, idle_share: f64) -> f64 {
     }
 }
 
+/// The share to pass to [`pause_after`] when a slice keeps `workers` cores busy at once (D22, D129).
+///
+/// The pause arithmetic measures wall time. An embedder on eight threads costs eight times the CPU
+/// of the time it takes, so an undivided share of 0.8 held eight cores 80 % of the time instead of
+/// one. Divided, the total is back where the configuration put it: 0.8 over four workers is 0.2 of
+/// the wall clock, which is 0.8 of one core. A share of one or more still means "no throttling", and
+/// zero workers count as one.
+pub fn share_per_worker(share: f64, workers: usize) -> f64 {
+    if share >= 1.0 {
+        return share;
+    }
+    share / workers.max(1) as f64
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn millis(n: u64) -> Duration {
         Duration::from_millis(n)
+    }
+
+    #[test]
+    fn a_slice_on_four_cores_holds_a_quarter_of_the_share_each() {
+        assert_eq!(share_per_worker(0.8, 4), 0.2);
+        // 100 ms on four cores is 400 ms of CPU; at 0.8 of one core that needs 400 ms of pause.
+        assert_eq!(pause_after(millis(100), share_per_worker(0.8, 4)), millis(400));
+    }
+
+    #[test]
+    fn a_long_slice_rests_its_whole_pause_when_the_caller_can_wait() {
+        let share = share_per_worker(0.15, 4);
+        assert_eq!(pause_after(millis(1500), share), MAX_PAUSE);
+        let full = pause_after_uncapped(millis(1500), share);
+        assert!(full > Duration::from_secs(38) && full < Duration::from_secs(39), "{full:?}");
+        assert_eq!(pause_after_uncapped(millis(100), 1.0), Duration::ZERO);
+    }
+
+    #[test]
+    fn no_throttling_stays_no_throttling_and_zero_workers_count_as_one() {
+        assert_eq!(share_per_worker(1.0, 8), 1.0);
+        assert_eq!(pause_after(millis(100), share_per_worker(1.0, 8)), Duration::ZERO);
+        assert_eq!(share_per_worker(0.15, 0), 0.15);
+        assert_eq!(share_per_worker(0.15, 1), 0.15);
     }
 
     #[test]

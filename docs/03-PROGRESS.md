@@ -1172,6 +1172,30 @@ See `02-DECISIONS.md` for the full log with reasoning. Summary of what is settle
 Newest entry on top. One entry per working session. Keep entries short and factual — what
 changed, what was learned, what the next agent needs to know.
 
+### 2026-11-02 — The embedder spent eight times its share, and nobody told it the owner was there (D129, D130, D131)
+
+Third defect, found by measuring after the first two: the queue was blocked at its head (D131).
+`model.status` showed `embedded_this_run: 0`, `stale` rising in steps of 64, and 65 % of a core —
+every claim was a 3.2 s scan for the same 64 chunks of one binary file, which a bounded read cut
+back to its first malformed byte so they could never be read back. Fixed at both ends: a cursor
+through the queue, and `read_text` drops only an incomplete trailing character.
+
+The owner's desktop stuttered several times a day; one of three causes was `cortexd`. Two defects
+together: the embedding stage's duty cycle counted wall time while the ONNX pool ran eight threads
+(D22 asked for the share to be divided, it was not — D129), and only the overlay and interactive
+requests signalled activity, so gaming or watching a video ran the idle budget (0.8) under the
+person (D130). Fix one: `Embedder::cpu_threads` + `throttle::share_per_worker`. Fix two: a new
+binary `cortex-presence` (crate of its own, `wayland-client` + `wayland-protocols`, pure Rust) that
+pings while `ext-idle-notify-v1` reports input, with `hippocampus-presence.service`; install,
+uninstall, `.deb` and AppDir scripts list it. Tests: two throttle tests, four presence tests.
+
+Measured on the owner's index on the way, for whoever reads `cortex overview` next: "940 444
+vectors (61 % covered)" compares rows of `embeddings` (one per distinct text, D26, and kept for
+texts no chunk has any more) with chunks. The real backlog was 94 890 chunks over 46 429 distinct
+texts. Copies of a repository (git worktrees) are *not* embedded again — D26 holds. The overview's
+coverage figure is misleading and not fixed here. Also seen: the nightly pass last ran 16 days ago
+(`last pass` in the overview) although the timer is installed — not investigated in this session.
+
 ### 2026-10-12 — A deleted directory no longer rebuilds the whole vector index (D128)
 
 The owner's machine lagged with btop showing little: `cortexd` at one core and 43 MB/s, IO pressure

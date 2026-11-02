@@ -179,6 +179,30 @@ mod tests {
     }
 
     #[test]
+    fn a_chunk_after_a_malformed_byte_is_read_back() {
+        // The file as extraction saw it: read whole, decoded leniently. Every chunk must come back
+        // through the bounded read a snippet uses, including the ones past the bad byte (D131).
+        let tmp = tempfile::tempdir().unwrap();
+        let mut bytes = b"Kopf \xff\x00 mit einem kaputten Byte.\n\n".to_vec();
+        bytes.extend("Die Blickachse bleibt konstant und die Kamera folgt ihr. ".repeat(80).as_bytes());
+        let path = tmp.path().join("mixed.bin");
+        std::fs::write(&path, &bytes).unwrap();
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        let chunks = chunk::chunk(&text, Handling::PlainText);
+        assert!(chunks.len() >= 2, "the fixture must produce more than one chunk");
+
+        for c in &chunks {
+            let read_back = chunk_text(Location {
+                path: &path,
+                byte_start: c.byte_start,
+                byte_end: c.byte_end,
+                hash: &c.hash,
+            });
+            assert_eq!(read_back.as_deref(), Some(c.text.as_str()), "chunk at {}", c.byte_start);
+        }
+    }
+
+    #[test]
     fn a_chunk_is_read_back_exactly_as_it_was_indexed() {
         let tmp = tempfile::tempdir().unwrap();
         let body = "Die Blickachse bleibt konstant und die Kamera folgt ihr. ".repeat(40);

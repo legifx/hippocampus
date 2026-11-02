@@ -51,6 +51,7 @@ pub struct OnnxEmbedder {
     tokenizer: Tokenizer,
     spec: ModelSpec,
     backend: String,
+    cpu_threads: usize,
 }
 
 impl OnnxEmbedder {
@@ -94,13 +95,15 @@ impl OnnxEmbedder {
         let tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|e| EmbedError::Tokenizer(e.to_string()))?;
 
-        let (session, backend) = build_session(&model_path, device, threads, gpu_memory_mb)?;
+        let (session, backend, cpu_threads) =
+            build_session(&model_path, device, threads, gpu_memory_mb)?;
 
         Ok(Self {
             session: Mutex::new(session),
             tokenizer,
             spec,
             backend,
+            cpu_threads,
         })
     }
 
@@ -218,6 +221,10 @@ impl Embedder for OnnxEmbedder {
     fn backend(&self) -> String {
         self.backend.clone()
     }
+
+    fn cpu_threads(&self) -> usize {
+        self.cpu_threads
+    }
 }
 
 /// `mmarco-mMiniLMv2-L12-H384-v1` through ONNX Runtime.
@@ -262,7 +269,7 @@ impl OnnxReranker {
 
         let tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|e| EmbedError::Tokenizer(e.to_string()))?;
-        let (session, backend) = build_session(&model_path, device, threads, gpu_memory_mb)?;
+        let (session, backend, _) = build_session(&model_path, device, threads, gpu_memory_mb)?;
 
         Ok(Self {
             session: Mutex::new(session),
@@ -362,8 +369,15 @@ fn build_session(
     device: Device,
     threads: usize,
     gpu_memory_mb: usize,
-) -> Result<(Session, String)> {
-    let cpu = |reason: Option<String>| -> Result<(Session, String)> {
+) -> Result<(Session, String, usize)> {
+    // Cores one run keeps busy: the intra-op pool on the CPU (zero lets the runtime take every
+    // core), one feeding thread on the GPU. The embedding stage divides its share by it (D129).
+    let cpu_threads = if threads == 0 {
+        std::thread::available_parallelism().map_or(1, |n| n.get())
+    } else {
+        threads
+    };
+    let cpu = |reason: Option<String>| -> Result<(Session, String, usize)> {
         let mut builder = Session::builder()
             .map_err(inference)?
             .with_intra_threads(threads)
@@ -373,7 +387,7 @@ fn build_session(
         if let Some(reason) = reason {
             backend.push_str(&format!(" — no gpu: {reason}"));
         }
-        Ok((session, backend))
+        Ok((session, backend, cpu_threads))
     };
 
     match device {
@@ -394,7 +408,7 @@ fn build_session(
             let cuda_backend = format!("onnx, cuda ({gpu_memory_mb} MB cap)");
 
             match attempt {
-                Ok(session) => Ok((session, cuda_backend)),
+                Ok(session) => Ok((session, cuda_backend, 1)),
                 Err(e) if device == Device::Cuda => Err(EmbedError::Inference(format!(
                     "the CUDA execution provider was required but could not be used: {e}"
                 ))),

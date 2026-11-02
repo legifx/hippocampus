@@ -21,7 +21,7 @@ fi
 appdir="target/packaging/Hippocampus.AppDir"
 rm -rf "$appdir"
 mkdir -p "$appdir/usr/bin" "$appdir/usr/share/applications" "$appdir/usr/share/icons/hicolor/512x512/apps"
-for binary in cortexd cortex cortex-mcp cortex-preview hippocampus; do
+for binary in cortexd cortex cortex-mcp cortex-preview cortex-presence hippocampus; do
   install -m 0755 "target/release/$binary" "$appdir/usr/bin/$binary"
 done
 install -m 0644 packaging/hippocampus.desktop "$appdir/hippocampus.desktop"
@@ -33,7 +33,7 @@ cat > "$appdir/AppRun" <<'APPRUN'
 here="$(dirname "$(readlink -f "$0")")"
 export PATH="$here/usr/bin:$PATH"
 case "${1:-}" in
-  cortexd|cortex|cortex-mcp|cortex-preview) bin="$1"; shift; exec "$here/usr/bin/$bin" "$@" ;;
+  cortexd|cortex|cortex-mcp|cortex-preview|cortex-presence) bin="$1"; shift; exec "$here/usr/bin/$bin" "$@" ;;
   *) exec "$here/usr/bin/hippocampus" "$@" ;;
 esac
 APPRUN

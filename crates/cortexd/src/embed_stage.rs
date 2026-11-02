@@ -135,6 +135,9 @@ impl Embedding {
         // there is provably nothing to embed, and asking again costs a scan of every chunk.
         let mut settled_at: Option<(i64, i64)> = None;
         let mut seen_generation = 0u64;
+        // Where the walk through the queue stands, and what this sweep has embedded so far (D131).
+        let mut cursor = 0i64;
+        let mut sweep_embedded = 0usize;
 
         while !self.state.stop_requested() {
             if self.state.is_paused() {
@@ -186,7 +189,10 @@ impl Embedding {
             }
 
             let started = Instant::now();
-            let batch = match self.store.chunks_without_embedding(session.reference(), CLAIM) {
+            let batch = match self
+                .store
+                .chunks_without_embedding_after(session.reference(), cursor, CLAIM)
+            {
                 Ok(batch) => batch,
                 Err(e) => {
                     tracing::warn!(error = %e, "could not read the embedding queue");
@@ -199,6 +205,23 @@ impl Embedding {
             // pass rather than only when the file queue is empty: a memory written during a
             // long first index run would otherwise wait hours for its vector.
             let memories_embedded = self.embed_memories(&session);
+
+            if batch.is_empty() && cursor > 0 {
+                // The end of a sweep that did not start at the head. Chunks before the cursor may
+                // have been re-derived meanwhile, so go round from the start before concluding
+                // anything — unless this sweep embedded nothing at all: then every chunk it found
+                // was unreadable, and nothing will change until extraction rewrites the table.
+                // Settle on the watermark, as an empty queue does, instead of sweeping again.
+                let fruitless = sweep_embedded == 0;
+                cursor = 0;
+                sweep_embedded = 0;
+                if fruitless {
+                    settled_at = watermark;
+                    self.sleep(idle_wait);
+                    idle_wait = (idle_wait * 2).min(MAX_QUEUE_POLL);
+                }
+                continue;
+            }
 
             if batch.is_empty() {
                 // Nothing to embed and nothing asked for a query embedding for a while: put
@@ -237,8 +260,10 @@ impl Embedding {
                 idle_wait = (idle_wait * 2).min(MAX_QUEUE_POLL);
                 continue;
             }
-            idle_wait = QUEUE_EMPTY_POLL;
             settled_at = None;
+            if let Some(last) = batch.last() {
+                cursor = last.chunk_id.0;
+            }
 
             // A batch in hand: bring the model back if it was put down, blocking this thread
             // and nobody else. Inference on a released model would fail the whole claim.
@@ -248,12 +273,15 @@ impl Embedding {
                 continue;
             }
             let embedded = self.run_batch(&session, batch, started);
-            if embedded == 0 {
+            sweep_embedded += embedded;
+            if embedded > 0 {
+                idle_wait = QUEUE_EMPTY_POLL;
+            } else {
                 // The claim was not empty but nothing came of it: every chunk in it was stale,
-                // or inference failed. Either way, claiming the same rows again at full speed
-                // would be a busy loop against a queue that only extraction can clear.
-                self.sleep(idle_wait);
-                idle_wait = (idle_wait * 2).min(MAX_QUEUE_POLL);
+                // or inference failed. The cursor has moved past it, so this is no busy loop on
+                // the same rows; but reading files back and scanning for them is work like any
+                // other, and it is paid for on the same duty cycle (one core: no inference ran).
+                self.rest(started.elapsed(), 1);
             }
             since_save += embedded;
             if since_save >= SAVE_EVERY {
@@ -321,7 +349,7 @@ impl Embedding {
                 Err(e) => {
                     self.stats.failures.fetch_add(1, Ordering::Relaxed);
                     tracing::warn!(error = %e, chunks = chunks.len(), "embedding failed");
-                    self.rest(slice_started.elapsed());
+                    self.rest(slice_started.elapsed(), session.loaded.embedder.cpu_threads());
                     slice_started = Instant::now();
                     continue;
                 }
@@ -363,7 +391,7 @@ impl Embedding {
                 tracing::warn!(error = %e, "could not add vectors to the index");
             }
 
-            self.rest(slice_started.elapsed());
+            self.rest(slice_started.elapsed(), session.loaded.embedder.cpu_threads());
             slice_started = Instant::now();
         }
 
@@ -613,7 +641,9 @@ impl Embedding {
         }
     }
 
-    fn rest(&self, worked: Duration) {
+    /// `cores`: how many cores the slice kept busy — the embedder's thread pool. The configured
+    /// share is of one core (D22), so it is divided across them (D129).
+    fn rest(&self, worked: Duration, cores: usize) {
         self.stats
             .busy_us
             .fetch_add(worked.as_micros() as u64, Ordering::Relaxed);
@@ -625,7 +655,12 @@ impl Embedding {
             self.config.resources.cpu_share_active,
             self.config.resources.cpu_share_idle,
         );
-        self.sleep(throttle::pause_after(worked, share));
+        // Uncapped: one inference call can be a slice of more than a second, and `sleep` wakes for
+        // a stop request every 250 ms anyway (D129).
+        self.sleep(throttle::pause_after_uncapped(
+            worked,
+            throttle::share_per_worker(share, cores),
+        ));
     }
 
     fn sleep(&self, total: Duration) {

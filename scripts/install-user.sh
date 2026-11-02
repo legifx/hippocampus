@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# Install Hippocampus for the current user: five binaries into ~/.local/bin, four systemd user
-# units (two services, a consolidation service and its timer), and nothing outside the home
-# directory.
+# Install Hippocampus for the current user: the binaries into ~/.local/bin, the systemd user units
+# (the daemon, the overlay, presence, consolidation, backups, the curator), and nothing outside
+# the home directory.
 #
 # The overlay is installed as a *resident* service (M4, D41): it starts hidden at login and is
 # summoned with Ctrl+Alt+Space. Its cold start is 265 ms — inside the 300 ms the milestone asks
@@ -19,7 +19,7 @@ unit_dir="${XDG_CONFIG_HOME:-${HOME}/.config}/systemd/user"
 
 # The overlay finds the thumbnailer beside itself rather than on PATH, so they have to be
 # installed together — see `Thumbnailer::beside_this_binary`.
-binaries=(cortexd cortex cortex-mcp cortex-preview hippocampus)
+binaries=(cortexd cortex cortex-mcp cortex-preview cortex-presence hippocampus)
 
 echo "Building…"
 cargo build --release --bins --manifest-path "${repo_root}/Cargo.toml"
@@ -41,7 +41,7 @@ done
 install -m 0755 "${repo_root}/scripts/hippocampus-curator" "${bin_dir}/hippocampus-curator"
 echo "  ${bin_dir}/hippocampus-curator"
 
-for unit in hippocampus-cortexd.service hippocampus-overlay.service \
+for unit in hippocampus-cortexd.service hippocampus-overlay.service hippocampus-presence.service \
             hippocampus-consolidate.service hippocampus-consolidate.timer \
             hippocampus-backup.service hippocampus-backup-full.service hippocampus-backup-full.timer \
             hippocampus-curator.service hippocampus-curator-proxy.service hippocampus-curator-proxy.socket; do
@@ -57,6 +57,7 @@ Installed. Nothing is running yet — enable what you want:
 
   systemctl --user enable --now hippocampus-cortexd.service   # the daemon, at login
   systemctl --user enable --now hippocampus-overlay.service   # the overlay, resident and hidden
+  systemctl --user enable --now hippocampus-presence.service  # tells the daemon somebody is there (D130)
   systemctl --user enable --now hippocampus-consolidate.timer # the nightly pass (D116)
   systemctl --user enable --now hippocampus-backup.service    # light backup at login and shutdown (D121)
   systemctl --user enable --now hippocampus-backup-full.timer # full backup, daily (D121)

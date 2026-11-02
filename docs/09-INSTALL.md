@@ -72,7 +72,13 @@ Then:
 cortex search invoice                          # a word, a path fragment, or a meaning
 cortex explain invoice ~/Documents/x.pdf       # why it ranked there, or why it did not
 systemctl --user enable --now hippocampus-overlay.service   # the window, on Ctrl+Alt+Space
+systemctl --user enable --now hippocampus-presence.service  # tells the daemon somebody is there (D130)
 ```
+
+Without the presence unit the daemon only knows somebody is there when the overlay or a search
+says so, and indexes at its idle budget the rest of the time. It needs a Wayland compositor with
+`ext-idle-notify-v1` (niri, sway, Hyprland and KWin among others); elsewhere it says so once and
+stops.
 
 ## 3. Running without a second brain
 

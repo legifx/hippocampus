@@ -1,0 +1,25 @@
+[package]
+name = "cortex-presence"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Tells the Cortex daemon when somebody is at the machine, from the compositor's idle protocol."
+
+[[bin]]
+name = "cortex-presence"
+path = "src/main.rs"
+
+[dependencies]
+cortex-core.workspace = true
+cortex-rpc.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+# Pure Rust, no libwayland: the client side of the core protocol and ext-idle-notify-v1 (staging).
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }

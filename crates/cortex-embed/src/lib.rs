@@ -89,6 +89,13 @@ pub trait Embedder: Send + Sync {
 
     /// A short description for `cortex status`, e.g. "onnx, cpu (8 threads)".
     fn backend(&self) -> String;
+
+    /// How many cores one [`embed`](Self::embed) call keeps busy. The embedding stage divides
+    /// its CPU share by this (D129): its duty cycle measures wall time, and a call on eight
+    /// threads costs eight times the CPU of the time it takes.
+    fn cpu_threads(&self) -> usize {
+        1
+    }
 }
 
 /// Scores a query against candidate passages, reading each pair together.

@@ -196,6 +196,22 @@ impl Store {
         model: ModelRef<'_>,
         limit: usize,
     ) -> Result<Vec<ChunkToEmbed>> {
+        self.chunks_without_embedding_after(model, 0, limit)
+    }
+
+    /// The same queue, starting after chunk id `after` (D131).
+    ///
+    /// The embedding stage walks the queue with this cursor instead of asking for the head again
+    /// and again. A chunk it cannot read back — its file moved on, or its bytes never round-trip —
+    /// stays in the queue until extraction replaces it, and at the head it blocked everything behind
+    /// it: on the owner's machine 64 such chunks of one binary file meant zero vectors written, and
+    /// each re-claim of the head was a 3-second scan. With the cursor, each sweep scans the table once.
+    pub fn chunks_without_embedding_after(
+        &self,
+        model: ModelRef<'_>,
+        after: i64,
+        limit: usize,
+    ) -> Result<Vec<ChunkToEmbed>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
             "SELECT c.id, c.node_id, n.path, c.byte_start, c.byte_end, c.hash
@@ -203,12 +219,12 @@ impl Store {
              JOIN nodes n ON n.id = c.node_id
              LEFT JOIN embeddings e
                  ON e.chunk_hash = c.hash AND e.model_id = ?1 AND e.model_version = ?2
-             WHERE e.chunk_hash IS NULL AND n.path IS NOT NULL
+             WHERE e.chunk_hash IS NULL AND n.path IS NOT NULL AND c.id > ?4
              ORDER BY c.id
              LIMIT ?3",
         )?;
         let rows = stmt
-            .query_map(params![model.id, model.version, limit as i64], |r| {
+            .query_map(params![model.id, model.version, limit as i64, after], |r| {
                 Ok(ChunkToEmbed {
                     chunk_id: ChunkId(r.get(0)?),
                     node_id: NodeId(r.get(1)?),
@@ -531,6 +547,24 @@ mod tests {
             .unwrap();
         assert_eq!(seen.len(), 3);
         assert_eq!(seen[0].1, vec![0.0, 0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn the_queue_can_be_walked_past_a_head_that_never_clears() {
+        // D131: the stage reads on from where its last claim ended, so chunks it cannot embed
+        // (stale, unreadable) no longer block everything behind them.
+        let (store, chunks) = store_with_chunks(5);
+        let head = store.chunks_without_embedding(MODEL, 2).unwrap();
+        assert_eq!(head.len(), 2);
+        let last = head.last().unwrap().chunk_id.0;
+
+        let next = store.chunks_without_embedding_after(MODEL, last, 10).unwrap();
+        assert_eq!(next.len(), 3);
+        assert!(next.iter().all(|c| c.chunk_id.0 > last));
+        assert_eq!(next[0].hash, chunks[2].hash);
+
+        let end = next.last().unwrap().chunk_id.0;
+        assert!(store.chunks_without_embedding_after(MODEL, end, 10).unwrap().is_empty());
     }
 
     #[test]

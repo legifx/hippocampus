@@ -15,6 +15,7 @@ members = [
     "crates/cortex-cli",
     "crates/cortex-mcp",
     "crates/cortex-preview",
+    "crates/cortex-presence",
     "ui/src-tauri",
     "bench/brain-sim",
     "bench/corpus-gen",

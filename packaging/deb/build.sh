@@ -6,8 +6,8 @@
 #   packaging/deb/build.sh --no-build   # package what target/release already holds
 #
 # What goes where:
-#   /usr/bin/{cortexd,cortex,cortex-mcp,cortex-preview,hippocampus}
-#   /usr/lib/systemd/user/hippocampus-{cortexd,overlay}.service   (user units; enable per user)
+#   /usr/bin/{cortexd,cortex,cortex-mcp,cortex-preview,cortex-presence,hippocampus}
+#   /usr/lib/systemd/user/hippocampus-{cortexd,overlay,presence}.service   (user units; enable per user)
 #   /usr/share/applications/hippocampus.desktop
 #   /usr/share/icons/hicolor/512x512/apps/hippocampus.png
 #   /usr/share/doc/hippocampus/{README.md,copyright}
@@ -39,12 +39,12 @@ mkdir -p "$pkg/DEBIAN" "$pkg/usr/bin" "$pkg/usr/lib/systemd/user" \
          "$pkg/usr/share/applications" "$pkg/usr/share/icons/hicolor/512x512/apps" \
          "$pkg/usr/share/doc/hippocampus"
 
-for binary in cortexd cortex cortex-mcp cortex-preview hippocampus; do
+for binary in cortexd cortex cortex-mcp cortex-preview cortex-presence hippocampus; do
   source="target/release/$binary"
   [[ -x "$source" ]] || { echo "missing: $source (build first, or drop --no-build)" >&2; exit 1; }
   install -m 0755 "$source" "$pkg/usr/bin/$binary"
 done
-for unit in hippocampus-cortexd.service hippocampus-overlay.service; do
+for unit in hippocampus-cortexd.service hippocampus-overlay.service hippocampus-presence.service; do
   sed 's|%h/.local/bin/|/usr/bin/|' "packaging/systemd/$unit" > "$pkg/usr/lib/systemd/user/$unit"
   chmod 0644 "$pkg/usr/lib/systemd/user/$unit"
 done

@@ -1,0 +1,20 @@
+[Unit]
+Description=Hippocampus presence (tells the daemon when somebody is at the machine)
+Documentation=https://github.com/hippocampus-fm/hippocampus
+
+# Same binding as the overlay: `PartOf` and `After`, never `Requisite` (see that unit).
+PartOf=graphical-session.target
+After=graphical-session.target hippocampus-cortexd.service
+
+[Service]
+Type=simple
+# Asks the compositor through ext-idle-notify-v1 and pings the daemon every 30 s while there is
+# input (D130). Without it, only the overlay and interactive requests count as somebody being
+# there, and the index runs at its idle budget under a person who is gaming or watching a video.
+# A compositor without the protocol is reported once and the unit stops; nothing to restart.
+ExecStart=%h/.local/bin/cortex-presence
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=graphical-session.target

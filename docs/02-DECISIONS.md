@@ -3784,3 +3784,83 @@ goes through `bury_chunks_on` or deletes the chunks itself first; a cascade alon
 Alternative not taken: tolerate small drifts in `reconcile_index`. It hides the leak instead of
 closing it, and a search would keep hitting vectors of files that are gone.
 
+### D129 — A stage that computes on several cores divides its share across them
+
+**Status:** ACCEPTED · 2026-11-02
+
+D22 put the duty cycle in wall time and the share in units of one core, and said that a stage that
+becomes parallel must divide the share rather than reinterpret it. The embedding stage became
+parallel without doing so: the ONNX session runs an intra-op pool (`[embedding] threads`, eight by
+default), and `pause_after` saw only the wall time of each slice. The idle share of 0.8 therefore
+held eight cores for 80 % of the time instead of one core, in bursts the desktop felt as stutter.
+On the owner's machine the daemon averaged 0.6 of a core and peaked at several, which together
+with D130's missing signal made it a regular part of a desktop that lagged several times a day.
+
+Now `Embedder::cpu_threads` says how many cores one call keeps busy (the resolved pool size on the
+CPU, one on the GPU) and the stage passes `throttle::share_per_worker(share, cores)` to
+`pause_after`. A share of one or more still means no throttling, so the test harness and anybody
+who configured "unthrottled" keep that. The stage also sleeps the whole pause
+(`pause_after_uncapped`): `pause_after` caps at five seconds, which is right for extraction's
+200 ms slices but not for an inference call of a second or more — measured, the cap left the
+idle duty at 26 % instead of 20 %, and at the divided active share it would be six times over. Tests: `a_slice_on_four_cores_holds_a_quarter_of_the_share_each`,
+`no_throttling_stays_no_throttling_and_zero_workers_count_as_one`,
+`a_long_slice_rests_its_whole_pause_when_the_caller_can_wait` (throttle.rs).
+
+The consequence is slower background embedding: the configured share is now what is actually
+spent. That is the budget D22 set; a person who wants a backlog gone faster raises
+`cpu_share_idle`, and with D130 the idle budget is spent only when nobody is there.
+
+### D130 — Presence comes from the compositor's idle protocol, through a client of its own
+
+**Status:** ACCEPTED · 2026-11-02
+
+D22 has activity signalled by clients and lets the daemon sniff nothing. Its consequence — a daemon
+nobody speaks to treats the machine as idle — was meant for a headless install, but it held on a
+desktop too: only the overlay and interactive requests pinged, so a person gaming, browsing or
+watching a video was "idle" and got the idle budget running under them.
+
+`cortex-presence` is the missing client. It asks the compositor through `ext-idle-notify-v1` (the
+standard Wayland protocol: "no input for N seconds", "input again" — never a key or a position)
+and calls `activity.ping` every 30 s while there is input, once at once on coming back. It uses the
+plain notification, not v2's input-only one, so an idle inhibitor (a full-screen video) counts as
+somebody there. The daemon is unchanged and still connects to no compositor; on a server the
+client is simply not installed, and a compositor without the protocol is reported once and the
+unit stops. Unit: `hippocampus-presence.service`, bound to the graphical session like the overlay.
+Tests: the ping rules in `crates/cortex-presence/src/presence.rs`.
+
+Alternatives not taken: a protocol change to a stateful "present/absent" (one dead client would
+leave the daemon throttled for ever, a ping that stops is self-healing); `swayidle` with shell
+commands (not on every system, and it has no "keep pinging while active"); doing it in the
+overlay (the overlay is optional and is a WebView, not where a background signal belongs).
+
+### D131 — The embedding queue is walked with a cursor, and a bounded read cuts only a half character
+
+**Status:** ACCEPTED · 2026-11-02
+
+Measured on the owner's machine after D129: the embedding thread still took 65 % of a core, and
+in 25 minutes the `embeddings` table grew by four rows. Two defects, one feeding the other.
+
+1. **A bounded read cut every file back to its first malformed byte.** `read_text` stops a
+   truncated read from ending mid-character by popping bytes until the whole buffer validates as
+   UTF-8. A file with one bad byte at offset 8 974 therefore came back 8 974 bytes long from every
+   bounded read, while the unbounded read during extraction had decoded it whole and leniently.
+   Every chunk past that byte failed `chunk_text` and was stale for ever — and the loop
+   re-validated the buffer once per byte popped. Now only an incomplete sequence at the very end
+   is dropped (`complete_prefix_len`); malformed bytes earlier are the lossy decoder's, as in a
+   whole read. Tests: `a_malformed_byte_before_the_cut_does_not_shorten_a_truncated_read`,
+   `only_an_incomplete_character_at_the_end_is_dropped` (extract.rs),
+   `a_chunk_after_a_malformed_byte_is_read_back` (snippet.rs).
+
+2. **Stale chunks at the head of the queue blocked it.** The stage always claimed the 64 lowest
+   chunk ids without a vector. Sixty-four stale chunks of one binary file (a browser profile's
+   CRL set inside a project) sat at the head; every claim came back fruitless, the stage slept two
+   seconds — the back-off reset itself before every claim — and claimed the same rows again, each
+   claim a 3.2-second scan of 2.7 M chunk ids. Now the stage walks the queue with a cursor
+   (`chunks_without_embedding_after`), goes round from the start at the end of a sweep, and when a
+   whole sweep embedded nothing it settles on the chunk watermark as an empty queue does. A
+   fruitless claim is paid for on the duty cycle (`rest`, one core). Test:
+   `the_queue_can_be_walked_past_a_head_that_never_clears` (embeddings.rs).
+
+Not changed here: whether a file with NUL bytes past the classifier's sniff window should be
+extracted at all. With (1) its chunks embed like any others; skipping it is a classification
+question for another day.
